@@ -1,0 +1,168 @@
+name: platformio
+
+on:
+  push:
+    branches: [ '*' ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache Pio
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Dependencies
+        run: python -m pip install --upgrade "platformio==6.2.0"
+      - name: Run PlatformIO Tests
+        run: |
+          platformio test -e native
+          platformio test -e native_antigravity_bench -f test_fc
+          platformio test -e native_angle_v2 -f test_fc
+          platformio test -e native_assisted_v2 -f test_fc
+          platformio test -e native_assisted_v2_active -f test_fc
+          platformio run -e esp32_antigravity_bench
+          platformio run -e esp32_assisted_v2_bench
+          platformio run -e esp32_assisted_v2_candidate
+
+  antigravity_validation_artifact:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache Pio
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Dependencies
+        run: python -m pip install --upgrade "platformio==6.2.0"
+      - name: Build non-actuating Anti-Gravity validation firmware
+        run: platformio run -e esp32_antigravity_bench
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DESPFC_REVISION=${{ github.sha }} -DESPFC_VERSION=validation
+      - name: Upload Anti-Gravity validation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp32_antigravity_validation_${{ github.sha }}
+          path: .pio/build/esp32_antigravity_bench/firmware.bin
+
+  assisted_validation_artifact:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache Pio
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Dependencies
+        run: python -m pip install --upgrade "platformio==6.2.0"
+      - name: Build non-actuating Assisted V2 validation firmware
+        run: platformio run -e esp32_assisted_v2_candidate
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DESPFC_REVISION=${{ github.sha }} -DESPFC_VERSION=validation
+      - name: Upload Assisted V2 validation artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp32_assisted_v2_validation_${{ github.sha }}
+          path: .pio/build/esp32_assisted_v2_candidate/firmware.bin
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        target:
+          - { name: 'esp32',   merge: true }
+          - { name: 'esp32s2', merge: true }
+          - { name: 'esp32s3', merge: true }
+          - { name: 'esp32c3', merge: true }
+          - { name: 'esp8266', merge: false }
+          - { name: 'rp2040',  merge: false }
+          - { name: 'rp2350',  merge: false }
+
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache Pio
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Dependencies
+        run: python -m pip install --upgrade "platformio==6.2.0"
+
+      - name: Extract Version
+        run: |
+          VAR_REV=$(echo ${GITHUB_SHA} | cut -c1-7)
+          if [[ $GITHUB_EVENT_NAME == "pull_request" ]]; then
+            VAR_VER="pr${{ github.event.pull_request.number }}"
+            VAR_NAME="espfc_${VAR_VER}_${{ matrix.target.name }}"
+          elif [[ $GITHUB_REF == refs/tags/* ]]; then
+            VAR_VER="${GITHUB_REF#refs/tags/}"
+            VAR_NAME="espfc_${VAR_VER}_${{ matrix.target.name }}"
+          else
+            VAR_VER="0.0.0"
+            VAR_NAME="espfc_${VAR_REV}_${{ matrix.target.name }}"
+          fi
+          echo VERSION=$VAR_VER
+          echo REVISION=$VAR_REV
+          echo FILENAME=$VAR_NAME
+          echo "build_ver=${VAR_VER}" >> $GITHUB_ENV
+          echo "build_rev=${VAR_REV}" >> $GITHUB_ENV
+          echo "build_name=${VAR_NAME}" >> $GITHUB_ENV
+
+      - name: Build Target
+        run: |
+          platformio run -e ${{ matrix.target.name }}
+          mv .pio/build/${{ matrix.target.name }}/firmware.bin .pio/build/${{ env.build_name }}.bin
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DESPFC_REVISION=${{ env.build_rev }} -DESPFC_VERSION=${{ env.build_ver }}
+
+      - name: Rename Target Merged
+        if: ${{ matrix.target.merge == true }}
+        run: |
+          mv .pio/build/${{ matrix.target.name }}/firmware_0x00.bin .pio/build/${{ env.build_name }}_0x00.bin
+
+      - name: Create Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.build_name }}.bin
+          path: .pio/build/${{ env.build_name }}.bin
+
+      - name: Create Artifact Merged 
+        uses: actions/upload-artifact@v7
+        if: ${{ matrix.target.merge == true }}
+        with:
+          name: "${{ env.build_name }}_0x00.bin"
+          path: .pio/build/${{ env.build_name }}_0x00.bin

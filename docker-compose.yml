@@ -1,0 +1,19 @@
+services:
+  espfc:
+    image: espfc-builder
+    build:
+      context: docker
+    hostname: espfc
+    network_mode: "host"
+    user: "1000:1000"
+    #devices:
+    #  - "/dev/ttyUSB0:/dev/ttyUSB0"
+    #  - "/dev/ttyACM0:/dev/ttyACM0"
+    group_add:
+      - dialout
+    volumes:
+      - ./:/app
+      - platformio:/home/ubuntu/.platformio
+
+volumes:
+  platformio:

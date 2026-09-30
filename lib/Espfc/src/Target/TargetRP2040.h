@@ -1,0 +1,112 @@
+#pragma once
+
+#define ESPFC_INPUT
+#define ESPFC_INPUT_PIN -1 // ppm
+
+#define ESPFC_OUTPUT_COUNT 8
+#define ESPFC_OUTPUT_0 2
+#define ESPFC_OUTPUT_1 3
+#define ESPFC_OUTPUT_2 4
+#define ESPFC_OUTPUT_3 5
+#define ESPFC_OUTPUT_4 -1
+#define ESPFC_OUTPUT_5 -1
+#define ESPFC_OUTPUT_6 -1
+#define ESPFC_OUTPUT_7 -1
+
+#define ESPFC_SERIAL_0
+#define ESPFC_SERIAL_0_TX 0
+#define ESPFC_SERIAL_0_RX 1
+#define ESPFC_SERIAL_0_FN (SERIAL_FUNCTION_MSP)
+#define ESPFC_SERIAL_0_BAUD (SERIAL_SPEED_115200)
+#define ESPFC_SERIAL_0_BBAUD (SERIAL_SPEED_NONE)
+
+#define ESPFC_SERIAL_1
+#define ESPFC_SERIAL_1_TX 8
+#define ESPFC_SERIAL_1_RX 9
+#define ESPFC_SERIAL_1_FN (SERIAL_FUNCTION_RX_SERIAL)
+#define ESPFC_SERIAL_1_BAUD (SERIAL_SPEED_115200)
+#define ESPFC_SERIAL_1_BBAUD (SERIAL_SPEED_NONE)
+
+#define ESPFC_SERIAL_USB
+#define ESPFC_SERIAL_USB_FN (SERIAL_FUNCTION_MSP)
+
+#define ESPFC_SERIAL_REMAP_PINS
+#define ESPFC_SERIAL_DEBUG_PORT SERIAL_USB
+
+#define ESPFC_SPI_0
+#define ESPFC_SPI_0_DEV SPI1
+#define ESPFC_SPI_0_DEV_T SPIClassRP2040
+#define ESPFC_SPI_0_SCK 14
+#define ESPFC_SPI_0_MOSI 15
+#define ESPFC_SPI_0_MISO 12
+
+#define ESPFC_SPI_CS_GYRO 13
+#define ESPFC_SPI_CS_BARO 11
+
+#define ESPFC_I2C_0
+#define ESPFC_I2C_0_SDA 16
+#define ESPFC_I2C_0_SCL 17
+
+#define ESPFC_BUZZER_PIN -1
+#define ESPFC_BUTTON_PIN -1
+#define ESPFC_LED_PIN -1
+
+
+#define ESPFC_ADC_0
+#define ESPFC_ADC_0_PIN 26
+
+#define ESPFC_ADC_1
+#define ESPFC_ADC_1_PIN 27
+
+#define ESPFC_ADC_SCALE (3.3f / 4096)
+
+#define ESPFC_FEATURE_MASK (FEATURE_RX_SERIAL)
+
+#if defined(ARCH_RP2350)
+#define ESPFC_GYRO_SPI_RATE_MAX 4000
+#else
+#define ESPFC_GYRO_SPI_RATE_MAX 1000
+#endif
+#define ESPFC_GYRO_I2C_RATE_MAX 1000
+#define ESPFC_MULTI_CORE
+#define ESPFC_MULTI_CORE_RP2040
+
+#include <cstddef>
+#include <cstdint>
+namespace Espfc {
+
+constexpr size_t targetSerialTxBufferSize()
+{
+  return 256u;
+}
+
+template<typename T>
+inline int targetSPIInit(T& dev, int8_t sck, int8_t mosi, int8_t miso, int8_t ss)
+{
+  dev.setSCK(sck);
+  dev.setRX(miso);
+  dev.setTX(mosi);
+  dev.begin();
+  return 1;
+}
+
+template<typename T>
+inline int targetI2CInit(T& dev, int8_t sda, int8_t scl, uint32_t speed)
+{
+  if (!dev.setSCL(scl)) return -1;
+  if (!dev.setSDA(sda)) return -2;
+  dev.setClock(speed);
+  dev.begin();
+  return 1;
+}
+
+void targetReset();
+
+uint32_t getBoardId0();
+uint32_t getBoardId1();
+uint32_t getBoardId2();
+
+uint32_t targetCpuFreq();
+uint32_t targetFreeHeap();
+
+} // namespace Espfc
