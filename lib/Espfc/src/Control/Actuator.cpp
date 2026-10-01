@@ -763,10 +763,7 @@ const bool altHoldHealthy =
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE) || \
     defined(ESPFC_LAND_V2_ACTIVE)
-  // If the pilot explicitly requests AltHold, do not allow an ARM transition
-  // without a trustworthy vertical estimate. Likewise, an AUTO_LAND
-  // failsafe configuration is only meaningful when the aircraft is armed
-  // with a healthy altitude estimator.
+
   const bool assistedAltitudeRequired =
       altHoldRequested
 #if defined(ESPFC_LAND_V2_ACTIVE)
@@ -787,28 +784,19 @@ const bool altHoldHealthy =
       altHoldPilotStickValid(
           _model);
 
-  // Centering is an entry-only gate. Once AltHold is active, stick deflection
-  // is the intended climb/descent command and must not be treated as a fault.
   const bool altHoldEntryUnsafe =
       altHoldRequested &&
       !altHoldWasActive &&
       !altHoldPilotStickCentered(
           _model);
 
-  _model.setArmingDisabled(
-      ARMING_DISABLED_ALTHOLD,
-      (assistedAltitudeRequired &&
-       !altHoldHealthy) ||
-      !altHoldPilotValid ||
-      altHoldEntryUnsafe);
 #else
+
   constexpr bool altHoldPilotValid =
       true;
 
-  _model.setArmingDisabled(
-      ARMING_DISABLED_ALTHOLD,
-      false);
 #endif
+
 
 
   // -----------------------------------------------------
