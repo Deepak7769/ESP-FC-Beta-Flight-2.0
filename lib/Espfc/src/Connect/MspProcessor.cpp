@@ -1167,40 +1167,36 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
 
 case MSP_SET_FAILSAFE_CONFIG:
 {
-  if (m.remain() < 8)
-  {
-    r.result = -1;
+    if (m.remain() < 8)
+    {
+        r.result = -1;
+        break;
+    }
+
+    _model.config.failsafe.delay =
+        m.readU8();
+
+    _model.config.failsafe.landingTime =
+        m.readU8();
+
+    _model.config.failsafe.landingThrottle =
+        m.readU16();
+
+    _model.config.failsafe.killSwitch =
+        m.readU8();
+
+    _model.config.failsafe.throttleLowDelay =
+        m.readU16();
+
+    const uint8_t procedure =
+        m.readU8();
+
+    _model.config.failsafe.procedure =
+        procedure < FAILSAFE_PROCEDURE_COUNT
+            ? procedure
+            : FAILSAFE_PROCEDURE_DROP;
+
     break;
-  }
-
-  _model.config.failsafe.delay =
-      m.readU8();
-
-  _model.config.failsafe.landingTime =
-      m.readU8();
-
-  _model.config.failsafe.landingThrottle =
-      m.readU16();
-
-  _model.config.failsafe.killSwitch =
-      m.readU8();
-
-  _model.config.failsafe.throttleLowDelay =
-      m.readU16();
-
-  const uint8_t procedure =
-      m.readU8();
-
-  _model.config.failsafe.procedure =
-      procedure <
-          FAILSAFE_PROCEDURE_COUNT
-          ? procedure
-          : FAILSAFE_PROCEDURE_DROP;
-
-  _model.notifyConfigChange(
-      MODEL_CHANGE_FAILSAFE);
-
-  break;
 }
 
     case MSP_RXFAIL_CONFIG:
