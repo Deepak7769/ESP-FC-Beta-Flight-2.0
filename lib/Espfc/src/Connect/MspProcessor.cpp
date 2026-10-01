@@ -1144,37 +1144,62 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
       _model.notifyConfigChange(MODEL_CHANGE_INPUT);
       break;
 
-    case MSP_FAILSAFE_CONFIG:
-      r.writeU8(_model.config.failsafe.delay);      // failsafe_delay
-      r.writeU8(0);                                 // failsafe_off_delay
-      r.writeU16(1000);                             // failsafe_throttle
-      r.writeU8(_model.config.failsafe.killSwitch); // failsafe_kill_switch
-      r.writeU16(0);                                // failsafe_throttle_low_delay
-r.writeU8(
-    _model.config.failsafe.procedure);
-      break;
+  case MSP_FAILSAFE_CONFIG:
+  r.writeU8(
+      _model.config.failsafe.delay);
+
+  r.writeU8(
+      _model.config.failsafe.landingTime);
+
+  r.writeU16(
+      _model.config.failsafe.landingThrottle);
+
+  r.writeU8(
+      _model.config.failsafe.killSwitch);
+
+  r.writeU16(
+      _model.config.failsafe.throttleLowDelay);
+
+  r.writeU8(
+      _model.config.failsafe.procedure);
+
+  break;
 
 case MSP_SET_FAILSAFE_CONFIG:
 {
+  if (m.remain() < 8)
+  {
+    r.result = -1;
+    break;
+  }
+
   _model.config.failsafe.delay =
       m.readU8();
 
-  m.readU8();  // failsafe_off_delay
-  m.readU16(); // failsafe_throttle
+  _model.config.failsafe.landingTime =
+      m.readU8();
+
+  _model.config.failsafe.landingThrottle =
+      m.readU16();
 
   _model.config.failsafe.killSwitch =
       m.readU8();
 
-  m.readU16(); // failsafe_throttle_low_delay
+  _model.config.failsafe.throttleLowDelay =
+      m.readU16();
 
-const uint8_t procedure =
-    m.readU8();
+  const uint8_t procedure =
+      m.readU8();
 
-_model.config.failsafe.procedure =
-    procedure <
-            FAILSAFE_PROCEDURE_COUNT
-        ? procedure
-        : FAILSAFE_PROCEDURE_DROP;
+  _model.config.failsafe.procedure =
+      procedure <
+          FAILSAFE_PROCEDURE_COUNT
+          ? procedure
+          : FAILSAFE_PROCEDURE_DROP;
+
+  _model.notifyConfigChange(
+      MODEL_CHANGE_FAILSAFE);
+
   break;
 }
 
