@@ -764,30 +764,9 @@ const bool altHoldHealthy =
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE) || \
     defined(ESPFC_LAND_V2_ACTIVE)
 
-  const bool assistedAltitudeRequired =
-      altHoldRequested
-#if defined(ESPFC_LAND_V2_ACTIVE)
-      ||
-      (_model.config.failsafe.procedure ==
-           FAILSAFE_PROCEDURE_AUTO_LAND &&
-       (newMask &
-        (uint32_t{1} << MODE_ARMED)))
-#endif
-      ;
-
-  const bool altHoldWasActive =
-      _model.isModeActive(
-          MODE_ALTHOLD);
-
   const bool altHoldPilotValid =
       !altHoldRequested ||
       altHoldPilotStickValid(
-          _model);
-
-  const bool altHoldEntryUnsafe =
-      altHoldRequested &&
-      !altHoldWasActive &&
-      !altHoldPilotStickCentered(
           _model);
 
 #else
@@ -796,7 +775,6 @@ const bool altHoldHealthy =
       true;
 
 #endif
-
 
 
   // -----------------------------------------------------
