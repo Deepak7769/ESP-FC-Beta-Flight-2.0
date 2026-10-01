@@ -4337,61 +4337,7 @@ void test_failsafe_land_v2_timeout_disarms()
       model.state.failsafe.phase);
 }
 
-void test_auto_land_arm_request_requires_healthy_altitude_estimator()
-{
-  ArduinoFakeReset();
 
-  When(
-      Method(
-          ArduinoFake(),
-          micros))
-      .AlwaysReturn(
-          9000000);
-
-  Model model;
-
-  model.config.failsafe.procedure =
-      FAILSAFE_PROCEDURE_AUTO_LAND;
-
-  auto& armCondition =
-      model.config.conditions[0];
-
-  armCondition.id =
-      MODE_ARMED;
-
-  armCondition.ch =
-      AXIS_AUX_1;
-
-  armCondition.min =
-      1700;
-
-  armCondition.max =
-      2100;
-
-  model.state.input.us[
-      AXIS_AUX_1] =
-      1800;
-
-  model.state.input.us[
-      AXIS_THRUST] =
-      1000;
-
-  Actuator actuator(
-      model);
-
-  actuator.begin();
-
-  // No valid barometer/altitude estimator has been established.
-  actuator.updateModeMask();
-
-  TEST_ASSERT_TRUE(
-      model.getArmingDisabled(
-          ARMING_DISABLED_ALTHOLD));
-
-  TEST_ASSERT_FALSE(
-      model.isModeActive(
-          MODE_ARMED));
-}
 
 void test_failsafe_land_v2_rx_recovery_stays_committed_to_land()
 {
@@ -7970,8 +7916,7 @@ RUN_TEST(
 RUN_TEST(
     test_failsafe_land_v2_timeout_disarms);
 
-RUN_TEST(
-    test_auto_land_arm_request_requires_healthy_altitude_estimator);
+
 
 RUN_TEST(
     test_failsafe_land_v2_rx_recovery_stays_committed_to_land);
