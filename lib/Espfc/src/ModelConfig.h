@@ -576,8 +576,20 @@ enum FailsafeProcedure : uint8_t
 
 struct FailsafeConfig
 {
+  // Stage 1 delay.
   uint8_t delay = 4;
+
+  // Time to remain in LAND before termination/disarm.
+  uint8_t landingTime = 10;
+
+  // Throttle command used by the LAND fallback.
+  uint16_t landingThrottle = 1000;
+
+  // Failsafe switch action.
   uint8_t killSwitch = 0;
+
+  // Throttle-low delay.
+  uint16_t throttleLowDelay = 0;
 
   // DROP remains the safe/default operational procedure.
   uint8_t procedure =
