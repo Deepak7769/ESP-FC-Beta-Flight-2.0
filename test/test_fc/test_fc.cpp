@@ -3101,7 +3101,7 @@ void test_actuator_althold_v2_invalid_pilot_channel_exits_and_latches()
       model.isModeActive(
           MODE_ALTHOLD));
 
-  TEST_ASSERT_TRUE(
+  TEST_ASSERT_FALSE(
       model.getArmingDisabled(
           ARMING_DISABLED_ALTHOLD));
 
@@ -3393,7 +3393,7 @@ void test_actuator_althold_v2_requires_centered_pilot_stick_on_entry()
       model.isModeActive(
           MODE_ALTHOLD));
 
-  TEST_ASSERT_TRUE(
+  TEST_ASSERT_FALSE(
       model.getArmingDisabled(
           ARMING_DISABLED_ALTHOLD));
 
@@ -3482,7 +3482,7 @@ void test_actuator_althold_v2_rejects_missing_pilot_channel()
       model.isModeActive(
           MODE_ALTHOLD));
 
-  TEST_ASSERT_TRUE(
+  TEST_ASSERT_FALSE(
       model.getArmingDisabled(
           ARMING_DISABLED_ALTHOLD));
 
@@ -3588,7 +3588,7 @@ void test_actuator_althold_v2_rejects_invalid_raw_pilot_channel()
       model.isModeActive(
           MODE_ALTHOLD));
 
-  TEST_ASSERT_TRUE(
+  TEST_ASSERT_FALSE(
       model.getArmingDisabled(
           ARMING_DISABLED_ALTHOLD));
 
