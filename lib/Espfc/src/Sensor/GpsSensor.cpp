@@ -566,8 +566,9 @@ void GpsSensor::configureGnss()
                         _model.state.gps.support.qzss + _model.state.gps.support.glonass +
                         _model.state.gps.support.imes;
 
+ const uint8_t trkChUse = std::clamp<uint8_t>(_model.config.gps.maxSats, 1, 16);
     written += req.write(
-        Gps::UbxCfgGnssHeader{.msgVer = 0, .numTrkChHw = 32, .numTrkChUse = 0xff, .numConfigBlocks = numBlocks});
+        Gps::UbxCfgGnssHeader{.msgVer = 0, .numTrkChHw = 32, .numTrkChUse = trkChUse, .numConfigBlocks = numBlocks});
     if (_model.state.gps.support.gps)
     {
       written += req.write(Gps::UbxCfgGnssBlock{.gnssId = 0,
