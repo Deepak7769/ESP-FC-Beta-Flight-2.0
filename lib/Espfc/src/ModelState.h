@@ -527,6 +527,7 @@ struct VtxState
 enum GpsDeviceVersion
 {
   GPS_UNKNOWN,
+  GPS_M6,   // NEO-6M / NEO-6Q  (hwVer = 00060000, protVer 13-14)
   GPS_M8,
   GPS_M9,
   GPS_F9,
