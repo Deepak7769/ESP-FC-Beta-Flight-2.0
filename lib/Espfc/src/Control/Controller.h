@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Control/PositionHold.h"
 #include "Control/Rates.h"
 #include "Model.h"
 
@@ -59,6 +60,9 @@ private:
   float _altHoldVerticalRateTarget = 0.0f;
 
   uint32_t _assistedLastUpdateUs = 0;
+// Position hold (MODE_POSHOLD) controller and transition state.
+PositionHold _posHold;
+bool _posHoldWasReady = false;
 };
 
 } // namespace Espfc::Control
