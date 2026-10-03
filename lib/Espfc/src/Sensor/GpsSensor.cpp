@@ -415,11 +415,17 @@ void GpsSensor::enableSbas()
 
 void GpsSensor::detectGpsL5()
 {
+  // NEO-6M uses legacy protocol and does not support CFG-VALGET at all.
+  // Skip straight to CONFIGURE_GNSS to avoid a NAK/timeout delay.
+  if (_model.state.gps.support.version == GPS_M6)
+  {
+    setState(CONFIGURE_GNSS);
+    return;
+  }
   Gps::UbxRequest req(Gps::UBX_CFG_VALGET);
   req.write(Gps::UbxCfgValsetHeader{.version = 0, .layers = 0x01}); // RAM only
   req.write(Gps::CFG_SIGNAL_GPS_L5);
-  send(req, CONFIGURE_GNSS, CONFIGURE_GNSS); // if supported we get ACK with value, else timeout and continue with GNSS
-                                             // configuration without L5 support
+  send(req, CONFIGURE_GNSS, CONFIGURE_GNSS);
 }
 
 void GpsSensor::configureRate()
@@ -783,7 +789,12 @@ void GpsSensor::handleVersion() const
   _model.logger.info().log("GPS VER").logln(payload);
   _model.logger.info().log("GPS VER").logln(payload + 30);
 
-  if (std::strcmp(payload + 30, "00080000") == 0)
+     if (std::strcmp(payload + 30, "00060000") == 0 ||
+      std::strcmp(payload + 30, "00061000") == 0)
+  {
+    _model.state.gps.support.version = GPS_M6;
+  }
+  else if (std::strcmp(payload + 30, "00080000") == 0)
   {
     _model.state.gps.support.version = GPS_M8;
   }
@@ -804,6 +815,14 @@ void GpsSensor::handleVersion() const
   {
     checkSupport(payload + 40);
     _model.logger.info().log("GPS EXT").logln(payload + 40);
+  }
+  else
+  {
+    // NEO-6M MON-VER is only 40 bytes (swVer+hwVer, no extension strings).
+    // Force-set GPS and SBAS which are always present on this module.
+    _model.state.gps.support.gps  = true;
+    _model.state.gps.support.sbas = true;
+    _model.logger.info().logln("GPS M6: GPS+SBAS assumed");
   }
   if (_ubxMsg.length >= 100)
   {
