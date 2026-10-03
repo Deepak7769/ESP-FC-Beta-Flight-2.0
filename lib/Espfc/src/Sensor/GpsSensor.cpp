@@ -1,6 +1,7 @@
 #include "Sensor/GpsSensor.hpp"
 #include <Arduino.h>
 #include <Gps.hpp>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <tuple>
@@ -21,6 +22,14 @@ static constexpr std::array<std::tuple<uint16_t, uint8_t>, 2> UBX_MSG_ON{{
     {Gps::UBX_NAV_SAT, 10u},
 }};
 
+// u-blox 5/6: rate is relative to the navigation rate (5 Hz => SVINFO at 1 Hz).
+static constexpr std::array<std::tuple<uint16_t, uint8_t>, 4> UBX_MSG_ON_LEGACY{{
+    {Gps::UBX_NAV_SOL, 1u},
+    {Gps::UBX_NAV_POSLLH, 1u},
+    {Gps::UBX_NAV_VELNED, 1u},
+    {Gps::UBX_NAV_SVINFO, 5u},
+}};
+
 GpsSensor::GpsSensor(Model& model): _model(model) {}
 
 int GpsSensor::begin(Stream::ReadWritable* port, int baud)
@@ -32,6 +41,8 @@ int GpsSensor::begin(Stream::ReadWritable* port, int baud)
   _state = DETECT_BAUD;
   _timeout = micros() + DETECT_TIMEOUT;
   _counter = 0;
+  _versionTries = 0;
+  _legacyTried = false;
   setBaud(_targetBaud);
 
   return 1;
@@ -63,6 +74,8 @@ int GpsSensor::update()
   }
 
   if (!updated) handle();
+
+  updateDebug();
 
   return 1;
 }
@@ -132,6 +145,10 @@ void GpsSensor::handle()
       enableUbx();
       break;
 
+    case FALLBACK_LEGACY_NAV:
+      fallbackLegacyNav();
+      break;
+
     case ENABLE_NAV5:
       enableNav5();
       break;
@@ -169,6 +186,20 @@ void GpsSensor::handleReceive()
   if (_state == RECEIVE)
   {
     _model.state.gps.present = true;
+
+    // Safety net: module ACKed the config but never sends NAV-PVT (u-blox 6 with unknown hwVersion).
+    if (!_legacyTried && !usesLegacyNav())
+    {
+      if (_model.state.gps.lastMsgTs != _lastTsAtArm)
+      {
+        _legacyTried = true; // NAV data is flowing, nothing to do
+      }
+      else if (static_cast<int32_t>(micros() - _noDataDeadline) >= 0)
+      {
+        fallbackLegacyNav();
+        return;
+      }
+    }
   }
 
   if (_ubxMsg.isReady())
@@ -201,6 +232,22 @@ void GpsSensor::handleReceive()
     else if (_ubxMsg.isResponse(Gps::UbxNavSat::ID))
     {
       handleNavSat();
+    }
+    else if (_ubxMsg.isResponse(Gps::UbxNavSol::ID))
+    {
+      handleNavSol();
+    }
+    else if (_ubxMsg.isResponse(Gps::UbxNavPosllh::ID))
+    {
+      handleNavPosllh();
+    }
+    else if (_ubxMsg.isResponse(Gps::UbxNavVelned::ID))
+    {
+      handleNavVelned();
+    }
+    else if (_ubxMsg.isResponse(Gps::UbxNavSvinfo::ID))
+    {
+      handleNavSvinfo();
     }
   }
   else if (_state == WAIT &&
@@ -241,7 +288,11 @@ void GpsSensor::detectBaud()
 
 void GpsSensor::readVersion()
 {
-  send(Gps::UbxMonVer{}, CONFIGURE_BAUD); // version handled in WAIT/RECEIVE
+  // Retry MON-VER a few times (at 9600 baud the NMEA stream can delay the reply),
+  // then continue anyway: unknown version still works through the NAK fallback.
+  const State onTimeout = (_versionTries < 3) ? GET_VERSION : CONFIGURE_BAUD;
+  _versionTries++;
+  send(Gps::UbxMonVer{}, CONFIGURE_BAUD, onTimeout); // version handled in WAIT/RECEIVE
   _timeout = micros() + 3 * TIMEOUT;
 }
 
@@ -314,6 +365,27 @@ void GpsSensor::enableUbx()
 {
   if (isLegacyProto())
   {
+    if (usesLegacyNav())
+    {
+      const Gps::UbxCfgMsg3 m{
+          .msgId = std::get<0>(UBX_MSG_ON_LEGACY[_counter]),
+          .rate = std::get<1>(UBX_MSG_ON_LEGACY[_counter]),
+      };
+      _counter++;
+      if (_counter < UBX_MSG_ON_LEGACY.size())
+      {
+        send(m, _state);
+      }
+      else
+      {
+        send(m, ENABLE_NAV5);
+        _counter = 0;
+        _timeout = micros() + 10 * TIMEOUT;
+        _model.logger.info().logln("GPS UBX LEGACY ON");
+      }
+      return;
+    }
+
     const Gps::UbxCfgMsg3 m{
         .msgId = std::get<0>(UBX_MSG_ON[_counter]),
         .rate = std::get<1>(UBX_MSG_ON[_counter]),
@@ -321,11 +393,12 @@ void GpsSensor::enableUbx()
     _counter++;
     if (_counter < UBX_MSG_ON.size())
     {
-      send(m, _state);
+      // NAK/timeout on NAV-PVT means a u-blox 5/6: switch to legacy messages instead of giving up.
+      send(m, _state, FALLBACK_LEGACY_NAV);
     }
     else
     {
-      send(m, ENABLE_NAV5);
+      send(m, ENABLE_NAV5, FALLBACK_LEGACY_NAV);
       _counter = 0;
       _timeout = micros() + 10 * TIMEOUT;
       _model.logger.info().logln("GPS UBX ON");
@@ -342,13 +415,24 @@ void GpsSensor::enableUbx()
   }
 }
 
+void GpsSensor::fallbackLegacyNav()
+{
+  _model.state.gps.support.version = GPS_M6;
+  _model.state.gps.support.gps = true;
+  _model.state.gps.support.sbas = true;
+  _legacyTried = true;
+  _counter = 0;
+  _model.logger.info().logln("GPS NO PVT, LEGACY NAV");
+  setState(ENABLE_UBX);
+}
+
 void GpsSensor::enableNav5()
 {
   if (isLegacyProto())
   {
     send(
         Gps::UbxCfgNav5{
-            .mask = {.value = 0xffff}, // all
+            .mask = {.value = (uint16_t)(usesLegacyNav() ? 0x0005 : 0xffff)}, // M6: dynModel+fixMode only; others: all
             .dynModel = 8,             // airborne
             .fixMode = 3,
             .fixedAlt = 0,
@@ -368,7 +452,7 @@ void GpsSensor::enableNav5()
             .utcStandard = 0,
             .reserved1 = {0, 0, 0, 0, 0},
         },
-        ENABLE_SBAS);
+        ENABLE_SBAS, usesLegacyNav() ? ENABLE_SBAS : ERROR); // M6: NAV5 is optional, never abort on it
     _model.logger.info().logln("GPS NAV5");
   }
   else
@@ -395,7 +479,7 @@ void GpsSensor::enableSbas()
               .scanmode2 = 0,
               .scanmode1 = 0,
           },
-          DETECT_GPS_L5);
+          DETECT_GPS_L5, usesLegacyNav() ? DETECT_GPS_L5 : ERROR); // M6: SBAS is optional
       _model.logger.info().logln("GPS SBAS");
     }
     else
@@ -433,7 +517,11 @@ void GpsSensor::configureRate()
   uint16_t mRate = 200;
   if (_currentBaud > 100000) mRate = 100;
   if (_model.state.gps.support.version == GPS_M10 && _currentBaud > 200000) mRate = 40; // (proto<24 => >50ms)
+  if (usesLegacyNav()) mRate = 200; // NEO-6M: 5 Hz is the hardware maximum
   const uint16_t nRate = 1;
+
+  _noDataDeadline = micros() + 5000000u; // if no NAV data shows up in 5 s, try legacy NAV messages
+  _lastTsAtArm = _model.state.gps.lastMsgTs;
 
   if (isLegacyProto())
   {
@@ -492,6 +580,11 @@ void GpsSensor::handleError()
 
 void GpsSensor::configureGnss()
 {
+  if (usesLegacyNav())
+  {
+    setState(CONFIGURE_NAV_RATE); // u-blox 5/6: GPS only, no CFG-GNSS
+    return;
+  }
   const bool useDualBand = _model.config.gps.enableDualBand && _model.state.gps.support.gpsL5;
   bool enableGPS = _model.config.gps.enableGPS;
   bool enableGLO = _model.config.gps.enableGLONASS;
@@ -783,6 +876,97 @@ void GpsSensor::handleNavSat() const
   }
 }
 
+void GpsSensor::handleNavSol() const
+{
+  if (_ubxMsg.length < sizeof(Gps::UbxNavSol)) return;
+  const auto& m = *_ubxMsg.getAs<Gps::UbxNavSol>();
+
+  _model.state.gps.fix = m.gpsFix == 3 && (m.flags & 0x01);
+  _model.state.gps.fixType = m.gpsFix;
+  _model.state.gps.numSats = m.numSV;
+  _model.state.gps.time = m.iTow;
+  _model.state.gps.accuracy.pDop = m.pDOP;
+  _model.state.gps.accuracy.speed = m.sAcc * 10; // cm/s -> mm/s
+
+  const uint32_t now = micros();
+  _model.state.gps.interval = now - _model.state.gps.lastMsgTs;
+  _model.state.gps.lastMsgTs = now;
+
+  calculateHomeVector();
+}
+
+void GpsSensor::handleNavPosllh() const
+{
+  if (_ubxMsg.length < sizeof(Gps::UbxNavPosllh)) return;
+  const auto& m = *_ubxMsg.getAs<Gps::UbxNavPosllh>();
+
+  _model.state.gps.location.raw.lat = m.lat;
+  _model.state.gps.location.raw.lon = m.lon;
+  _model.state.gps.location.raw.height = m.hMSL;
+  _model.state.gps.accuracy.horizontal = m.hAcc;
+  _model.state.gps.accuracy.vertical = m.vAcc;
+}
+
+void GpsSensor::handleNavVelned() const
+{
+  if (_ubxMsg.length < sizeof(Gps::UbxNavVelned)) return;
+  const auto& m = *_ubxMsg.getAs<Gps::UbxNavVelned>();
+
+  // NAV-VELNED is in cm/s, internal state uses mm/s (as NAV-PVT)
+  _model.state.gps.velocity.raw.north = m.velN * 10;
+  _model.state.gps.velocity.raw.east = m.velE * 10;
+  _model.state.gps.velocity.raw.down = m.velD * 10;
+  _model.state.gps.velocity.raw.groundSpeed = static_cast<int32_t>(m.gSpeed) * 10;
+  _model.state.gps.velocity.raw.speed3d = static_cast<int32_t>(m.speed) * 10;
+  _model.state.gps.velocity.raw.heading = m.heading;
+  _model.state.gps.accuracy.heading = m.cAcc;
+}
+
+void GpsSensor::handleNavSvinfo() const
+{
+  if (_ubxMsg.length < 8) return;
+  const auto& m = *_ubxMsg.getAs<Gps::UbxNavSvinfo>();
+
+  const size_t avail = (_ubxMsg.length - 8) / 12;
+  const size_t n = std::min<size_t>(std::min<size_t>(m.numCh, avail), SAT_MAX);
+  _model.state.gps.numCh = n;
+  for (size_t i = 0; i < SAT_MAX; i++)
+  {
+    if (i < n)
+    {
+      const auto& sv = m.sats[i];
+      auto& dst = _model.state.gps.svinfo[i];
+      dst = GpsSatelite{};
+      dst.id = sv.svId;
+      dst.gnssId = (sv.svId >= 120 && sv.svId <= 158) ? 1 : 0; // SBAS : GPS
+      dst.cno = sv.cno;
+      dst.quality.qualityInd = sv.quality & 0x07;
+      dst.quality.svUsed = sv.flags & 0x01;
+    }
+    else
+    {
+      _model.state.gps.svinfo[i] = GpsSatelite{};
+    }
+  }
+}
+
+// DEBUG_GPS_CONNECTION: [0] driver state, [1] baud/100, [2] device version (4 = u-blox 5/6),
+// [3] fixType, [4] satellites, [5] message interval ms, [6] present, [7] protocol major
+void GpsSensor::updateDebug() const
+{
+  if (_model.config.debug.mode != DEBUG_GPS_CONNECTION) return;
+
+  auto& d = _model.state.debug;
+  d[0] = static_cast<int16_t>(_state);
+  d[1] = static_cast<int16_t>(_currentBaud / 100);
+  d[2] = static_cast<int16_t>(_model.state.gps.support.version);
+  d[3] = _model.state.gps.fixType;
+  d[4] = _model.state.gps.numSats;
+  d[5] = static_cast<int16_t>(std::min<uint32_t>(_model.state.gps.interval / 1000, 32000));
+  d[6] = _model.state.gps.present ? 1 : 0;
+  d[7] = _model.state.gps.support.protVerMajor;
+}
+
 void GpsSensor::handleVersion() const
 {
   const char* payload = (const char*)_ubxMsg.payload;
@@ -790,24 +974,26 @@ void GpsSensor::handleVersion() const
   _model.logger.info().log("GPS VER").logln(payload);
   _model.logger.info().log("GPS VER").logln(payload + 30);
 
-     if (std::strcmp(payload + 30, "00060000") == 0 ||
-      std::strcmp(payload + 30, "00061000") == 0)
+  // hwVersion: NEO-6M/6Q report "00040007" (u-blox 6). Match by prefix, not exact string:
+  // 0004/0005/0006xxxx = u-blox 5/6 -> no NAV-PVT, no CFG-GNSS, no CFG-VALSET.
+  const char* hw = payload + 30;
+  if (std::strncmp(hw, "0004", 4) == 0 || std::strncmp(hw, "0005", 4) == 0 || std::strncmp(hw, "0006", 4) == 0)
   {
     _model.state.gps.support.version = GPS_M6;
   }
-  else if (std::strcmp(payload + 30, "00080000") == 0)
+  else if (std::strcmp(hw, "00080000") == 0)
   {
     _model.state.gps.support.version = GPS_M8;
   }
-  else if (std::strcmp(payload + 30, "00090000") == 0)
+  else if (std::strcmp(hw, "00090000") == 0)
   {
     _model.state.gps.support.version = GPS_M9;
   }
-  else if (std::strcmp(payload + 30, "00190000") == 0)
+  else if (std::strcmp(hw, "00190000") == 0)
   {
     _model.state.gps.support.version = GPS_F9;
   }
-  else if (std::strcmp(payload + 30, "000A0000") == 0)
+  else if (std::strcmp(hw, "000A0000") == 0)
   {
     _model.state.gps.support.version = GPS_M10;
   }
@@ -816,14 +1002,6 @@ void GpsSensor::handleVersion() const
   {
     checkSupport(payload + 40);
     _model.logger.info().log("GPS EXT").logln(payload + 40);
-  }
-  else
-  {
-    // NEO-6M MON-VER is only 40 bytes (swVer+hwVer, no extension strings).
-    // Force-set GPS and SBAS which are always present on this module.
-    _model.state.gps.support.gps  = true;
-    _model.state.gps.support.sbas = true;
-    _model.logger.info().logln("GPS M6: GPS+SBAS assumed");
   }
   if (_ubxMsg.length >= 100)
   {
@@ -839,6 +1017,14 @@ void GpsSensor::handleVersion() const
   {
     checkSupport(payload + 130);
     _model.logger.info().log("GPS EXT").logln(payload + 130);
+  }
+
+  if (_model.state.gps.support.version == GPS_M6)
+  {
+    // NEO-6M MON-VER has no (or no useful) extension strings: GPS + SBAS are always present.
+    _model.state.gps.support.gps = true;
+    _model.state.gps.support.sbas = true;
+    _model.logger.info().logln("GPS M6: GPS+SBAS assumed");
   }
 }
 
