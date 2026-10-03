@@ -1561,10 +1561,17 @@ void Actuator::updateBuzzer()
   {
     _model.state.buzzer.push(_model.isModeActive(MODE_ARMED) ? BUZZER_ARMING : BUZZER_DISARMING);
   }
-  if (!_model.state.gps.wasLocked && _model.state.gps.numSats >= _model.config.gps.minSats)
+if (!_model.state.gps.wasLocked && _model.state.gps.numSats >= _model.config.gps.minSats)
   {
     _model.state.buzzer.play(BUZZER_READY_BEEP);
     _model.state.gps.wasLocked = true;
+  }
+  // If satellites drop below the minimum mid-flight, clear the lock flag
+  // so position hold cannot activate and will disengage if already active.
+  if (_model.state.gps.wasLocked && _model.state.gps.numSats < _model.config.gps.minSats)
+  {
+    _model.state.gps.wasLocked = false;
+    _model.state.buzzer.push(BUZZER_GPS_STATUS);
   }
 }
 void Actuator::updateDynLpf()
