@@ -613,6 +613,82 @@ public:
   } sats[];
 } __attribute__((packed));
 
+/**
+ * u-blox 5/6 (e.g. NEO-6M) navigation messages. These receivers have no
+ * UBX-NAV-PVT / UBX-NAV-SAT, so position, velocity and satellites come from
+ * UBX-NAV-SOL, UBX-NAV-POSLLH, UBX-NAV-VELNED and UBX-NAV-SVINFO instead.
+ */
+class UbxNavSol
+{
+public:
+  static constexpr MsgId ID = UBX_NAV_SOL;
+  uint32_t iTow;     // ms
+  int32_t fTow;      // ns
+  int16_t week;
+  uint8_t gpsFix;    // 0: no-fix, 1: dead-recon, 2: 2D, 3: 3D, 4: GNSS+DR, 5: time only
+  uint8_t flags;     // bit0: gpsFixOK
+  int32_t ecefX;     // cm
+  int32_t ecefY;     // cm
+  int32_t ecefZ;     // cm
+  uint32_t pAcc;     // cm
+  int32_t ecefVX;    // cm/s
+  int32_t ecefVY;    // cm/s
+  int32_t ecefVZ;    // cm/s
+  uint32_t sAcc;     // cm/s
+  uint16_t pDOP;     // x 0.01
+  uint8_t reserved1;
+  uint8_t numSV;
+  uint32_t reserved2;
+} __attribute__((packed));
+
+class UbxNavPosllh
+{
+public:
+  static constexpr MsgId ID = UBX_NAV_POSLLH;
+  uint32_t iTow;     // ms
+  int32_t lon;       // deg x 1e-7
+  int32_t lat;       // deg x 1e-7
+  int32_t height;    // above ellipsoid, mm
+  int32_t hMSL;      // above mean sea level, mm
+  uint32_t hAcc;     // mm
+  uint32_t vAcc;     // mm
+} __attribute__((packed));
+
+class UbxNavVelned
+{
+public:
+  static constexpr MsgId ID = UBX_NAV_VELNED;
+  uint32_t iTow;     // ms
+  int32_t velN;      // cm/s
+  int32_t velE;      // cm/s
+  int32_t velD;      // cm/s
+  uint32_t speed;    // 3D speed, cm/s
+  uint32_t gSpeed;   // ground speed, cm/s
+  int32_t heading;   // deg x 1e-5
+  uint32_t sAcc;     // cm/s
+  uint32_t cAcc;     // deg x 1e-5
+} __attribute__((packed));
+
+class UbxNavSvinfo
+{
+public:
+  static constexpr MsgId ID = UBX_NAV_SVINFO;
+  uint32_t iTow;
+  uint8_t numCh;
+  uint8_t globalFlags;
+  uint16_t reserved1;
+  struct {
+    uint8_t chn;
+    uint8_t svId;
+    uint8_t flags;   // bit0: svUsed
+    uint8_t quality; // 0..7, same meaning as NAV-SAT qualityInd
+    uint8_t cno;     // dBHz
+    int8_t elev;     // deg
+    int16_t azim;    // deg
+    int32_t prRes;   // cm
+  } sats[];
+} __attribute__((packed));
+
 // ----------------------------------------------------------------------------------------
 
 template<typename MsgType, typename Enable = void>
