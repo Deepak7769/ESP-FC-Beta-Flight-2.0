@@ -483,7 +483,8 @@ failsafeProcedureChoices[] = {
       Param("baro_lpf_type", &c.baro.filter.type, filterTypeChoices),
       Param("baro_lpf_freq", &c.baro.filter.freq),
 
-      Param("gps_min_sats", &c.gps.minSats),
+     Param("gps_min_sats", &c.gps.minSats),
+      Param("gps_max_sats", &c.gps.maxSats),
       Param("gps_set_home_once", &c.gps.setHomeOnce),
 
       Param("gps_gnss_mode", &c.gps.gnssMode),
