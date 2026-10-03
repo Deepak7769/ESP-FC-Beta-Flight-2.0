@@ -519,6 +519,22 @@ struct AssistedModeState
 };
 
 
+// Position hold runtime/diagnostic state (see Control/PositionHold.h).
+struct PosHoldState
+{
+  bool requested{false};   // MODE_POSHOLD switch is on (and armed)
+  bool ready{false};       // all preconditions satisfied
+  bool controlling{false}; // position controller currently owns roll/pitch angle
+  uint16_t flags{0};       // precondition bits, see Controller::updateAssistedModes
+  uint8_t phase{0};        // 0 off, 1 hold, 2 pilot, 3 brake
+  float errNorth{0.0f};    // m, target - current
+  float errEast{0.0f};
+  float velTargetN{0.0f};  // m/s
+  float velTargetE{0.0f};
+  float rollAngle{0.0f};   // rad, same sign as roll stick
+  float pitchAngle{0.0f};  // rad, same sign as pitch stick
+};
+
 struct VtxState
 {
   uint8_t active = false;
@@ -527,7 +543,7 @@ struct VtxState
 enum GpsDeviceVersion
 {
   GPS_UNKNOWN,
-  GPS_M6,   // NEO-6M / NEO-6Q  (hwVer = 00060000, protVer 13-14)
+  GPS_M6,   // u-blox 5/6 e.g. NEO-6M (hwVersion 00040007): NAV-SOL/POSLLH/VELNED/SVINFO, no NAV-PVT
   GPS_M8,
   GPS_M9,
   GPS_F9,
@@ -641,14 +657,14 @@ struct GpsState
   bool frameError = false;
   bool wasLocked = false;
   bool homeSet = false;
-  uint32_t interval;
-  uint32_t lastMsgTs;
+  uint32_t interval = 0;
+  uint32_t lastMsgTs = 0;
   GpsSupportState support;
   GpsPosition location;
   GpsVelocity velocity;
   GpsAccuracy accuracy;
-  GpsDateTime dateTime;
-  uint32_t time;
+  GpsDateTime dateTime{};
+  uint32_t time = 0;
   GpsSatelite svinfo[SAT_MAX];
   float distanceToHome = 0;
   float directionToHome = 0;
@@ -675,6 +691,7 @@ struct ModelState
 
   AngleV2State angleV2;
   AssistedModeState assistedMode;
+  PosHoldState posHold;
 
   SetpointState setpoint;
 
