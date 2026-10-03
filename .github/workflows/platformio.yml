@@ -28,6 +28,7 @@ jobs:
       - name: Run PlatformIO Tests
         run: |
           platformio test -e native
+          platformio test -e native_poshold
           platformio test -e native_antigravity_bench -f test_fc
           platformio test -e native_angle_v2 -f test_fc
           platformio test -e native_assisted_v2 -f test_fc
