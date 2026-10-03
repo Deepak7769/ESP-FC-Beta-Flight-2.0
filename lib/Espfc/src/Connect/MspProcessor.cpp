@@ -416,7 +416,7 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
     }
 
     case MSP_BOXNAMES:
-      r.writeString("ARM;AIRMODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOXERASE;ANTI GRAVITY;");
+      r.writeString("ARM;AIRMODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOXERASE;ANTI GRAVITY;POS HOLD;");
       break;
 
     case MSP_BOXIDS:
@@ -429,6 +429,7 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
       r.writeU8(MODE_BLACKBOX);
       r.writeU8(MODE_BLACKBOX_ERASE);
       r.writeU8(MODE_ANTI_GRAVITY);
+      r.writeU8(MODE_POSHOLD);
       break;
 
     case MSP_MODE_RANGES:
