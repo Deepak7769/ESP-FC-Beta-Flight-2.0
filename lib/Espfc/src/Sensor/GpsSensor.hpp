@@ -26,6 +26,7 @@ private:
     CONFIGURE_BAUD,
     DISABLE_NMEA,
     ENABLE_UBX,
+    FALLBACK_LEGACY_NAV,
     ENABLE_NAV5,
     ENABLE_SBAS,
     DETECT_GPS_L5,
@@ -63,6 +64,12 @@ private:
     setState(WAIT, ackState, timeoutState);
   }
 
+  // u-blox 5/6 (NEO-6M) has no NAV-PVT/NAV-SAT: use NAV-SOL/POSLLH/VELNED/SVINFO.
+  bool usesLegacyNav() const
+  {
+    return _model.state.gps.support.version == GPS_M6;
+  }
+
   bool isLegacyProto() const
   {
     return _model.state.gps.support.protVerMajor < 27;
@@ -74,6 +81,12 @@ private:
   void handleError();
   void handleNavPvt() const;
   void handleNavSat() const;
+  void handleNavSol() const;
+  void handleNavPosllh() const;
+  void handleNavVelned() const;
+  void handleNavSvinfo() const;
+  void fallbackLegacyNav();
+  void updateDebug() const;
   void handleVersion() const;
   void handleReceive();
   void handleCfgValGet() const;
@@ -100,6 +113,10 @@ private:
   State _ackState = WAIT;
   State _timeoutState = DETECT_BAUD;
   size_t _counter = 0;
+  uint8_t _versionTries = 0;
+  bool _legacyTried = false;
+  uint32_t _noDataDeadline = 0;
+  uint32_t _lastTsAtArm = 0;
   uint32_t _timeout = 0;
   int _currentBaud = 0;
   int _targetBaud = 0;
