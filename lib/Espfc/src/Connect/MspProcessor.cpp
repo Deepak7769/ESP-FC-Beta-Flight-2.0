@@ -321,13 +321,18 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
       r.writeU8(0); // i2c dev count
       break;
 
-    case MSP_BUILD_INFO:
-      r.writeData(buildDate, BUILD_DATE_LENGTH);
-      r.writeData(buildTime, BUILD_TIME_LENGTH);
-      r.writeData(shortGitRevision, GIT_SHORT_REVISION_LENGTH);
-      // 1.46
-      // build info flags - 0 * uint16_t
-      break;
+case MSP_BUILD_INFO:
+  r.writeData(buildDate, BUILD_DATE_LENGTH);
+  r.writeData(buildTime, BUILD_TIME_LENGTH);
+  r.writeData(shortGitRevision, GIT_SHORT_REVISION_LENGTH);
+
+  // MSP API 1.46+: build-option IDs.
+  // Betaflight Configurator uses USE_GPS to decide whether
+  // the dedicated GPS tab should be exposed.
+  r.writeU16(16412); // USE_GPS
+  r.writeU16(16425); // USE_POSITION_HOLD
+  r.writeU16(0);     // end of build-option list
+  break;
 
     case MSP_UID:
       r.writeU32(getBoardId0());
