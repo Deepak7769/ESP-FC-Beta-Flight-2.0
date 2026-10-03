@@ -601,21 +601,11 @@ else
       ARMING_DISABLED_ANGLE,
       false);
 }
-  if (_model.isFeatureActive(FEATURE_GPS))
-  {
-    _model.setArmingDisabled(
-        ARMING_DISABLED_GPS,
-        !_model.state.gps.present ||
-        _model.state.gps.numSats <
-            _model.config.gps.minSats);
-  }
-  else
-  {
-    // Do not retain a stale GPS arming block after the feature is disabled.
-    _model.setArmingDisabled(
-        ARMING_DISABLED_GPS,
-        false);
-  }
+  // GPS arming check intentionally disabled.
+  // GPS is used for position hold but must never block arming.
+  _model.setArmingDisabled(
+      ARMING_DISABLED_GPS,
+      false);
 }
 
 void Actuator::updateModeMask()
