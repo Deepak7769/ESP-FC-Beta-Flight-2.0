@@ -760,7 +760,8 @@ struct VtxConfig
 
 struct GpsConfig
 {
-  uint8_t minSats = 8;
+  uint8_t minSats = 6;   // minimum sats before position hold activates
+  uint8_t maxSats = 16;  // max tracking channels to allocate (1-16, chip hard limit)
   uint8_t setHomeOnce = 1;
 
   // GNSS Constellation Configuration (M10 multi-band support)
