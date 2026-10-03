@@ -100,6 +100,13 @@ _model.state.angleV2 =
 
 _model.state.assistedMode =
     AssistedModeState{};
+    _model.state.posHold =
+    PosHoldState{};
+
+_posHold.reset();
+
+_posHoldWasReady =
+    false;
 
   return 1;
 }
@@ -1249,7 +1256,187 @@ if (_assistedLastUpdateUs != 0)
 
 _assistedLastUpdateUs =
     now;
-
+// =====================================================
+// POSITION HOLD (MODE_POSHOLD)
+//
+// Cascade: position P -> velocity PI -> acceleration ->
+// lean angle (see Control/PositionHold.h). It only
+// replaces the roll/pitch ANGLE request of Angle V2;
+// throttle/altitude stay with the pilot or AltHold V2.
+//
+// flags (state.posHold.flags / debug[7]):
+//   bit0 requested   bit1 gps present   bit2 3D fix
+//   bit3 sats>=min   bit4 gps fresh     bit5 hAcc ok
+//   bit6 mag yaw     bit7 attitude fresh bit8 controlling
+// =====================================================
+ 
+#ifndef ESPFC_POSHOLD_MAX_HACC_MM
+#define ESPFC_POSHOLD_MAX_HACC_MM 10000u
+#endif
+#ifndef ESPFC_POSHOLD_GPS_STALE_US
+#define ESPFC_POSHOLD_GPS_STALE_US 500000u
+#endif
+ 
+auto& posHoldState =
+    _model.state.posHold;
+ 
+PositionHoldOutput posHoldOut{};
+ 
+{
+  const auto& gps =
+      _model.state.gps;
+ 
+  const bool phRequested =
+      _model.isModeActive(
+          MODE_POSHOLD) &&
+      _model.isModeActive(
+          MODE_ARMED) &&
+      !landingV2Requested;
+ 
+  const bool phGpsPresent =
+      gps.present;
+ 
+  const bool phFix =
+      gps.fix &&
+      gps.fixType >= 3;
+ 
+  const bool phSats =
+      gps.numSats >=
+      _model.config.gps.minSats;
+ 
+  const bool phFresh =
+      gps.lastMsgTs != 0 &&
+      static_cast<uint32_t>(
+          now -
+          gps.lastMsgTs) <
+          ESPFC_POSHOLD_GPS_STALE_US;
+ 
+  const bool phAcc =
+      gps.accuracy.horizontal <=
+      ESPFC_POSHOLD_MAX_HACC_MM;
+ 
+  // Heading must be north-referenced: needs a working magnetometer
+  // that the fusion actually uses. Without it GPS velocity and body
+  // heading are in different frames and the aircraft would drift away.
+  const bool phMag =
+      _model.config.fusion.useMag &&
+      _model.magActive();
+ 
+  uint16_t phFlags = 0;
+  phFlags |= phRequested ? (1u << 0) : 0u;
+  phFlags |= phGpsPresent ? (1u << 1) : 0u;
+  phFlags |= phFix ? (1u << 2) : 0u;
+  phFlags |= phSats ? (1u << 3) : 0u;
+  phFlags |= phFresh ? (1u << 4) : 0u;
+  phFlags |= phAcc ? (1u << 5) : 0u;
+  phFlags |= phMag ? (1u << 6) : 0u;
+  phFlags |= attitudeFresh ? (1u << 7) : 0u;
+ 
+  const bool phReady =
+      phRequested &&
+      phGpsPresent &&
+      phFix &&
+      phSats &&
+      phFresh &&
+      phAcc &&
+      phMag &&
+      attitudeFresh;
+ 
+  if (phReady)
+  {
+    if (!_posHoldWasReady)
+    {
+      _posHold.reset(); // latch the hold point at engagement
+    }
+ 
+    PositionHoldInput phIn{};
+    phIn.lat =
+        gps.location.raw.lat;
+    phIn.lon =
+        gps.location.raw.lon;
+    phIn.velNorth =
+        static_cast<float>(
+            gps.velocity.raw.north) *
+        0.001f; // mm/s -> m/s
+    phIn.velEast =
+        static_cast<float>(
+            gps.velocity.raw.east) *
+        0.001f;
+    // MSP_ATTITUDE reports yaw as -euler.z (clockwise heading).
+    phIn.heading =
+        -attitude.euler[
+            AXIS_YAW];
+    phIn.stickRoll =
+        input.ch[
+            AXIS_ROLL];
+    phIn.stickPitch =
+        input.ch[
+            AXIS_PITCH];
+    phIn.dt =
+        dt;
+ 
+    posHoldOut =
+        _posHold.update(
+            phIn);
+  }
+  else
+  {
+    _posHold.reset();
+  }
+ 
+  _posHoldWasReady =
+      phReady;
+ 
+  if (posHoldOut.controlling)
+  {
+    phFlags |= (1u << 8);
+  }
+ 
+  posHoldState.requested =
+      phRequested;
+  posHoldState.ready =
+      phReady;
+  posHoldState.controlling =
+      posHoldOut.controlling;
+  posHoldState.flags =
+      phFlags;
+  posHoldState.phase =
+      static_cast<uint8_t>(
+          posHoldOut.phase);
+  posHoldState.errNorth =
+      posHoldOut.errNorth;
+  posHoldState.errEast =
+      posHoldOut.errEast;
+  posHoldState.velTargetN =
+      posHoldOut.velTargetN;
+  posHoldState.velTargetE =
+      posHoldOut.velTargetE;
+  posHoldState.rollAngle =
+      posHoldOut.rollAngle;
+  posHoldState.pitchAngle =
+      posHoldOut.pitchAngle;
+ 
+  // DEBUG_GPS_RESCUE_TRACKING is reused for position hold:
+  // [0] err north cm  [1] err east cm  [2] vel target N cm/s
+  // [3] vel target E cm/s  [4] pitch cmd 0.1deg  [5] roll cmd 0.1deg
+  // [6] phase (0 off,1 hold,2 pilot,3 brake)  [7] flags
+  if (_model.config.debug.mode ==
+      DEBUG_GPS_RESCUE_TRACKING)
+  {
+    auto& d =
+        _model.state.debug;
+ 
+    d[0] = std::clamp<long>(lrintf(posHoldOut.errNorth * 100.0f), -32000L, 32000L);
+    d[1] = std::clamp<long>(lrintf(posHoldOut.errEast * 100.0f), -32000L, 32000L);
+    d[2] = std::clamp<long>(lrintf(posHoldOut.velTargetN * 100.0f), -32000L, 32000L);
+    d[3] = std::clamp<long>(lrintf(posHoldOut.velTargetE * 100.0f), -32000L, 32000L);
+    d[4] = std::clamp<long>(lrintf(Utils::toDeg(posHoldOut.pitchAngle) * 10.0f), -32000L, 32000L);
+    d[5] = std::clamp<long>(lrintf(Utils::toDeg(posHoldOut.rollAngle) * 10.0f), -32000L, 32000L);
+    d[6] = static_cast<int16_t>(posHoldOut.phase);
+    d[7] = static_cast<int16_t>(phFlags);
+  }
+}
+ 
 // =====================================================
 // ANGLE MODE V2
 // =====================================================
@@ -1257,7 +1444,8 @@ _assistedLastUpdateUs =
 const bool angleActive =
     (_model.isModeActive(
          MODE_ANGLE) ||
-     landingV2Requested) &&
+     landingV2Requested ||
+     posHoldState.requested) && // POS HOLD switch on => at least Angle (never Acro if GPS is not ready)
         attitudeFresh;
 
 if (angleActive &&
@@ -1300,6 +1488,26 @@ if (angleActive)
        axis < AXIS_COUNT_RP;
        ++axis)
   {
+      const float pilotAngle =
+    Utils::toRad(
+        _model.config.level
+            .angleLimit) *
+    input.ch[axis];
+
+// Position hold output uses the stick sign convention:
+// axis 0 = roll (right +), axis 1 = pitch (forward +).
+const float posHoldAngle =
+    std::clamp(
+        (axis == AXIS_ROLL)
+            ? posHoldOut.rollAngle
+            : posHoldOut.pitchAngle,
+        -Utils::toRad(
+            _model.config.level
+                .angleLimit),
+        Utils::toRad(
+            _model.config.level
+                .angleLimit));
+      
     const float requestedAngle =
         landingV2Requested
             ? 0.0f
