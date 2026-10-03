@@ -1,5 +1,6 @@
-#pragma once
 
+#pragma once
+ 
 // -----------------------------------------------------------------------------
 // Position hold (multirotor) - pure math, no Model dependency, unit-testable.
 //
@@ -14,19 +15,19 @@
 //
 // Sign convention (important): the returned angles use the SAME sign as the
 // normalised roll/pitch stick fed to Angle mode.
-//   pitch > 0  ==  stick forward  == accelerate toward the nose
-//   roll  > 0  ==  stick right    == accelerate toward the right
+//   pitch > 0  ==  stick forward  ==  accelerate toward the nose
+//   roll  > 0  ==  stick right    ==  accelerate toward the right
 // This is true for any working Angle mode regardless of the IMU euler sign.
 //
 // Heading is compass heading in radians, clockwise from north (0 = north).
 // -----------------------------------------------------------------------------
-
+ 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-
+ 
 namespace Espfc::Control {
-
+ 
 #ifndef ESPFC_POSHOLD_POS_P
 #define ESPFC_POSHOLD_POS_P 0.4f // 1/s: velocity target per metre of error
 #endif
@@ -60,7 +61,7 @@ namespace Espfc::Control {
 #ifndef ESPFC_POSHOLD_MAX_ERROR_M
 #define ESPFC_POSHOLD_MAX_ERROR_M 30.0f // farther than this: re-latch, never chase
 #endif
-
+ 
 struct PositionHoldParams
 {
   float posP = ESPFC_POSHOLD_POS_P;
@@ -75,7 +76,7 @@ struct PositionHoldParams
   float brakeTimeout = ESPFC_POSHOLD_BRAKE_TIMEOUT_S;
   float maxError = ESPFC_POSHOLD_MAX_ERROR_M;
 };
-
+ 
 enum class PosHoldPhase : uint8_t
 {
   OFF = 0,
@@ -83,7 +84,7 @@ enum class PosHoldPhase : uint8_t
   PILOT = 2,   // pilot stick override
   BRAKE = 3,   // stick released, stopping
 };
-
+ 
 struct PositionHoldInput
 {
   int32_t lat = 0;       // deg * 1e7
@@ -95,7 +96,7 @@ struct PositionHoldInput
   float stickPitch = 0.0f; // -1..1 normalised
   float dt = 0.02f;        // s
 };
-
+ 
 struct PositionHoldOutput
 {
   float rollAngle = 0.0f;  // rad, same sign as roll stick
@@ -109,14 +110,14 @@ struct PositionHoldOutput
   float accelN = 0.0f;     // m/s^2
   float accelE = 0.0f;     // m/s^2
 };
-
+ 
 class PositionHold
 {
 public:
   static constexpr float GRAVITY = 9.80665f;
-
+ 
   explicit PositionHold(const PositionHoldParams& p = PositionHoldParams{}): _p(p) {}
-
+ 
   void reset()
   {
     _phase = PosHoldPhase::OFF;
@@ -124,10 +125,10 @@ public:
     _brakeTime = 0.0f;
     _latched = false;
   }
-
+ 
   PosHoldPhase phase() const { return _phase; }
   const PositionHoldParams& params() const { return _p; }
-
+ 
   // metres north/east from (lat, lon) to the target; flat-earth, fine for < few hundred m
   static void deltaMeters(int32_t targetLat, int32_t targetLon, int32_t lat, int32_t lon, float& north, float& east)
   {
@@ -139,22 +140,22 @@ public:
     north = static_cast<float>(static_cast<int64_t>(targetLat) - static_cast<int64_t>(lat)) * M_PER_UNIT;
     east = static_cast<float>(dlon) * M_PER_UNIT * std::cos(latRad);
   }
-
+ 
   PositionHoldOutput update(const PositionHoldInput& in)
   {
     PositionHoldOutput out;
     const float dt = std::clamp(in.dt, 0.001f, 0.25f);
     const float speed = std::hypot(in.velNorth, in.velEast);
-
+ 
     const bool stickActive = std::fabs(in.stickRoll) > _p.deadband || std::fabs(in.stickPitch) > _p.deadband;
-
+ 
     // ---- phase machine ----------------------------------------------------
     if (!_latched)
     {
       latch(in);
       _phase = PosHoldPhase::HOLD;
     }
-
+ 
     if (stickActive)
     {
       _phase = PosHoldPhase::PILOT;
@@ -165,7 +166,7 @@ public:
       _phase = PosHoldPhase::BRAKE;
       _brakeTime = 0.0f;
     }
-
+ 
     if (_phase == PosHoldPhase::BRAKE)
     {
       _brakeTime += dt;
@@ -175,27 +176,27 @@ public:
         _phase = PosHoldPhase::HOLD;
       }
     }
-
+ 
     out.phase = _phase;
-
+ 
     if (_phase == PosHoldPhase::PILOT)
     {
       latch(in); // target follows the aircraft while the pilot flies
       out.controlling = false;
       return out;
     }
-
+ 
     // ---- position error -> velocity target --------------------------------
     float eN = 0.0f, eE = 0.0f;
     deltaMeters(_targetLat, _targetLon, in.lat, in.lon, eN, eE);
-
+ 
     if (std::hypot(eN, eE) > _p.maxError)
     {
       // Too far from the hold point (GPS jump, long drift): never chase it.
       latch(in);
       eN = eE = 0.0f;
     }
-
+ 
     float vtN = 0.0f, vtE = 0.0f;
     if (_phase == PosHoldPhase::HOLD)
     {
@@ -210,14 +211,14 @@ public:
       }
     }
     // BRAKE: velocity target stays zero, position P is not applied.
-
+ 
     // ---- velocity PI -> acceleration (north/east) -------------------------
     const float evN = vtN - in.velNorth;
     const float evE = vtE - in.velEast;
-
+ 
     float aN = _p.velP * evN + _iN;
     float aE = _p.velP * evE + _iE;
-
+ 
     float a = std::hypot(aN, aE);
     const bool saturated = a > _p.maxAccel;
     if (saturated)
@@ -226,20 +227,20 @@ public:
       aN *= k;
       aE *= k;
     }
-
+ 
     // Integrate only while not saturated (anti-windup), and only while holding.
     if (!saturated && _phase == PosHoldPhase::HOLD)
     {
       _iN = std::clamp(_iN + _p.velI * evN * dt, -_p.iLimit, _p.iLimit);
       _iE = std::clamp(_iE + _p.velI * evE * dt, -_p.iLimit, _p.iLimit);
     }
-
+ 
     // ---- rotate north/east acceleration into body forward/right -----------
     const float c = std::cos(in.heading);
     const float s = std::sin(in.heading);
     const float aForward = aN * c + aE * s;
     const float aRight = -aN * s + aE * c;
-
+ 
     out.pitchAngle = std::clamp(std::atan(aForward / GRAVITY), -_p.maxAngle, _p.maxAngle);
     out.rollAngle = std::clamp(std::atan(aRight / GRAVITY), -_p.maxAngle, _p.maxAngle);
     out.controlling = true;
@@ -251,7 +252,7 @@ public:
     out.accelE = aE;
     return out;
   }
-
+ 
 private:
   void latch(const PositionHoldInput& in)
   {
@@ -259,7 +260,7 @@ private:
     _targetLon = in.lon;
     _latched = true;
   }
-
+ 
   PositionHoldParams _p;
   PosHoldPhase _phase = PosHoldPhase::OFF;
   int32_t _targetLat = 0;
@@ -269,5 +270,9 @@ private:
   float _brakeTime = 0.0f;
   bool _latched = false;
 };
-
+ 
 } // namespace Espfc::Control
+ 
+
+
+
