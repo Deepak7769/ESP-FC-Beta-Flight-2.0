@@ -8,6 +8,9 @@ namespace Espfc::Connect {
 constexpr size_t MSP_BUF_SIZE = 192;
 constexpr size_t MSP_BUF_OUT_SIZE = 240;
 
+// ESP-FC custom MSPv2 telemetry commands.
+constexpr uint16_t MSP2_ESPFC_GPS_FILTER = 0x3013;
+
 enum MspState
 {
   MSP_STATE_IDLE,
