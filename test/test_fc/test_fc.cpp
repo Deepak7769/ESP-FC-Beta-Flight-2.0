@@ -7845,7 +7845,7 @@ void test_althold_v2_configurable_limits_are_persisted()
 
 void test_altitude_v2_rate_gate_reports_rejection()
 {
-  When(Method(ArduinoFake(), micros)).Return(100000, 200000);
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(200000);
 
   Model model;
   model.state.gyro.clock = 1000;
@@ -7857,15 +7857,15 @@ void test_altitude_v2_rate_gate_reports_rejection()
   model.begin();
 
   model.state.attitude.healthy = true;
-  model.state.attitude.lastUpdateUs = 100000;
+  model.state.attitude.lastUpdateUs = 199000;
   model.state.accel.present = true;
   model.state.accel.sampleValid = true;
-  model.state.accel.lastUpdateUs = 100000;
+  model.state.accel.lastUpdateUs = 199000;
   model.state.baro.present = true;
   model.state.baro.sampleValid = true;
   model.state.baro.altitudeBiasSamples = -1;
   model.state.baro.rate = 100;
-  model.state.baro.lastUpdateUs = 100000;
+  model.state.baro.lastUpdateUs = 199000;
   model.state.baro.altitudeGround = 0.0f;
   model.state.baro.vario = 0.0f;
 
