@@ -1,4 +1,5 @@
 #include "Sensor/AccelSensor.hpp"
+#include "Hal/Time.hpp"
 
 namespace Espfc::Sensor {
 
@@ -9,6 +10,8 @@ AccelSensor::AccelSensor(Model& model): _model(model) {}
 
 int AccelSensor::begin()
 {
+  _model.state.accel.sampleValid = false;
+  _model.state.accel.lastUpdateUs = 0;
   _model.state.accel.adc.store({0.0f, 0.0f, ACCEL_G});
 
   _gyro = _model.state.gyro.dev;
@@ -119,6 +122,8 @@ int FAST_CODE_ATTR AccelSensor::filter()
   }
 
   _model.state.accel.adc.store(accel);
+  _model.state.accel.sampleValid = true;
+  _model.state.accel.lastUpdateUs = micros();
 
   return 1;
 }

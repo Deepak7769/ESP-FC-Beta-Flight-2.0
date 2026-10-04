@@ -58,6 +58,7 @@ private:
 
   float _altHoldAltitudeTarget = 0.0f;
   float _altHoldVerticalRateTarget = 0.0f;
+  float _altHoldVerticalAccelerationTarget = 0.0f;
 
   uint32_t _assistedLastUpdateUs = 0;
 // Position hold (MODE_POSHOLD) controller and transition state.

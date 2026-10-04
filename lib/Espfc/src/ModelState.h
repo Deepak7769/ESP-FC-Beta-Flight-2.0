@@ -410,6 +410,8 @@ struct GyroState
 struct AccelState
 {
   bool present;
+  bool sampleValid{false};
+  uint32_t lastUpdateUs{0};
   VectorInt16 raw;
   Utils::SeqLockWrapper<VectorFloat> adc{};
   VectorFloat prev;

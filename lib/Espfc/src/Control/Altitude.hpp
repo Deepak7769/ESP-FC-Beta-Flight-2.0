@@ -41,6 +41,9 @@ Altitude(Model& model):
     altitude.vario =
         0.0f;
 
+    altitude.acceleration =
+        0.0f;
+
     altitude.baroInnovation =
         0.0f;
 
@@ -307,10 +310,21 @@ const bool accelProjectionFresh =
         attitude.lastUpdateUs) <=
         projectionMaxAgeUs;
 
+constexpr uint32_t ACCEL_STALE_US = 50000;
+
+const bool accelFresh =
+    _model.state.accel.present &&
+    _model.state.accel.sampleValid &&
+    static_cast<uint32_t>(
+        now -
+        _model.state.accel.lastUpdateUs) <
+    ACCEL_STALE_US;
+
 const float safeAccZ =
     (fusionValid &&
      accelFinite &&
-     accelProjectionFresh)
+     accelProjectionFresh &&
+     accelFresh)
         ? accZ
         : 0.0f;
 // --------------------------------------------------
@@ -393,7 +407,8 @@ if (_heightInitialized &&
 {
   const float predictedHeight =
       altitude.height +
-      predictedVario * dt;
+      previousVario * dt +
+      0.5f * safeAccZ * dt * dt;
 
   if (newBaroSample &&
       baroFresh &&
@@ -467,6 +482,9 @@ if (_heightInitialized &&
 
 altitude.vario =
     predictedVario;
+
+altitude.acceleration =
+    safeAccZ;
 
 if (acceptedThisSample &&
     newBaroSample &&
@@ -583,6 +601,7 @@ altitude.healthy =
     baroFresh &&
     acceptedBaroFresh &&
     attitudeFresh &&
+    accelFresh &&
     accelFinite &&
     std::isfinite(
         altitude.height) &&

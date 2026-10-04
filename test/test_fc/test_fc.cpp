@@ -5407,6 +5407,12 @@ static void prepareAltitudeRegressionModel(
 {
   model.state.accel.timer.rate =
       accelRate;
+  model.state.accel.present =
+      true;
+  model.state.accel.sampleValid =
+      true;
+  model.state.accel.lastUpdateUs =
+      nowUs;
 
   model.state.baro.rate =
       50;

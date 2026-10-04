@@ -83,6 +83,9 @@ _altHoldAltitudeTarget =
 _altHoldVerticalRateTarget =
     0.0f;
 
+_altHoldVerticalAccelerationTarget =
+    0.0f;
+
 _assistedLastUpdateUs =
     0;
 
@@ -1695,8 +1698,15 @@ const bool altActive =
   // unreachable -20 m / -60 m / +60 m backlog.
   // --------------------------------------------------
 
-  constexpr float ALTITUDE_KP =
-      0.50f;
+  const auto& altitudePidConfig =
+      _model.config.pid[FC_PID_ALT];
+
+  // FC_PID_ALT.P is the outer altitude-position gain. Keep the historical
+  // 0.50 default for legacy EEPROM images that still contain zero here.
+  const float altitudeKp =
+      altitudePidConfig.P > 0
+          ? static_cast<float>(altitudePidConfig.P) * 0.01f
+          : 0.50f;
 
   constexpr float MAX_POSITION_CORRECTION_MS =
       1.0f;
@@ -1732,7 +1742,7 @@ const bool altActive =
 
   const float velocityCorrection =
       std::clamp(
-          ALTITUDE_KP *
+          altitudeKp *
               altitudeError,
           -MAX_POSITION_CORRECTION_MS,
           MAX_POSITION_CORRECTION_MS);
@@ -1750,20 +1760,48 @@ const bool altActive =
             -MAX_DESCENT_MS,
             MAX_CLIMB_MS);
 
-    // Smooth vertical acceleration.
+    // Industrial multicopter controllers shape vertical trajectories with
+    // both acceleration and jerk limits. Keep a conservative acceleration
+    // envelope and also rate-limit changes in that acceleration.
     constexpr float VERTICAL_ACCEL_LIMIT_MSS =
-        1.0f;
+        2.5f;
+    constexpr float VERTICAL_JERK_LIMIT_MSSS =
+        5.0f;
 
-    const float maxVzStep =
-        VERTICAL_ACCEL_LIMIT_MSS *
+    const float desiredAcceleration =
+        std::clamp(
+            (requestedVz -
+             _altHoldVerticalRateTarget) /
+                std::max(dt, 0.001f),
+            -VERTICAL_ACCEL_LIMIT_MSS,
+            VERTICAL_ACCEL_LIMIT_MSS);
+
+    const float maxAccelerationStep =
+        VERTICAL_JERK_LIMIT_MSSS *
         dt;
 
-    _altHoldVerticalRateTarget +=
+    _altHoldVerticalAccelerationTarget +=
         std::clamp(
-            requestedVz -
-                _altHoldVerticalRateTarget,
-            -maxVzStep,
-            maxVzStep);
+            desiredAcceleration -
+                _altHoldVerticalAccelerationTarget,
+            -maxAccelerationStep,
+            maxAccelerationStep);
+
+    _altHoldVerticalAccelerationTarget =
+        std::clamp(
+            _altHoldVerticalAccelerationTarget,
+            -VERTICAL_ACCEL_LIMIT_MSS,
+            VERTICAL_ACCEL_LIMIT_MSS);
+
+    _altHoldVerticalRateTarget +=
+        _altHoldVerticalAccelerationTarget *
+        dt;
+
+    _altHoldVerticalRateTarget =
+        std::clamp(
+            _altHoldVerticalRateTarget,
+            -MAX_DESCENT_MS,
+            MAX_CLIMB_MS);
 
     assisted.altitudeTarget =
         _altHoldAltitudeTarget;
