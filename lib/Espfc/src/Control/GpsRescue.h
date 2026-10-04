@@ -417,11 +417,6 @@ public:
   }
 
 private:
-  static void horizontalHold(
-      const GpsRescueInput& in,
-      const GpsRescueParams& p,
-      GpsRescueOutput& out);
-
   static uint16_t validate(
       const GpsRescueInput& in,
       const GpsRescueParams& p)
