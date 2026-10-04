@@ -7849,12 +7849,9 @@ void test_altitude_v2_rate_gate_reports_rejection()
 
   Model model;
   model.state.gyro.clock = 1000;
-  model.config.loopSync = 1;
-  model.config.mixerSync = 1;
-  model.config.mixer.type = FC_MIXER_QUADX;
+  model.state.accel.timer.rate = 100;
   model.config.baro.dev = BARO_BMP280;
   model.config.altHold.baroRateInnovationGate = 5;
-  model.begin();
 
   model.state.attitude.healthy = true;
   model.state.attitude.lastUpdateUs = 100000;
