@@ -74,7 +74,7 @@ namespace Espfc::Control {
 #endif
 
 #ifndef ESPFC_POSHOLD_FILTER_MAX_ALPHA
-#define ESPFC_POSHOLD_FILTER_MAX_ALPHA 0.75f
+#define ESPFC_POSHOLD_FILTER_MAX_ALPHA 0.40f
 #endif
  
 struct PositionHoldParams
@@ -177,6 +177,8 @@ void reset()
   _filterInitialized = false;
   _filterLastGpsTimestampMs = 0;
   _filterFallbackElapsedS = 0.0f;
+  _filterLastLat = 0;
+  _filterLastLon = 0;
 
   _filteredLat = 0.0;
   _filteredLon = 0.0;
@@ -188,6 +190,7 @@ void reset()
   _filteredVelEast = 0.0f;
   _acceptedSamples = 0;
   _rejectedSamples = 0;
+  _consecutiveRejectedSamples = 0;
 }
  
   PosHoldPhase phase() const { return _phase; }
@@ -334,6 +337,7 @@ void reset()
       if (accepted)
       {
         ++_acceptedSamples;
+        _consecutiveRejectedSamples = 0;
         const float alpha =
             std::clamp(
                 1.0f -
@@ -356,12 +360,28 @@ void reset()
                 alpha) *
             innovationEast /
             (METERS_PER_DEG * cosLat);
-
-        _acceptedSamples++;
       }
       else
       {
         ++_rejectedSamples;
+        ++_consecutiveRejectedSamples;
+
+        // A persistent innovation rejection means the filter's reference is
+        // no longer trustworthy (for example a cold-start offset or a large
+        // GPS step). Re-seed from the raw fix instead of permanently locking
+        // the filter out. The hold latch is invalidated so the controller
+        // re-latches at this recovered position.
+        if (_consecutiveRejectedSamples >= 5)
+        {
+          _filteredLat = rawLat;
+          _filteredLon = rawLon;
+          _previousFilteredLat = in.lat;
+          _previousFilteredLon = in.lon;
+          _filteredVelNorth = 0.0f;
+          _filteredVelEast = 0.0f;
+          _latched = false;
+          _consecutiveRejectedSamples = 0;
+        }
       }
 
       _filterLastGpsTimestampMs =
