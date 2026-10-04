@@ -326,11 +326,25 @@ case MSP_BUILD_INFO:
   r.writeData(buildTime, BUILD_TIME_LENGTH);
   r.writeData(shortGitRevision, GIT_SHORT_REVISION_LENGTH);
 
-  // MSP API 1.46+: build-option IDs.
-  // Betaflight Configurator uses USE_GPS to decide whether
-  // the dedicated GPS tab should be exposed.
+  // MSP API 1.46+: report every protocol/feature that this firmware actually
+  // exposes to Configurator. An incomplete build-option list is dangerous:
+  // Configurator uses it to disable unsupported receiver and motor choices.
+  r.writeU16(4097);  // USE_SERIALRX_CRSF
+  r.writeU16(4100);  // USE_SERIALRX_IBUS
+  r.writeU16(4102);  // USE_RX_PPM
+  r.writeU16(4103);  // USE_SERIALRX_SBUS
   r.writeU16(16412); // USE_GPS
+  r.writeU16(16415); // USE_MAG
+  r.writeU16(16422); // USE_ALTITUDE_HOLD
+  r.writeU16(16423); // USE_SOFTSERIAL
+  r.writeU16(16421); // USE_VTX
   r.writeU16(16425); // USE_POSITION_HOLD
+  r.writeU16(8230);  // USE_BRUSHED
+  r.writeU16(8231);  // USE_DSHOT
+  r.writeU16(8232);  // USE_MULTISHOT
+  r.writeU16(8233);  // USE_ONESHOT
+  r.writeU16(8234);  // USE_PROSHOT
+  r.writeU16(8235);  // USE_PWM_OUTPUT
   r.writeU16(0);     // end of build-option list
   break;
 
