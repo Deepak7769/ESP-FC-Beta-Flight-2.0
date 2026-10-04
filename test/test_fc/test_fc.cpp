@@ -8013,9 +8013,7 @@ void test_controller_althold_v2_transition_stress_preserves_target_contract()
 void test_altitude_v2_acceleration_bias_observer_learns_residual()
 {
   When(Method(ArduinoFake(), micros))
-      .Return(
-          200000,
-          210000);
+      .AlwaysReturn(200000);
 
   Model model;
   model.state.gyro.clock = 1000;
@@ -8044,9 +8042,9 @@ void test_altitude_v2_acceleration_bias_observer_learns_residual()
   altitude.begin();
   altitude.update(true);
 
-  model.state.attitude.lastUpdateUs = 210000;
-  model.state.accel.lastUpdateUs = 210000;
-  model.state.baro.lastUpdateUs = 210000;
+  model.state.attitude.lastUpdateUs = 200000;
+  model.state.accel.lastUpdateUs = 200000;
+  model.state.baro.lastUpdateUs = 200000;
 
   altitude.update(true);
 
