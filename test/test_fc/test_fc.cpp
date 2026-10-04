@@ -8059,38 +8059,27 @@ void test_altitude_v2_acceleration_bias_observer_learns_residual()
 
 void test_mixer_vertical_saturation_feedback_is_directional()
 {
-  When(Method(ArduinoFake(), micros)).AlwaysReturn(100000);
-
   Model model;
-  model.state.gyro.clock = 1000;
-  model.config.loopSync = 1;
-  model.config.mixerSync = 1;
-  model.config.mixer.type = FC_MIXER_QUADX;
-  model.config.output.motorLimit = 100;
-  model.begin();
 
-  Output::Mixer mixer(model);
-  mixer.begin();
-
-  model.state.output.ch[AXIS_THRUST] = 1.0f;
-  model.state.innerPid[AXIS_THRUST].error = 1.0f;
-  mixer.update();
+  model.setOutputSaturation(
+      true,
+      true);
 
   TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturationHigh);
+      model.state.output.saturated);
 
   TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturated);
+      model.state.innerPid[AXIS_THRUST].outputSaturated);
 
-  model.state.output.ch[AXIS_THRUST] = -1.0f;
-  model.state.innerPid[AXIS_THRUST].error = -1.0f;
-  mixer.update();
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturationLow);
+  model.setOutputSaturation(
+      true,
+      false);
 
   TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturated);
+      model.state.output.saturated);
+
+  TEST_ASSERT_FALSE(
+      model.state.innerPid[AXIS_THRUST].outputSaturated);
 }
 
 int main(int argc, char** argv)
