@@ -1362,84 +1362,61 @@ PositionHoldOutput posHoldOut{};
       phAcc &&
       attitudeFresh;
  
-  if (phReady)
+  // Keep the GPS filter running independently of Position Hold authority.
+  // This keeps filtered telemetry warm and valid even when the mode switch is
+  // off or the controller is temporarily not-ready.
+  if (phGpsPresent && phFix)
   {
-    if (!_posHoldWasReady)
-    {
-      _posHold.reset(); // latch the hold point at engagement
-    }
- 
     PositionHoldInput phIn{};
-    phIn.lat =
-        gps.location.raw.lat;
-    phIn.lon =
-        gps.location.raw.lon;
+    phIn.lat = gps.location.raw.lat;
+    phIn.lon = gps.location.raw.lon;
     phIn.velNorth =
-        static_cast<float>(
-            gps.velocity.raw.north) *
-        0.001f; // mm/s -> m/s
+        static_cast<float>(gps.velocity.raw.north) * 0.001f; // mm/s -> m/s
     phIn.velEast =
-        static_cast<float>(
-            gps.velocity.raw.east) *
-        0.001f;
-    // GPS COG is clockwise from north; PositionHold expects the
-    // same north-referenced convention. At low speed, retain IMU yaw.
-    phIn.heading =
-        phHeading;
-    phIn.stickRoll =
-        input.ch[
-            AXIS_ROLL];
-    phIn.stickPitch =
-        input.ch[
-            AXIS_PITCH];
-    phIn.dt =
-        dt;
-          phIn.gpsTimestampMs =
-        gps.time;
-
+        static_cast<float>(gps.velocity.raw.east) * 0.001f;
+    phIn.heading = phHeading;
+    phIn.stickRoll = input.ch[AXIS_ROLL];
+    phIn.stickPitch = input.ch[AXIS_PITCH];
+    phIn.dt = dt;
+    phIn.gpsTimestampMs = gps.time;
     phIn.horizontalAccuracy =
-        static_cast<float>(
-            gps.accuracy.horizontal) *
-        0.001f;
- 
-    posHoldOut =
-        _posHold.update(
-            phIn);
-          gps.location.filtered.lat =
-        posHoldOut.filteredLat;
+        static_cast<float>(gps.accuracy.horizontal) * 0.001f;
 
-    gps.location.filtered.lon =
-        posHoldOut.filteredLon;
+    if (phReady)
+    {
+      if (!_posHoldWasReady)
+      {
+        // Controller state starts fresh, but the GPS filter stays warm.
+        _posHold.resetController();
+      }
 
-    gps.location.filtered.height =
-        gps.location.raw.height;
+      posHoldOut = _posHold.update(phIn);
+    }
+    else
+    {
+      posHoldOut = _posHold.filterGps(phIn);
+    }
+
+    gps.location.filtered.lat = posHoldOut.filteredLat;
+    gps.location.filtered.lon = posHoldOut.filteredLon;
+    gps.location.filtered.height = gps.location.raw.height;
 
     gps.diagnostics.filteredNorthSpeed =
         static_cast<int32_t>(
-            std::lrint(
-                posHoldOut.filteredVelNorth *
-                1000.0f));
-
+            std::lrint(posHoldOut.filteredVelNorth * 1000.0f));
     gps.diagnostics.filteredEastSpeed =
         static_cast<int32_t>(
-            std::lrint(
-                posHoldOut.filteredVelEast *
-                1000.0f));
-
+            std::lrint(posHoldOut.filteredVelEast * 1000.0f));
     gps.diagnostics.filteredGroundSpeed =
         static_cast<uint32_t>(
             std::max(
                 0.0f,
-                posHoldOut.filteredGroundSpeed *
-                1000.0f));
-
+                posHoldOut.filteredGroundSpeed * 1000.0f));
     gps.diagnostics.rawFilteredDistance =
         static_cast<uint32_t>(
             std::max(
                 0.0f,
-                posHoldOut.rawFilteredDistance *
-                1000.0f));
-
+                posHoldOut.rawFilteredDistance * 1000.0f));
     gps.diagnostics.filterAccepted =
         posHoldOut.gpsFilterAccepted;
     gps.diagnostics.acceptedSamples =
@@ -1447,48 +1424,41 @@ PositionHoldOutput posHoldOut{};
     gps.diagnostics.rejectedSamples =
         posHoldOut.rejectedSamples;
   }
-  else
-  {
-    if (!phRequested)
-    {
-      // The mode switch is off: a new engagement must start from a fresh
-      // latch/filter state.
-      _posHold.reset();
-      _posHoldNotReadySinceUs = 0;
-    }
-    else
-    {
-      // Keep Position Hold state alive across short GPS/attitude quality
-      // gaps. A transient 5-200 ms freshness blip must not erase the filter,
-      // latch point, counters, or I-term.
-      if (_posHoldNotReadySinceUs == 0)
-      {
-        _posHoldNotReadySinceUs = now;
-        if (_posHoldWasReady)
-        {
-          _model.state.buzzer.push(BUZZER_GPS_STATUS);
-        }
-      }
-      else if (static_cast<uint32_t>(
-                   now - _posHoldNotReadySinceUs) >=
-               1000000UL)
-      {
-        // Sustained failure: discard the controller/filter state so the next
-        // healthy engagement starts from a known-good GPS solution.
-        _posHold.reset();
-        _posHoldNotReadySinceUs = 0;
-      }
-    }
-  }
 
   if (phReady)
   {
     _posHoldNotReadySinceUs = 0;
   }
- 
+  else if (!phRequested)
+  {
+    // Mode switch is off: reset only controller authority. Keep the GPS
+    // filter state alive so the next engagement is not a cold start.
+    _posHold.resetController();
+    _posHoldNotReadySinceUs = 0;
+  }
+  else
+  {
+    // Keep controller/latch state across short GPS/attitude quality gaps.
+    if (_posHoldNotReadySinceUs == 0)
+    {
+      _posHoldNotReadySinceUs = now;
+      if (_posHoldWasReady)
+      {
+        _model.state.buzzer.push(BUZZER_GPS_STATUS);
+      }
+    }
+    else if (static_cast<uint32_t>(
+                 now - _posHoldNotReadySinceUs) >=
+             1000000UL)
+    {
+      _posHold.resetController();
+      _posHoldNotReadySinceUs = 0;
+    }
+  }
+
   _posHoldWasReady =
       phReady;
- 
+
   if (posHoldOut.controlling)
   {
     phFlags |= (1u << 8);
