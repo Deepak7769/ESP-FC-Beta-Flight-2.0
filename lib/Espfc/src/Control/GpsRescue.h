@@ -417,27 +417,10 @@ public:
   }
 
 private:
-  static void horizontalControl(
-      const GpsRescueInput& in,
-      const GpsRescueParams& p,
-      float targetNorth,
-      float targetEast,
-      float maxSpeed,
-      GpsRescueOutput& out);
-
   static void horizontalHold(
       const GpsRescueInput& in,
       const GpsRescueParams& p,
-      GpsRescueOutput& out)
-  {
-    horizontalControl(
-        in,
-        p,
-        in.north,
-        in.east,
-        0.0f,
-        out);
-  }
+      GpsRescueOutput& out);
 
   static uint16_t validate(
       const GpsRescueInput& in,
@@ -704,6 +687,20 @@ private:
 
     out.targetVelocityNorth = targetVNorth;
     out.targetVelocityEast = targetVEast;
+  }
+
+  static void horizontalHold(
+      const GpsRescueInput& in,
+      const GpsRescueParams& p,
+      GpsRescueOutput& out)
+  {
+    horizontalControl(
+        in,
+        p,
+        in.north,
+        in.east,
+        0.0f,
+        out);
   }
 
   GpsRescuePhase _phase{GpsRescuePhase::IDLE};
