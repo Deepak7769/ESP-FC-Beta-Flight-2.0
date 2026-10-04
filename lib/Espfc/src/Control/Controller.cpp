@@ -1711,9 +1711,9 @@ const bool altActive =
   constexpr float MAX_POSITION_CORRECTION_MS =
       1.0f;
 
-  constexpr float MAX_TARGET_ERROR_M =
+  const float maxTargetErrorM =
       MAX_POSITION_CORRECTION_MS /
-      ALTITUDE_KP; // 2.0 m
+      std::max(altitudeKp, 0.01f);
 
   // Integrate pilot climb/descent command.
   _altHoldAltitudeTarget +=
@@ -1724,11 +1724,11 @@ const bool altActive =
   // estimated altitude.
   const float minAltitudeTarget =
       altitude.height -
-      MAX_TARGET_ERROR_M;
+      maxTargetErrorM;
 
   const float maxAltitudeTarget =
       altitude.height +
-      MAX_TARGET_ERROR_M;
+      maxTargetErrorM;
 
   _altHoldAltitudeTarget =
       std::clamp(

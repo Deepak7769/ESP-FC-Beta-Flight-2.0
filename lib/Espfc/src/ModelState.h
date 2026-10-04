@@ -474,6 +474,9 @@ struct AltitudeState
   float height{0.0f};
   float vario{0.0f};
 
+  // Earth-frame vertical acceleration used by the Z estimator and diagnostics.
+  float acceleration{0.0f};
+
   // Barometer estimator diagnostics
   float baroInnovation{0.0f};
 
