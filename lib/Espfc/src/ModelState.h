@@ -575,6 +575,7 @@ struct GpsCoordinate
 struct GpsPosition
 {
   GpsCoordinate<int32_t> raw;
+  GpsCoordinate<int32_t> filtered;
   GpsCoordinate<int32_t> home;
 };
 
@@ -592,6 +593,38 @@ struct GpsSpeed
 struct GpsVelocity
 {
   GpsSpeed<int32_t> raw;
+};
+
+struct GpsPositionDiagnostics
+{
+  // Raw position-to-position movement calculated from consecutive
+  // GPS position fixes. Units: mm/s.
+  int32_t rawNorthSpeed = 0;
+  int32_t rawEastSpeed = 0;
+  uint32_t rawGroundSpeed = 0;
+
+  // Filtered position-to-position movement. Units: mm/s.
+  int32_t filteredNorthSpeed = 0;
+  int32_t filteredEastSpeed = 0;
+  uint32_t filteredGroundSpeed = 0;
+
+  // Time associated specifically with the latest position sample.
+  uint32_t positionTimestampUs = 0;
+  uint32_t positionIntervalUs = 0;
+
+  // Number of position samples accepted by the filter.
+  uint32_t acceptedSamples = 0;
+
+  // Number of raw position samples rejected by the innovation gate.
+  uint32_t rejectedSamples = 0;
+
+  // Distance between the raw position and filtered position.
+  // Units: millimetres.
+  uint32_t rawFilteredDistance = 0;
+
+  // True when the most recent raw GPS position was accepted by
+  // the position filter.
+  bool filterAccepted = false;
 };
 
 struct GpsAccuracy
@@ -662,6 +695,7 @@ struct GpsState
   GpsSupportState support;
   GpsPosition location;
   GpsVelocity velocity;
+  GpsPositionDiagnostics diagnostics;
   GpsAccuracy accuracy;
   GpsDateTime dateTime{};
   uint32_t time = 0;
