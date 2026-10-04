@@ -562,6 +562,8 @@ private:
 
       _filterLastGpsTimestampMs =
           in.gpsTimestampMs;
+      _filterLastLat = in.lat;
+      _filterLastLon = in.lon;
 
       // Filtered position-derived velocity.
       const int32_t filteredLat =
@@ -648,7 +650,9 @@ private:
         std::hypot(
             rawFilteredNorth,
             rawFilteredEast);
-   
+
+    out.acceptedSamples = _acceptedSamples;
+    out.rejectedSamples = _rejectedSamples;
   }
 
   void latch(
