@@ -1538,27 +1538,32 @@ if (angleActive)
             .angleLimit) *
     input.ch[axis];
 
-// Position hold output uses the stick sign convention:
-// axis 0 = roll (right +), axis 1 = pitch (forward +).
-const float posHoldAngle =
-    std::clamp(
-        (axis == AXIS_ROLL)
-            ? posHoldOut.rollAngle
-            : posHoldOut.pitchAngle,
-        -Utils::toRad(
-            _model.config.level
-                .angleLimit),
-        Utils::toRad(
-            _model.config.level
-                .angleLimit));
-      
-    const float requestedAngle =
-        landingV2Requested
-            ? 0.0f
-            : Utils::toRad(
+      // Position Hold output uses the stick sign convention:
+      // axis 0 = roll (right +), axis 1 = pitch (forward +).
+      const float posHoldAngle =
+          std::clamp(
+              (axis == AXIS_ROLL)
+                  ? posHoldOut.rollAngle
+                  : posHoldOut.pitchAngle,
+              -Utils::toRad(
                   _model.config.level
-                      .angleLimit) *
-                  input.ch[axis];
+                      .angleLimit),
+              Utils::toRad(
+                  _model.config.level
+                      .angleLimit));
+
+      const float pilotAngle =
+          Utils::toRad(
+              _model.config.level
+                  .angleLimit) *
+          input.ch[axis];
+
+      const float requestedAngle =
+          landingV2Requested
+              ? 0.0f
+              : posHoldOut.controlling
+                    ? posHoldAngle
+                    : pilotAngle;
 
     const float change =
         std::clamp(
