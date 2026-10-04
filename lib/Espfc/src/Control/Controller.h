@@ -63,6 +63,7 @@ private:
 // Position hold (MODE_POSHOLD) controller and transition state.
 PositionHold _posHold;
 bool _posHoldWasReady = false;
+uint32_t _posHoldNotReadySinceUs = 0;
 };
 
 } // namespace Espfc::Control
