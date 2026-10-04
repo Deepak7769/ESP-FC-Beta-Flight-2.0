@@ -128,7 +128,37 @@ private:
   Gps::NmeaMessage _nmeaMsg;
 
   Stream::ReadWritable* _port;
-  Utils::Timer _timer;
+   Utils::Timer _timer;
+
+  // ------------------------------------------------------------------
+  // GPS position filter state.
+  //
+  // IMPORTANT:
+  // _model.state.gps.location.raw remains the receiver's untouched
+  // position. The filtered result is stored separately.
+  // ------------------------------------------------------------------
+
+  bool _positionFilterInitialized = false;
+
+  int32_t _previousRawLat = 0;
+  int32_t _previousRawLon = 0;
+
+  uint32_t _previousPositionTs = 0;
+
+  double _filteredLat = 0.0;
+  double _filteredLon = 0.0;
+
+  int32_t _previousFilteredLat = 0;
+  int32_t _previousFilteredLon = 0;
+
+  static constexpr float POSITION_FILTER_TAU_S = 0.60f;
+  static constexpr float POSITION_FILTER_MIN_ALPHA = 0.15f;
+  static constexpr float POSITION_FILTER_MAX_ALPHA = 0.75f;
+
+  static constexpr float POSITION_FILTER_MAX_INNOVATION_M = 8.0f;
+  static constexpr float POSITION_FILTER_ACCURACY_MULTIPLIER = 3.0f;
+
+  void updatePositionFilter();
 };
 
 } // namespace Espfc::Sensor
