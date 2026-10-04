@@ -46,13 +46,17 @@ int Hcsr04Rangefinder::begin(
     return 0;
   }
 
+  const uint32_t requestedTimeoutUs =
+      static_cast<uint32_t>(_maxDistanceCm) *
+          HC_SR04_CM_TO_US +
+      static_cast<uint32_t>(2000u);
+
   _timeoutUs =
-      std::clamp(
-          static_cast<uint32_t>(_maxDistanceCm) *
-              HC_SR04_CM_TO_US +
-              2000u,
-          5000u,
-          35000u);
+      std::min(
+          std::max(
+              requestedTimeoutUs,
+              static_cast<uint32_t>(5000u)),
+          static_cast<uint32_t>(35000u));
 
   Hal::Gpio::pinMode(
       static_cast<uint8_t>(_triggerPin),
