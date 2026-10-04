@@ -26,7 +26,7 @@ bool Hcsr04Rangefinder::reached(
 int Hcsr04Rangefinder::begin(
     const RangefinderConfig& config)
 {
-  _state = State::DISABLED;
+  _state = State::HCSR04_DISABLED;
   _triggerPin = config.triggerPin;
   _echoPin = config.echoPin;
   _minDistanceCm = config.minDistanceCm;
@@ -176,7 +176,7 @@ int Hcsr04Rangefinder::update()
       }
       break;
 
-    case State::DISABLED:
+    case State::HCSR04_DISABLED:
     default:
       break;
   }

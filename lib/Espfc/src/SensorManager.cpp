@@ -4,7 +4,7 @@ namespace Espfc {
 
 SensorManager::SensorManager(Model& model)
     : _model(model), _gyro(model), _accel(model), _mag(model), _baro(model), _voltage(model), _fusion(model),
-      _altitude(model), _rangefinder(model), _fusionUpdate(false)
+      _rangefinder(model), _altitude(model), _fusionUpdate(false)
 {
 }
 

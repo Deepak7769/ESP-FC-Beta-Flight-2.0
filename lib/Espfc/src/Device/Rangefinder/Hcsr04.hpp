@@ -16,7 +16,7 @@ public:
 private:
   enum class State : uint8_t
   {
-    DISABLED,
+    HCSR04_DISABLED,
     WAIT_TRIGGER,
     TRIGGER_HIGH,
     WAIT_ECHO_RISE,
@@ -25,7 +25,7 @@ private:
 
   static bool reached(uint32_t now, uint32_t deadline);
 
-  State _state{State::DISABLED};
+  State _state{State::HCSR04_DISABLED};
   int8_t _triggerPin{-1};
   int8_t _echoPin{-1};
   uint16_t _minDistanceCm{2};
