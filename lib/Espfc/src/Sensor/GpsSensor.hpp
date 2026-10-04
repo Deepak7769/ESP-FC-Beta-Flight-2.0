@@ -138,7 +138,7 @@ private:
   Gps::NmeaMessage _nmeaMsg;
 
   Stream::ReadWritable* _port;
-   Utils::Timer _timer;
+  Utils::Timer _timer;
 
 
 };
