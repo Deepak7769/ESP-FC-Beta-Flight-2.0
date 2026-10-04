@@ -198,6 +198,41 @@ void test_poshold_pilot_override_then_brake_and_relatch()
   TEST_ASSERT_TRUE(std::hypot(s.vn, s.ve) < 0.2f);
 }
 
+void test_poshold_filter_recovers_after_persistent_rejections()
+{
+  PositionHold ph;
+  PositionHoldInput in;
+  in.lat = 450000000;
+  in.lon = 100000000;
+  in.gpsTimestampMs = 1000;
+  in.horizontalAccuracy = 1.0f;
+
+  auto out = ph.filterGps(in);
+  TEST_ASSERT_TRUE(out.gpsFilterAccepted);
+  TEST_ASSERT_EQUAL_UINT32(1, out.acceptedSamples);
+
+  // A 20 m step is outside the 12 m innovation gate. Five consecutive
+  // rejections must re-seed the filter instead of locking it out forever.
+  in.lat += static_cast<int32_t>(20.0f / M_PER_UNIT);
+  for (int i = 0; i < 5; ++i)
+  {
+    in.gpsTimestampMs += 200;
+    out = ph.filterGps(in);
+  }
+
+  TEST_ASSERT_FALSE(out.gpsFilterAccepted);
+  TEST_ASSERT_EQUAL_UINT32(1, out.acceptedSamples);
+  TEST_ASSERT_EQUAL_UINT32(5, out.rejectedSamples);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out.rawFilteredDistance);
+
+  // The next good sample must be accepted from the recovered reference.
+  in.lat += static_cast<int32_t>(0.2f / M_PER_UNIT);
+  in.gpsTimestampMs += 200;
+  out = ph.filterGps(in);
+  TEST_ASSERT_TRUE(out.gpsFilterAccepted);
+  TEST_ASSERT_EQUAL_UINT32(2, out.acceptedSamples);
+}
+
 void test_poshold_far_from_target_relatches_instead_of_chasing()
 {
   PositionHold ph;
@@ -223,5 +258,6 @@ int main(int, char**)
   RUN_TEST(test_poshold_rejects_constant_wind);
   RUN_TEST(test_poshold_pilot_override_then_brake_and_relatch);
   RUN_TEST(test_poshold_far_from_target_relatches_instead_of_chasing);
+  RUN_TEST(test_poshold_filter_recovers_after_persistent_rejections);
   return UNITY_END();
 }
