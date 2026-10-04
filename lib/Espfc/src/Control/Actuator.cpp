@@ -828,6 +828,8 @@ const bool altHoldHealthy =
     newMask |= (1 << MODE_FAILSAFE);
   }
 
+  handleGpsRescueSupervisor(newMask);
+
   for (size_t i = 0; i < MODE_COUNT; i++)
   {
     bool newVal = newMask & (1 << i);
@@ -1417,6 +1419,112 @@ void Actuator::updateFailsafeLand()
   }
 }
 
+bool Actuator::gpsRescueEligible() const
+{
+  const auto& gps = _model.state.gps;
+
+  if (!_model.isModeActive(MODE_ARMED) ||
+      !gps.isHomeValid() ||
+      !gps.present ||
+      !gps.fix ||
+      gps.fixType < 3 ||
+      gps.numSats < _model.config.gps.minSats ||
+      gps.lastMsgTs == 0)
+  {
+    return false;
+  }
+
+  constexpr uint32_t GPS_RESCUE_STALE_US = 500000;
+  if (static_cast<uint32_t>(micros() - gps.lastMsgTs) >=
+      GPS_RESCUE_STALE_US)
+  {
+    return false;
+  }
+
+  if (gps.accuracy.horizontal == 0 ||
+      gps.accuracy.horizontal > 10000)
+  {
+    return false;
+  }
+
+  return
+      attitudeEstimateHealthy() &&
+      altitudeEstimateHealthy();
+}
+
+void Actuator::startFailsafeLanding()
+{
+  auto& failsafe = _model.state.failsafe;
+
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  if (!_model.isModeActive(MODE_ARMED) ||
+      !altitudeEstimateHealthy())
+  {
+    failsafe.phase = FC_FAILSAFE_LANDED;
+    failsafe.landingRequested = false;
+    _model.disarm(DISARM_REASON_FAILSAFE);
+    return;
+  }
+
+  if (!failsafe.landingRequested)
+  {
+    failsafe.landingRequested = true;
+    failsafe.landingRequestedUs = micros();
+    failsafe.landingEntryHeight =
+        _model.state.altitude.height;
+    failsafe.landingEntryVario =
+        _model.state.altitude.vario;
+    failsafe.landingEntryThrust =
+        _model.state.output.ch[AXIS_THRUST];
+    failsafe.landingEstimatorHealthy = false;
+    failsafe.landingEligible = false;
+    failsafe.landingActive = false;
+    failsafe.landingLevelRequested = false;
+    failsafe.landingDescentRequested = false;
+    failsafe.landingFault = false;
+    failsafe.landingOutputBlocked = true;
+    failsafe.landingLastUpdateUs = 0;
+    failsafe.landingTouchdownCandidate = false;
+    failsafe.landingTouchdownStartedUs = 0;
+  }
+
+  failsafe.phase = FC_FAILSAFE_LANDING;
+#else
+  failsafe.phase = FC_FAILSAFE_LANDED;
+  _model.disarm(DISARM_REASON_FAILSAFE);
+#endif
+}
+
+void Actuator::handleGpsRescueSupervisor(uint32_t& newMask)
+{
+  auto& failsafe = _model.state.failsafe;
+  constexpr uint32_t RESCUE_BIT =
+      uint32_t{1} << MODE_GPS_RESCUE;
+
+  if (failsafe.gpsRescueLandingRequested)
+  {
+    failsafe.gpsRescueLandingRequested = false;
+    newMask &= ~RESCUE_BIT;
+    startFailsafeLanding();
+    return;
+  }
+
+  if (failsafe.phase != FC_FAILSAFE_IDLE &&
+      _model.config.failsafe.procedure ==
+          FAILSAFE_PROCEDURE_GPS_RESCUE)
+  {
+    if (gpsRescueEligible())
+    {
+      newMask |= RESCUE_BIT;
+    }
+    else if (failsafe.phase != FC_FAILSAFE_LANDING)
+    {
+      newMask &= ~RESCUE_BIT;
+      startFailsafeLanding();
+    }
+  }
+}
+
 bool Actuator::canActivateMode(
     FlightMode mode)
 {
@@ -1449,6 +1557,10 @@ case MODE_ALTHOLD:
       !_altHoldFaultLatched;
 #endif
 
+    case MODE_GPS_RESCUE:
+      return
+          gpsRescueEligible();
+
     default:
       return true;
   }
@@ -1476,6 +1588,9 @@ void Actuator::updateArmed()
           _model.state.failsafe;
 
       failsafe.landingRequested =
+          false;
+
+      failsafe.gpsRescueLandingRequested =
           false;
 
       failsafe.landingEstimatorHealthy =
@@ -1519,12 +1634,17 @@ void Actuator::updateArmed()
 
       failsafe.landingEntryThrust =
           0.0f;
+
+      failsafe.gpsRescueLandingRequested =
+          false;
+
+      _model.setGpsHome(true);
     }
     else if (!armed && _model.state.mode.disarmReason == DISARM_REASON_SYSTEM)
     {
       _model.state.mode.disarmReason = DISARM_REASON_SWITCH;
     }
-    if (armed) _model.setGpsHome();
+    // Home is explicitly captured on the armed transition above.
   }
 }
 

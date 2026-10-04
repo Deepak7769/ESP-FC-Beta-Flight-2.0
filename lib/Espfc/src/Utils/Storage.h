@@ -31,8 +31,9 @@ public:
 
 private:
   static constexpr uint8_t EEPROM_MAGIC = 0xA5;
-  static constexpr uint8_t EEPROM_VERSION = 0x04;
-  static constexpr uint8_t EEPROM_VERSION_PREVIOUS = 0x03;
+  static constexpr uint8_t EEPROM_VERSION = 0x05;
+  static constexpr uint8_t EEPROM_VERSION_PREVIOUS = 0x04;
+  static constexpr uint8_t EEPROM_VERSION_V3 = 0x03;
   static constexpr uint8_t EEPROM_VERSION_LEGACY = 0x02;
 
   static constexpr size_t EEPROM_SIZE = 2048;

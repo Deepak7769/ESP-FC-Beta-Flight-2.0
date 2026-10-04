@@ -241,11 +241,26 @@ void setOutputSaturation(
 
     void setGpsHome(bool force = false)
     {
-      if(force || (state.gps.fix && state.gps.numSats >= config.gps.minSats))
+      if(state.gps.fix &&
+         state.gps.numSats >= config.gps.minSats)
       {
-        if(!state.gps.homeSet || !config.gps.setHomeOnce)
+        if(force || !state.gps.homeSet || !config.gps.setHomeOnce)
         {
           state.gps.location.home = state.gps.location.raw;
+          if(state.altitude.healthy &&
+             std::isfinite(state.altitude.height))
+          {
+            state.gps.homeAltitude = state.altitude.height;
+          }
+          else if(state.baro.sampleValid &&
+                  std::isfinite(state.baro.altitude))
+          {
+            state.gps.homeAltitude = state.baro.altitude;
+          }
+          else
+          {
+            state.gps.homeAltitude = 0.0f;
+          }
           state.gps.homeSet = true;
         }
       }
@@ -631,6 +646,85 @@ void setOutputSaturation(
         config.failsafe.procedure =
             FAILSAFE_PROCEDURE_DROP;
       }
+
+      config.gpsRescue.altitudeMode =
+          std::min<uint8_t>(
+              config.gpsRescue.altitudeMode,
+              3);
+      config.gpsRescue.maxAltitudeM =
+          std::max<uint8_t>(
+              config.gpsRescue.maxAltitudeM,
+              5);
+      config.gpsRescue.fixedAltitudeM =
+          std::min<uint8_t>(
+              config.gpsRescue.fixedAltitudeM,
+              config.gpsRescue.maxAltitudeM);
+      config.gpsRescue.altitudeMarginM =
+          std::min<uint8_t>(
+              config.gpsRescue.altitudeMarginM,
+              config.gpsRescue.maxAltitudeM);
+      config.gpsRescue.climbRateDmS =
+          std::clamp<uint8_t>(
+              config.gpsRescue.climbRateDmS,
+              5,
+              100);
+      config.gpsRescue.descentRateDmS =
+          std::clamp<uint8_t>(
+              config.gpsRescue.descentRateDmS,
+              2,
+              50);
+      config.gpsRescue.speedDmS =
+          std::clamp<uint8_t>(
+              config.gpsRescue.speedDmS,
+              5,
+              200);
+      config.gpsRescue.approachSpeedDmS =
+          std::clamp<uint8_t>(
+              config.gpsRescue.approachSpeedDmS,
+              5,
+              config.gpsRescue.speedDmS);
+      config.gpsRescue.maxAngleDeg =
+          std::clamp<uint8_t>(
+              config.gpsRescue.maxAngleDeg,
+              5,
+              55);
+      config.gpsRescue.landDistanceM =
+          std::max<uint8_t>(
+              config.gpsRescue.landDistanceM,
+              1);
+      config.gpsRescue.approachDistanceM =
+          std::max<uint8_t>(
+              config.gpsRescue.approachDistanceM,
+              config.gpsRescue.landDistanceM + 1);
+      config.gpsRescue.minDistanceM =
+          std::max<uint8_t>(
+              config.gpsRescue.minDistanceM,
+              config.gpsRescue.landDistanceM);
+      config.gpsRescue.alignToleranceDeg =
+          std::clamp<uint8_t>(
+              config.gpsRescue.alignToleranceDeg,
+              3,
+              45);
+      config.gpsRescue.minLandingAltitudeDm =
+          std::clamp<uint8_t>(
+              config.gpsRescue.minLandingAltitudeDm,
+              2,
+              50);
+      config.gpsRescue.gpsStaleDs =
+          std::clamp<uint8_t>(
+              config.gpsRescue.gpsStaleDs,
+              2,
+              20);
+      config.gpsRescue.maxHorizontalAccuracyM =
+          std::clamp<uint8_t>(
+              config.gpsRescue.maxHorizontalAccuracyM,
+              2,
+              50);
+      config.gpsRescue.maxAccelerationCms2 =
+          std::clamp<uint16_t>(
+              config.gpsRescue.maxAccelerationCms2,
+              50,
+              1000);
       // for spi gyro allow full speed mode
       if (state.gyro.dev && state.gyro.dev->getBus()->isSPI())
       {

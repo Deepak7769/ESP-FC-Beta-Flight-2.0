@@ -1,6 +1,8 @@
 // Tests for Control::PositionHold (pure math). Closed-loop checks use a point
 // mass with attitude lag and a 5 Hz / 200 ms-late GPS (NEO-6M like).
 
+#include <Control/GpsRescue.h>
+#include <Control/Navigation.h>
 #include <Control/PositionHold.h>
 #include <cmath>
 #include <cstdint>
@@ -244,6 +246,145 @@ void test_poshold_far_from_target_relatches_instead_of_chasing()
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out.rollAngle);
 }
 
+
+void test_navigation_local_ned_for_rescue()
+{
+  NavigationInput in{};
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeValid = true;
+  in.altitudeValid = true;
+  in.homeLatitudeE7 = 450000000;
+  in.homeLongitudeE7 = 100000000;
+  in.latitudeE7 = 450000100;
+  in.longitudeE7 = 100000000;
+  in.altitude = 12.0f;
+  in.homeAltitude = 10.0f;
+  in.velocityNorth = 1.0f;
+  in.velocityEast = -0.5f;
+  in.velocityDown = -0.2f;
+
+  const auto out = Navigation::update(in);
+  TEST_ASSERT_TRUE(out.positionValid);
+  TEST_ASSERT_FLOAT_WITHIN(0.2f, 11.13f, out.north);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out.east);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, -2.0f, out.down);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 2.0f, out.altitudeAboveHome);
+}
+
+void test_gps_rescue_state_machine_reaches_return()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.5f;
+  in.gpsAgeS = 0.1f;
+  in.north = 50.0f;
+  in.altitudeAboveHome = 2.0f;
+  in.yawHeading = 3.14159265358979323846f;
+  in.dt = 0.02f;
+
+  auto out = r.update(in, p);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(
+          GpsRescuePhase::CLIMB),
+      static_cast<uint8_t>(
+          out.phase));
+  TEST_ASSERT_TRUE(out.controlling);
+  TEST_ASSERT_TRUE(out.verticalRate > 0.0f);
+
+  in.altitudeAboveHome = 12.0f;
+  out = r.update(in, p);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(
+          GpsRescuePhase::ALIGN),
+      static_cast<uint8_t>(
+          out.phase));
+
+  out = r.update(in, p);
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(
+          GpsRescuePhase::RETURN),
+      static_cast<uint8_t>(
+          out.phase));
+}
+
+void test_gps_rescue_falls_back_to_land_on_gps_loss()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.1f;
+  in.north = 20.0f;
+  in.altitudeAboveHome = 12.0f;
+  in.yawHeading = 3.14159265358979323846f;
+
+  r.update(in, p);
+  in.gpsValid = false;
+  const auto out = r.update(in, p);
+
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(
+          GpsRescuePhase::ABORT),
+      static_cast<uint8_t>(
+          out.phase));
+  TEST_ASSERT_FALSE(out.controlling);
+  TEST_ASSERT_TRUE(out.requestLand);
+}
+
+void test_gps_rescue_limits_horizontal_command()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+  p.maxAngle = 0.3f;
+  p.maxAcceleration = 1.0f;
+
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.1f;
+  in.north = 40.0f;
+  in.altitudeAboveHome = 12.0f;
+  in.yawHeading = 3.14159265358979323846f;
+  in.dt = 0.02f;
+
+  r.update(in, p);
+  const auto out = r.update(in, p);
+  TEST_ASSERT_TRUE(
+      std::fabs(out.pitchAngle) <=
+      p.maxAngle + 1e-5f);
+  TEST_ASSERT_TRUE(
+      std::fabs(out.rollAngle) <=
+      p.maxAngle + 1e-5f);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -259,5 +400,9 @@ int main(int, char**)
   RUN_TEST(test_poshold_pilot_override_then_brake_and_relatch);
   RUN_TEST(test_poshold_far_from_target_relatches_instead_of_chasing);
   RUN_TEST(test_poshold_filter_recovers_after_persistent_rejections);
+  RUN_TEST(test_navigation_local_ned_for_rescue);
+  RUN_TEST(test_gps_rescue_state_machine_reaches_return);
+  RUN_TEST(test_gps_rescue_falls_back_to_land_on_gps_loss);
+  RUN_TEST(test_gps_rescue_limits_horizontal_command);
   return UNITY_END();
 }

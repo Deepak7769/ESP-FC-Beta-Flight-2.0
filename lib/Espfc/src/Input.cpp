@@ -64,6 +64,9 @@ int Input::begin()
     _model.state.failsafe.landingRequested =
       false;
 
+    _model.state.failsafe.gpsRescueLandingRequested =
+      false;
+
   _model.state.failsafe.landingEligible =
       false;
 
@@ -828,6 +831,23 @@ void FAST_CODE_ATTR Input::failsafeStage2()
   // Stage 2 is beginning from an armed state.
   failsafe.phase =
       FC_FAILSAFE_RX_LOSS_DETECTED;
+
+  // =====================================================
+  // GPS RESCUE REQUEST
+  // =====================================================
+
+  if (_model.config.failsafe.procedure ==
+      FAILSAFE_PROCEDURE_GPS_RESCUE)
+  {
+    failsafe.landingRequested = false;
+    failsafe.landingEstimatorHealthy = false;
+    failsafe.landingEligible = false;
+    failsafe.landingActive = false;
+    failsafe.landingLevelRequested = false;
+    failsafe.landingDescentRequested = false;
+    failsafe.landingOutputBlocked = true;
+    return;
+  }
 
   // =====================================================
   // AUTO-LAND REQUEST

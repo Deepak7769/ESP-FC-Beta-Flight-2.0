@@ -47,9 +47,14 @@ bool assistedVerticalControlOwnsThrust(
       false;
   #endif
 
+  const bool rescue =
+      model.isModeActive(
+          MODE_GPS_RESCUE);
+
   return
       altHold ||
-      land;
+      land ||
+      rescue;
 #else
   (void)model;
   return false;
@@ -130,6 +135,12 @@ _posHoldWasReady =
 
 _posHoldNotReadySinceUs =
     0;
+
+  _gpsRescue.reset();
+  _model.state.gpsRescue =
+      GpsRescueState{};
+  _model.state.navigation =
+      Control::NavigationState{};
 
   return 1;
 }
@@ -353,6 +364,14 @@ else
         AXIS_YAW] =
         0.0f;
   }
+  else if (_model.state.gpsRescue.active)
+  {
+    _model.state.setpoint.rate[
+        AXIS_YAW] =
+        _model.state.gpsRescue.controlling
+            ? _model.state.gpsRescue.yawRate
+            : 0.0f;
+  }
   else
   {
     _model.state.setpoint.rate[
@@ -371,7 +390,8 @@ else
   const bool altHoldV2Active =
       _model.state.assistedMode.altitudeActive &&
       (_model.isModeActive(MODE_ALTHOLD) ||
-       landingV2Requested);
+       landingV2Requested ||
+       _model.state.gpsRescue.active);
 #else
   constexpr bool altHoldV2Active =
       false;
@@ -577,7 +597,8 @@ constexpr bool landingV2Requested =
 const bool altHoldV2OutputActive =
     _model.state.assistedMode.altitudeActive &&
     (_model.isModeActive(MODE_ALTHOLD) ||
-     landingV2Requested);
+     landingV2Requested ||
+     _model.state.gpsRescue.active);
 #else
 constexpr bool altHoldV2OutputActive =
     false;
@@ -994,6 +1015,7 @@ void Controller::updateAntiGravity()
   const auto& input =
       _model.state.input;
 
+
   const bool manualThrustOwnsOutput =
       !assistedVerticalControlOwnsThrust(
           _model);
@@ -1319,6 +1341,9 @@ auto& assisted =
   const auto& input =
       _model.state.input;
 
+  auto& gpsRescueState =
+      _model.state.gpsRescue;
+
 #if defined(ESPFC_LAND_V2_ACTIVE)
   const auto& failsafe =
       _model.state.failsafe;
@@ -1595,6 +1620,254 @@ PositionHoldOutput posHoldOut{};
   _posHoldWasReady =
       phReady;
 
+// =====================================================
+// GPS RESCUE / LOCAL NED NAVIGATION
+// =====================================================
+
+const bool gpsRescueRequested =
+    _model.isModeActive(MODE_GPS_RESCUE) &&
+    _model.isModeActive(MODE_ARMED);
+
+Control::NavigationInput navigationIn{};
+navigationIn.homeValid = gps.isHomeValid();
+navigationIn.gpsValid =
+    gps.present &&
+    gps.fix &&
+    gps.fixType >= 3;
+navigationIn.attitudeValid = attitudeFresh;
+navigationIn.altitudeValid = altitude.healthy;
+navigationIn.gpsAgeUs =
+    gps.lastMsgTs == 0
+        ? UINT32_MAX
+        : static_cast<uint32_t>(
+              now - gps.lastMsgTs);
+navigationIn.sats = gps.numSats;
+navigationIn.horizontalAccuracy =
+    static_cast<float>(
+        gps.accuracy.horizontal) * 0.001f;
+navigationIn.latitudeE7 =
+    gps.location.filtered.lat;
+navigationIn.longitudeE7 =
+    gps.location.filtered.lon;
+navigationIn.homeLatitudeE7 =
+    gps.location.home.lat;
+navigationIn.homeLongitudeE7 =
+    gps.location.home.lon;
+navigationIn.velocityNorth =
+    gps.diagnostics.filterAccepted
+        ? static_cast<float>(
+              gps.diagnostics.filteredNorthSpeed) * 0.001f
+        : static_cast<float>(
+              gps.velocity.raw.north) * 0.001f;
+navigationIn.velocityEast =
+    gps.diagnostics.filterAccepted
+        ? static_cast<float>(
+              gps.diagnostics.filteredEastSpeed) * 0.001f
+        : static_cast<float>(
+              gps.velocity.raw.east) * 0.001f;
+navigationIn.velocityDown =
+    static_cast<float>(
+        gps.velocity.raw.down) * 0.001f;
+navigationIn.altitude = altitude.height;
+navigationIn.homeAltitude = gps.homeAltitude;
+
+_model.state.navigation =
+    Control::Navigation::update(
+        navigationIn);
+
+const auto navigation =
+    _model.state.navigation;
+
+const float rescueGroundSpeed =
+    std::hypot(
+        navigation.velocityNorth,
+        navigation.velocityEast);
+
+const bool rescueCourseValid =
+    navigationIn.gpsValid &&
+    rescueGroundSpeed >= 0.5f;
+
+Control::GpsRescueParams rescueParams{};
+const auto& rescueConfig =
+    _model.config.gpsRescue;
+
+rescueParams.altitudeMode =
+    std::min<uint8_t>(
+        rescueConfig.altitudeMode,
+        3);
+rescueParams.altitudeMargin =
+    static_cast<float>(
+        rescueConfig.altitudeMarginM);
+rescueParams.fixedAltitude =
+    static_cast<float>(
+        rescueConfig.fixedAltitudeM);
+rescueParams.maxAltitude =
+    static_cast<float>(
+        rescueConfig.maxAltitudeM);
+rescueParams.climbRate =
+    static_cast<float>(
+        rescueConfig.climbRateDmS) * 0.1f;
+rescueParams.descentRate =
+    static_cast<float>(
+        rescueConfig.descentRateDmS) * 0.1f;
+rescueParams.maxSpeed =
+    static_cast<float>(
+        rescueConfig.speedDmS) * 0.1f;
+rescueParams.approachSpeed =
+    static_cast<float>(
+        rescueConfig.approachSpeedDmS) * 0.1f;
+rescueParams.maxAcceleration =
+    static_cast<float>(
+        rescueConfig.maxAccelerationCms2) * 0.01f;
+rescueParams.maxAngle =
+    Utils::toRad(
+        static_cast<float>(
+            rescueConfig.maxAngleDeg));
+rescueParams.approachDistance =
+    static_cast<float>(
+        rescueConfig.approachDistanceM);
+rescueParams.landDistance =
+    static_cast<float>(
+        rescueConfig.landDistanceM);
+rescueParams.minDistance =
+    static_cast<float>(
+        rescueConfig.minDistanceM);
+rescueParams.alignTolerance =
+    Utils::toRad(
+        static_cast<float>(
+            rescueConfig.alignToleranceDeg));
+rescueParams.minLandingAltitude =
+    static_cast<float>(
+        rescueConfig.minLandingAltitudeDm) * 0.1f;
+rescueParams.gpsStaleS =
+    static_cast<float>(
+        rescueConfig.gpsStaleDs) * 0.1f;
+rescueParams.maxHorizontalAccuracy =
+    static_cast<float>(
+        rescueConfig.maxHorizontalAccuracyM);
+
+Control::GpsRescueInput rescueIn{};
+rescueIn.requested =
+    gpsRescueRequested &&
+    rescueConfig.maxAltitudeM > 0;
+rescueIn.armed =
+    _model.isModeActive(MODE_ARMED);
+rescueIn.homeValid = navigation.homeValid;
+rescueIn.gpsValid = navigationIn.gpsValid;
+rescueIn.attitudeHealthy = attitudeFresh;
+rescueIn.altitudeHealthy = altitude.healthy;
+rescueIn.positionValid = navigation.positionValid;
+rescueIn.velocityValid = navigation.velocityValid;
+rescueIn.sats = gps.numSats;
+rescueIn.horizontalAccuracy =
+    navigation.horizontalAccuracy;
+rescueIn.gpsAgeS =
+    navigation.gpsAgeUs == UINT32_MAX
+        ? 1.0e9f
+        : static_cast<float>(
+              navigation.gpsAgeUs) * 0.000001f;
+rescueIn.north = navigation.north;
+rescueIn.east = navigation.east;
+rescueIn.velocityNorth =
+    navigation.velocityNorth;
+rescueIn.velocityEast =
+    navigation.velocityEast;
+rescueIn.altitudeAboveHome =
+    navigation.altitudeAboveHome;
+rescueIn.verticalRate = altitude.vario;
+rescueIn.yawHeading =
+    -attitude.euler[AXIS_YAW];
+rescueIn.courseOverGround =
+    static_cast<float>(
+        gps.velocity.raw.heading) *
+    1e-5f *
+    0.017453292519943295f;
+rescueIn.courseValid = rescueCourseValid;
+rescueIn.groundSpeed = rescueGroundSpeed;
+rescueIn.dt = dt;
+
+const auto rescueOut =
+    _gpsRescue.update(
+        rescueIn,
+        rescueParams);
+
+gpsRescueState.requested =
+    gpsRescueRequested;
+gpsRescueState.active =
+    rescueOut.active;
+gpsRescueState.controlling =
+    rescueOut.controlling;
+gpsRescueState.ready =
+    navigationIn.gpsValid &&
+    navigationIn.attitudeValid &&
+    navigationIn.altitudeValid &&
+    navigation.positionValid &&
+    navigation.velocityValid &&
+    gps.numSats >= 4 &&
+    navigation.horizontalAccuracy > 0.0f &&
+    navigation.horizontalAccuracy <=
+        rescueParams.maxHorizontalAccuracy &&
+    rescueIn.gpsAgeS <=
+        rescueParams.gpsStaleS;
+gpsRescueState.requestLand =
+    rescueOut.requestLand;
+gpsRescueState.phase =
+    static_cast<uint8_t>(
+        rescueOut.phase);
+gpsRescueState.faultFlags =
+    rescueOut.faultFlags;
+gpsRescueState.north =
+    navigation.north;
+gpsRescueState.east =
+    navigation.east;
+gpsRescueState.down =
+    navigation.down;
+gpsRescueState.velocityNorth =
+    navigation.velocityNorth;
+gpsRescueState.velocityEast =
+    navigation.velocityEast;
+gpsRescueState.velocityDown =
+    navigation.velocityDown;
+gpsRescueState.distanceToHome =
+    rescueOut.distanceToHome;
+gpsRescueState.bearingToHome =
+    rescueOut.bearingToHome;
+gpsRescueState.altitudeAboveHome =
+    navigation.altitudeAboveHome;
+gpsRescueState.targetAltitude =
+    rescueOut.targetAltitude;
+gpsRescueState.rollAngle =
+    rescueOut.rollAngle;
+gpsRescueState.pitchAngle =
+    rescueOut.pitchAngle;
+gpsRescueState.yawRate =
+    rescueOut.yawRate;
+gpsRescueState.verticalRate =
+    rescueOut.verticalRate;
+gpsRescueState.sats =
+    gps.numSats;
+gpsRescueState.horizontalAccuracy =
+    rescueIn.horizontalAccuracy;
+gpsRescueState.gpsHealthy =
+    navigationIn.gpsValid &&
+    rescueIn.gpsAgeS <=
+        rescueParams.gpsStaleS &&
+    rescueIn.sats >= 4 &&
+    rescueIn.horizontalAccuracy > 0.0f &&
+    rescueIn.horizontalAccuracy <=
+        rescueParams.maxHorizontalAccuracy;
+gpsRescueState.altitudeHealthy =
+    navigationIn.altitudeValid;
+gpsRescueState.attitudeHealthy =
+    navigationIn.attitudeValid;
+
+if (rescueOut.requestLand)
+{
+  _model.state.failsafe
+      .gpsRescueLandingRequested =
+      true;
+}
+
   if (posHoldOut.controlling)
   {
     phFlags |= (1u << 8);
@@ -1653,8 +1926,9 @@ const bool angleActive =
     (_model.isModeActive(
          MODE_ANGLE) ||
      landingV2Requested ||
-     posHoldState.requested) && // POS HOLD switch on => at least Angle (never Acro if GPS is not ready)
-        attitudeFresh;
+     posHoldState.requested ||
+     gpsRescueState.active) &&
+    attitudeFresh;
 
 if (angleActive &&
     !_angleV2WasActive)
@@ -1720,9 +1994,15 @@ if (angleActive)
       const float requestedAngle =
           landingV2Requested
               ? 0.0f
-              : posHoldOut.controlling
-                    ? posHoldAngle
-                    : pilotAngle;
+              : gpsRescueState.active
+                    ? (gpsRescueState.controlling
+                          ? ((axis == AXIS_ROLL)
+                                ? gpsRescueState.rollAngle
+                                : gpsRescueState.pitchAngle)
+                          : 0.0f)
+                    : posHoldOut.controlling
+                          ? posHoldAngle
+                          : pilotAngle;
 
     const float change =
         std::clamp(
@@ -1788,7 +2068,8 @@ _angleV2WasActive =
 
 const bool altActive =
     (_model.isModeActive(MODE_ALTHOLD) ||
-     landingV2Requested) &&
+     landingV2Requested ||
+     gpsRescueState.active) &&
     altitude.healthy &&
     attitudeFresh &&
     assistedBaroFresh;
@@ -1800,7 +2081,11 @@ const bool altActive =
   const float pilotVz =
       landingV2Requested
           ? LAND_DESCENT_RATE_MS
-          : calculatePilotClimbRate();
+          : gpsRescueState.active
+                ? (gpsRescueState.controlling
+                      ? gpsRescueState.verticalRate
+                      : 0.0f)
+                : calculatePilotClimbRate();
 
   if (altActive &&
       !_altHoldWasActive)

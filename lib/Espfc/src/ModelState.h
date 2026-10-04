@@ -9,6 +9,8 @@
 #include <Kalman.hpp>
 
 #include "ModelConfig.h"
+#include "Control/Navigation.h"
+#include "Control/GpsRescue.h"
 #include "Control/Pid.h"
 #include "Utils/Filter.h"
 #include "Utils/Timer.h"
@@ -241,6 +243,8 @@ public:
   // reference for touchdown detection when the configured hover-thrust center
   // does not exactly match the aircraft's real hover command.
   float landingEntryThrust{0.0f};
+
+  bool gpsRescueLandingRequested{false};
 };
 
 constexpr float ACCEL_G = 9.80665f;
@@ -589,6 +593,39 @@ struct PosHoldState
   float pitchAngle{0.0f};  // rad, same sign as pitch stick
 };
 
+struct GpsRescueState
+{
+  bool requested{false};
+  bool active{false};
+  bool controlling{false};
+  bool ready{false};
+  bool requestLand{false};
+  uint8_t phase{
+      static_cast<uint8_t>(
+          Control::GpsRescuePhase::IDLE)};
+  uint16_t faultFlags{
+      Control::GPS_RESCUE_FAULT_NONE};
+  float north{0.0f};
+  float east{0.0f};
+  float down{0.0f};
+  float velocityNorth{0.0f};
+  float velocityEast{0.0f};
+  float velocityDown{0.0f};
+  float distanceToHome{0.0f};
+  float bearingToHome{0.0f};
+  float altitudeAboveHome{0.0f};
+  float targetAltitude{0.0f};
+  float rollAngle{0.0f};
+  float pitchAngle{0.0f};
+  float yawRate{0.0f};
+  float verticalRate{0.0f};
+  uint8_t sats{0};
+  float horizontalAccuracy{0.0f};
+  bool gpsHealthy{false};
+  bool altitudeHealthy{false};
+  bool attitudeHealthy{false};
+};
+
 struct VtxState
 {
   uint8_t active = false;
@@ -744,6 +781,7 @@ struct GpsState
   bool frameError = false;
   bool wasLocked = false;
   bool homeSet = false;
+  float homeAltitude = 0.0f;
   uint32_t interval = 0;
   uint32_t lastMsgTs = 0;
   GpsSupportState support;
@@ -781,6 +819,8 @@ struct ModelState
   AngleV2State angleV2;
   AssistedModeState assistedMode;
   PosHoldState posHold;
+  GpsRescueState gpsRescue;
+  Control::NavigationState navigation;
 
   SetpointState setpoint;
 

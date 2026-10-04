@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Control/GpsRescue.h"
 #include "Control/PositionHold.h"
 #include "Control/Rates.h"
 #include "Model.h"
@@ -69,6 +70,7 @@ private:
 PositionHold _posHold;
 bool _posHoldWasReady = false;
 uint32_t _posHoldNotReadySinceUs = 0;
+GpsRescue _gpsRescue;
 };
 
 } // namespace Espfc::Control

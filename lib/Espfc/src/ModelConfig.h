@@ -85,6 +85,7 @@ enum FlightMode {
   // Appended intentionally: preserve all existing stored mode IDs.
   MODE_ANTI_GRAVITY,
   MODE_POSHOLD,
+  MODE_GPS_RESCUE,
   MODE_COUNT,
 };
  
@@ -572,7 +573,8 @@ enum FailsafeProcedure : uint8_t
   // Keep Betaflight/MSP numeric compatibility.
   FAILSAFE_PROCEDURE_AUTO_LAND = 0,
   FAILSAFE_PROCEDURE_DROP = 1,
- 
+  FAILSAFE_PROCEDURE_GPS_RESCUE = 2,
+
   FAILSAFE_PROCEDURE_COUNT
 };
  
@@ -778,6 +780,32 @@ struct MixerConfiguration
   bool yawReverse = 0;
 };
  
+#if defined(__GNUC__)
+struct __attribute__((packed)) GpsRescueConfig
+#else
+struct GpsRescueConfig
+#endif
+{
+  // 0=current altitude + margin, 1=fixed, 2=max, 3=at least.
+  uint8_t altitudeMode = 0;
+  uint8_t altitudeMarginM = 10;
+  uint8_t fixedAltitudeM = 20;
+  uint8_t maxAltitudeM = 50;
+  uint8_t climbRateDmS = 20;
+  uint8_t descentRateDmS = 6;
+  uint8_t speedDmS = 80;
+  uint8_t approachSpeedDmS = 20;
+  uint8_t maxAngleDeg = 25;
+  uint8_t approachDistanceM = 15;
+  uint8_t landDistanceM = 4;
+  uint8_t minDistanceM = 10;
+  uint8_t alignToleranceDeg = 15;
+  uint8_t minLandingAltitudeDm = 8;
+  uint8_t gpsStaleDs = 5;
+  uint8_t maxHorizontalAccuracyM = 10;
+  uint16_t maxAccelerationCms2 = 300;
+};
+
 struct ControllerConfig
 {
   int8_t tpaMode = 0;
@@ -1010,6 +1038,7 @@ class ModelConfig
     // Anti-Gravity setting.
     uint8_t antiGravityGain = ANTI_GRAVITY_GAIN_DEFAULT;
     uint16_t antiGravityConfigTag = ANTI_GRAVITY_CONFIG_TAG;
+    GpsRescueConfig gpsRescue;
  
     ModelConfig()
     {

@@ -435,7 +435,7 @@ case MSP_BUILD_INFO:
     }
 
     case MSP_BOXNAMES:
-      r.writeString("ARM;AIRMODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOXERASE;ANTI GRAVITY;POS HOLD;");
+      r.writeString("ARM;AIRMODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOXERASE;ANTI GRAVITY;POS HOLD;GPS RESCUE;");
       break;
 
     case MSP_BOXIDS:
@@ -449,6 +449,7 @@ case MSP_BUILD_INFO:
       r.writeU8(MODE_BLACKBOX_ERASE);
       r.writeU8(MODE_ANTI_GRAVITY);
       r.writeU8(MODE_POSHOLD);
+      r.writeU8(MODE_GPS_RESCUE);
       break;
 
     case MSP_MODE_RANGES:
@@ -2310,6 +2311,137 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU8(
           static_cast<uint8_t>(
               _model.config.rangefinder.type));
+      break;
+    }
+
+    case MSP2_ESPFC_GPS_RESCUE_CONFIG: {
+      const auto& c = _model.config.gpsRescue;
+      if (m.remain() == 0)
+      {
+        r.writeU8(c.altitudeMode);
+        r.writeU8(c.altitudeMarginM);
+        r.writeU8(c.fixedAltitudeM);
+        r.writeU8(c.maxAltitudeM);
+        r.writeU8(c.climbRateDmS);
+        r.writeU8(c.descentRateDmS);
+        r.writeU8(c.speedDmS);
+        r.writeU8(c.approachSpeedDmS);
+        r.writeU8(c.maxAngleDeg);
+        r.writeU8(c.approachDistanceM);
+        r.writeU8(c.landDistanceM);
+        r.writeU8(c.minDistanceM);
+        r.writeU8(c.alignToleranceDeg);
+        r.writeU8(c.minLandingAltitudeDm);
+        r.writeU8(c.gpsStaleDs);
+        r.writeU8(c.maxHorizontalAccuracyM);
+        r.writeU16(c.maxAccelerationCms2);
+      }
+      else if (m.remain() >= 18)
+      {
+        auto& cfg = _model.config.gpsRescue;
+        cfg.altitudeMode = m.readU8();
+        cfg.altitudeMarginM = m.readU8();
+        cfg.fixedAltitudeM = m.readU8();
+        cfg.maxAltitudeM = m.readU8();
+        cfg.climbRateDmS = m.readU8();
+        cfg.descentRateDmS = m.readU8();
+        cfg.speedDmS = m.readU8();
+        cfg.approachSpeedDmS = m.readU8();
+        cfg.maxAngleDeg = m.readU8();
+        cfg.approachDistanceM = m.readU8();
+        cfg.landDistanceM = m.readU8();
+        cfg.minDistanceM = m.readU8();
+        cfg.alignToleranceDeg = m.readU8();
+        cfg.minLandingAltitudeDm = m.readU8();
+        cfg.gpsStaleDs = m.readU8();
+        cfg.maxHorizontalAccuracyM = m.readU8();
+        cfg.maxAccelerationCms2 = m.readU16();
+        _model.sanitize();
+        _model.setRebootRequired();
+      }
+      break;
+    }
+
+    case MSP2_ESPFC_GPS_RESCUE: {
+      const auto& state = _model.state.gpsRescue;
+      const auto& nav = _model.state.navigation;
+
+      r.writeU8(state.phase);
+      r.writeU16(state.faultFlags);
+
+      uint8_t flags = 0;
+      flags |= state.active ? 1u : 0u;
+      flags |= state.controlling ? 2u : 0u;
+      flags |= state.requestLand ? 4u : 0u;
+      flags |= state.gpsHealthy ? 8u : 0u;
+      flags |= state.altitudeHealthy ? 16u : 0u;
+      flags |= state.attitudeHealthy ? 32u : 0u;
+      flags |= nav.positionValid ? 64u : 0u;
+      flags |= nav.velocityValid ? 128u : 0u;
+      r.writeU8(flags);
+
+      r.writeU32(static_cast<uint32_t>(
+          static_cast<int32_t>(
+              std::clamp(
+                  lrintf(state.north * 100.0f),
+                  -2147483647L,
+                  2147483647L))));
+      r.writeU32(static_cast<uint32_t>(
+          static_cast<int32_t>(
+              std::clamp(
+                  lrintf(state.east * 100.0f),
+                  -2147483647L,
+                  2147483647L))));
+      r.writeU32(static_cast<uint32_t>(
+          static_cast<int32_t>(
+              std::clamp(
+                  lrintf(state.down * 100.0f),
+                  -2147483647L,
+                  2147483647L))));
+      r.writeU32(static_cast<uint32_t>(
+          std::clamp(
+              lrintf(state.distanceToHome * 100.0f),
+              0L,
+              4294967295L)));
+      r.writeU32(static_cast<uint32_t>(
+          lrintf(state.bearingToHome * 100000.0f)));
+      r.writeU32(static_cast<uint32_t>(
+          static_cast<int32_t>(
+              std::clamp(
+                  lrintf(state.altitudeAboveHome * 100.0f),
+                  -2147483647L,
+                  2147483647L))));
+      r.writeU32(static_cast<uint32_t>(
+          std::clamp(
+              lrintf(state.targetAltitude * 100.0f),
+              0L,
+              4294967295L)));
+      r.writeU16(static_cast<uint16_t>(
+          std::clamp(
+              lrintf(state.rollAngle * 1000.0f),
+              -32768L,
+              32767L)));
+      r.writeU16(static_cast<uint16_t>(
+          std::clamp(
+              lrintf(state.pitchAngle * 1000.0f),
+              -32768L,
+              32767L)));
+      r.writeU16(static_cast<uint16_t>(
+          std::clamp(
+              lrintf(state.yawRate * 1000.0f),
+              -32768L,
+              32767L)));
+      r.writeU16(static_cast<uint16_t>(
+          std::clamp(
+              lrintf(state.verticalRate * 1000.0f),
+              -32768L,
+              32767L)));
+      r.writeU8(state.sats);
+      r.writeU16(static_cast<uint16_t>(
+          std::clamp(
+              lrintf(state.horizontalAccuracy * 1000.0f),
+              0L,
+              65535L)));
       break;
     }
 

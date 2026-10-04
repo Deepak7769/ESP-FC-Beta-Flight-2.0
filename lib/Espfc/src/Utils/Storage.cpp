@@ -48,11 +48,31 @@ StorageResult Storage::load(ModelConfig& config) const
     return STORAGE_LOAD_SUCCESS;
   }
 
-  if (version == EEPROM_VERSION_PREVIOUS ||
+  if (version == EEPROM_VERSION_PREVIOUS)
+  {
+    ModelConfig migrated{};
+    const size_t copySize =
+        std::min(
+            static_cast<size_t>(size),
+            sizeof(ModelConfig));
+
+    for (size_t i = 0; i < copySize; ++i)
+    {
+      reinterpret_cast<uint8_t*>(&migrated)[i] =
+          EEPROM.read(
+              addr +
+              static_cast<int>(i));
+    }
+
+    config = migrated;
+    return STORAGE_LOAD_SUCCESS;
+  }
+
+  if (version == EEPROM_VERSION_V3 ||
       version == EEPROM_VERSION_LEGACY)
   {
     // v3 already contained the expanded AltHoldConfig. v2 stored only the
-    // original three-byte AltHoldConfig. Both migrate into v4, which inserts
+    // original three-byte AltHoldConfig. Both migrate into v5, which inserts
     // RangefinderConfig immediately after AltHoldConfig.
     ModelConfig migrated{};
 

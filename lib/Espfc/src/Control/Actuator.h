@@ -25,6 +25,9 @@ private:
   bool canActivateMode(FlightMode mode);
   bool attitudeEstimateHealthy() const;
   bool altitudeEstimateHealthy() const;
+  bool gpsRescueEligible() const;
+  void startFailsafeLanding();
+  void handleGpsRescueSupervisor(uint32_t& newMask);
   void updateArmed();
   void updateAirMode();
   void updateBuzzer();

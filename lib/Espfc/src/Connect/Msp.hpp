@@ -12,6 +12,8 @@ constexpr size_t MSP_BUF_OUT_SIZE = 240;
 constexpr uint16_t MSP2_ESPFC_GPS_FILTER = 0x3013;
 constexpr uint16_t MSP2_ESPFC_ALTHOLD = 0x3014;
 constexpr uint16_t MSP2_ESPFC_ALTHOLD_CONFIG = 0x3015;
+constexpr uint16_t MSP2_ESPFC_GPS_RESCUE = 0x3016;
+constexpr uint16_t MSP2_ESPFC_GPS_RESCUE_CONFIG = 0x3017;
 
 enum MspState
 {
