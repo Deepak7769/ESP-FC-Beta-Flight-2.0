@@ -167,13 +167,16 @@ public:
  
   explicit PositionHold(const PositionHoldParams& p = PositionHoldParams{}): _p(p) {}
  
-void reset()
+void resetController()
 {
   _phase = PosHoldPhase::OFF;
   _iN = _iE = 0.0f;
   _brakeTime = 0.0f;
   _latched = false;
+}
 
+void resetFilter()
+{
   _filterInitialized = false;
   _filterLastGpsTimestampMs = 0;
   _filterFallbackElapsedS = 0.0f;
@@ -191,6 +194,12 @@ void reset()
   _acceptedSamples = 0;
   _rejectedSamples = 0;
   _consecutiveRejectedSamples = 0;
+}
+
+void reset()
+{
+  resetController();
+  resetFilter();
 }
  
   PosHoldPhase phase() const { return _phase; }
