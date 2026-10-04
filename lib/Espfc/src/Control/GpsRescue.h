@@ -56,11 +56,11 @@ struct GpsRescueParams
   float maxSpeed{8.0f};
   float approachSpeed{2.0f};
   float maxAcceleration{3.0f};
-  float maxAngle{25.0f * Navigation::DEG_TO_RAD};
+  float maxAngle{25.0f * Navigation::DEG_TO_RAD_FC};
   float approachDistance{15.0f};
   float landDistance{4.0f};
   float minDistance{10.0f};
-  float alignTolerance{15.0f * Navigation::DEG_TO_RAD};
+  float alignTolerance{15.0f * Navigation::DEG_TO_RAD_FC};
   float minLandingAltitude{0.8f};
   float gpsStaleS{0.5f};
   float maxHorizontalAccuracy{10.0f};
@@ -179,7 +179,7 @@ public:
             std::atan2(-in.east, -in.north));
     if (out.bearingToHome < 0.0f)
     {
-      out.bearingToHome += 2.0f * Navigation::PI;
+      out.bearingToHome += 2.0f * Navigation::PI_FC;
     }
     out.navigationHeading = navigationHeading(in);
     out.targetAltitude = _targetAltitude;

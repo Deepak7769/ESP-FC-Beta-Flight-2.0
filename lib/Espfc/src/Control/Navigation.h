@@ -49,8 +49,8 @@ struct NavigationState
 class Navigation
 {
 public:
-  static constexpr float PI = 3.14159265358979323846f;
-  static constexpr float DEG_TO_RAD = PI / 180.0f;
+  static constexpr float PI_FC = 3.14159265358979323846f;
+  static constexpr float DEG_TO_RAD_FC = PI / 180.0f;
   static constexpr float ACCEL_G = 9.80665f;
   static constexpr double METERS_PER_DEG = 111319.49079327357;
 
