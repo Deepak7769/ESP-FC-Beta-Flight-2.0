@@ -1315,9 +1315,27 @@ PositionHoldOutput posHoldOut{};
       gps.accuracy.horizontal <=
       ESPFC_POSHOLD_MAX_HACC_MM;
  
-  // Heading must be north-referenced: needs a working magnetometer
-  // that the fusion actually uses. Without it GPS velocity and body
-  // heading are in different frames and the aircraft would drift away.
+  // GPS course-over-ground is north-referenced and is available on
+  // NEO-6M through NAV-VELNED. Use it once the aircraft is moving
+  // enough for COG to be meaningful; below that threshold retain the
+  // attitude yaw reference for stationary/low-speed operation.
+  const float phGroundSpeedMs =
+      static_cast<float>(gps.velocity.raw.groundSpeed) * 0.001f;
+
+  const bool phUseCog =
+      phGroundSpeedMs > 0.5f &&
+      gps.fix &&
+      gps.fixType >= 3;
+
+  const float phHeading =
+      phUseCog
+          ? static_cast<float>(gps.velocity.raw.heading) *
+                1e-5f *
+                0.017453292519943295f
+          : -attitude.euler[AXIS_YAW];
+
+  // Magnetometer remains a diagnostic/optional heading aid; it is not a
+  // hard prerequisite because the target's default configuration has no mag.
   const bool phMag =
       _model.config.fusion.useMag &&
       _model.magActive();
@@ -1339,7 +1357,6 @@ PositionHoldOutput posHoldOut{};
       phSats &&
       phFresh &&
       phAcc &&
-      phMag &&
       attitudeFresh;
  
   if (phReady)
@@ -1362,10 +1379,10 @@ PositionHoldOutput posHoldOut{};
         static_cast<float>(
             gps.velocity.raw.east) *
         0.001f;
-    // MSP_ATTITUDE reports yaw as -euler.z (clockwise heading).
+    // GPS COG is clockwise from north; PositionHold expects the
+    // same north-referenced convention. At low speed, retain IMU yaw.
     phIn.heading =
-        -attitude.euler[
-            AXIS_YAW];
+        phHeading;
     phIn.stickRoll =
         input.ch[
             AXIS_ROLL];
@@ -1429,7 +1446,41 @@ PositionHoldOutput posHoldOut{};
   }
   else
   {
-    _posHold.reset();
+    if (!phRequested)
+    {
+      // The mode switch is off: a new engagement must start from a fresh
+      // latch/filter state.
+      _posHold.reset();
+      _posHoldNotReadySinceUs = 0;
+    }
+    else
+    {
+      // Keep Position Hold state alive across short GPS/attitude quality
+      // gaps. A transient 5-200 ms freshness blip must not erase the filter,
+      // latch point, counters, or I-term.
+      if (_posHoldNotReadySinceUs == 0)
+      {
+        _posHoldNotReadySinceUs = now;
+        if (_posHoldWasReady)
+        {
+          _model.state.buzzer.push(BUZZER_GPS_STATUS);
+        }
+      }
+      else if (static_cast<uint32_t>(
+                   now - _posHoldNotReadySinceUs) >=
+               1000000UL)
+      {
+        // Sustained failure: discard the controller/filter state so the next
+        // healthy engagement starts from a known-good GPS solution.
+        _posHold.reset();
+        _posHoldNotReadySinceUs = 0;
+      }
+    }
+  }
+
+  if (phReady)
+  {
+    _posHoldNotReadySinceUs = 0;
   }
  
   _posHoldWasReady =
