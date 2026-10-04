@@ -1374,10 +1374,54 @@ PositionHoldOutput posHoldOut{};
             AXIS_PITCH];
     phIn.dt =
         dt;
+          phIn.gpsTimestampMs =
+        gps.time;
+
+    phIn.horizontalAccuracy =
+        static_cast<float>(
+            gps.accuracy.horizontal) *
+        0.001f;
  
     posHoldOut =
         _posHold.update(
             phIn);
+          gps.location.filtered.lat =
+        posHoldOut.filteredLat;
+
+    gps.location.filtered.lon =
+        posHoldOut.filteredLon;
+
+    gps.location.filtered.height =
+        gps.location.raw.height;
+
+    gps.diagnostics.filteredNorthSpeed =
+        static_cast<int32_t>(
+            std::lrint(
+                posHoldOut.filteredVelNorth *
+                1000.0f));
+
+    gps.diagnostics.filteredEastSpeed =
+        static_cast<int32_t>(
+            std::lrint(
+                posHoldOut.filteredVelEast *
+                1000.0f));
+
+    gps.diagnostics.filteredGroundSpeed =
+        static_cast<uint32_t>(
+            std::max(
+                0.0f,
+                posHoldOut.filteredGroundSpeed *
+                1000.0f));
+
+    gps.diagnostics.rawFilteredDistance =
+        static_cast<uint32_t>(
+            std::max(
+                0.0f,
+                posHoldOut.rawFilteredDistance *
+                1000.0f));
+
+    gps.diagnostics.filterAccepted =
+        posHoldOut.gpsFilterAccepted;
   }
   else
   {
