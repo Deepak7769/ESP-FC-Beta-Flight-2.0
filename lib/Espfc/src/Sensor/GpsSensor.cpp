@@ -759,6 +759,107 @@ void GpsSensor::configureGnss()
   _model.logger.logln(written);
 }
 
+void GpsSensor::updateRawPositionDiagnostics(
+    int32_t lat,
+    int32_t lon,
+    uint32_t gpsTimeMs)
+{
+  auto& d =
+      _model.state.gps.diagnostics;
+
+  if (!_rawPositionInitialized)
+  {
+    _rawPositionInitialized = true;
+
+    _previousRawLat = lat;
+    _previousRawLon = lon;
+    _previousRawGpsTimeMs = gpsTimeMs;
+
+    d.rawNorthSpeed = 0;
+    d.rawEastSpeed = 0;
+    d.rawGroundSpeed = 0;
+    d.positionIntervalUs = 0;
+
+    return;
+  }
+
+  const uint32_t dtMs =
+      gpsTimeMs -
+      _previousRawGpsTimeMs;
+
+  if (dtMs == 0)
+  {
+    return;
+  }
+
+  const float dt =
+      std::clamp(
+          static_cast<float>(dtMs) *
+              0.001f,
+          0.02f,
+          2.0f);
+
+  constexpr double METERS_PER_DEG =
+      111319.49079327357;
+
+  const double latRad =
+      static_cast<double>(lat) *
+      1e-7 *
+      0.017453292519943295;
+
+  const double cosLat =
+      std::max(
+          0.1,
+          std::fabs(
+              std::cos(latRad)));
+
+  const double north =
+      static_cast<double>(
+          static_cast<int64_t>(lat) -
+          static_cast<int64_t>(_previousRawLat)) *
+      1e-7 *
+      METERS_PER_DEG;
+
+  const double east =
+      static_cast<double>(
+          static_cast<int64_t>(lon) -
+          static_cast<int64_t>(_previousRawLon)) *
+      1e-7 *
+      METERS_PER_DEG *
+      cosLat;
+
+  d.rawNorthSpeed =
+      static_cast<int32_t>(
+          std::lrint(
+              north /
+              dt *
+              1000.0));
+
+  d.rawEastSpeed =
+      static_cast<int32_t>(
+          std::lrint(
+              east /
+              dt *
+              1000.0));
+
+  d.rawGroundSpeed =
+      static_cast<uint32_t>(
+          std::max(
+              0.0,
+              std::hypot(
+                  north,
+                  east) /
+              dt *
+              1000.0));
+
+  d.positionIntervalUs =
+      dtMs * 1000U;
+
+  _previousRawLat = lat;
+  _previousRawLon = lon;
+  _previousRawGpsTimeMs = gpsTimeMs;
+}
+
 void GpsSensor::calculateHomeVector() const
 {
   if (!_model.state.gps.isHomeValid())
@@ -895,7 +996,7 @@ void GpsSensor::handleNavSol() const
   calculateHomeVector();
 }
 
-void GpsSensor::handleNavPosllh() const
+void GpsSensor::handleNavPosllh()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavPosllh)) return;
   const auto& m = *_ubxMsg.getAs<Gps::UbxNavPosllh>();
@@ -905,6 +1006,12 @@ void GpsSensor::handleNavPosllh() const
   _model.state.gps.location.raw.height = m.hMSL;
   _model.state.gps.accuracy.horizontal = m.hAcc;
   _model.state.gps.accuracy.vertical = m.vAcc;
+  _model.state.gps.time = m.iTow;
+
+  updateRawPositionDiagnostics(
+      m.lat,
+      m.lon,
+      m.iTow);
 }
 
 void GpsSensor::handleNavVelned() const
