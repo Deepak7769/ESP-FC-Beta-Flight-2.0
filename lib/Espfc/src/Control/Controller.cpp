@@ -78,12 +78,6 @@ int Controller::begin()
           0.80f);
   _hoverThrustInitialized = true;
 
-  _model.state.assistedMode.hoverThrust =
-      _hoverThrust;
-
-  _model.state.assistedMode.tiltCompensatedHover =
-      _hoverThrust;
-
 _angleV2WasActive =
     false;
 
@@ -119,7 +113,14 @@ _model.state.angleV2 =
 
 _model.state.assistedMode =
     AssistedModeState{};
-    _model.state.posHold =
+
+  _model.state.assistedMode.hoverThrust =
+      _hoverThrust;
+
+  _model.state.assistedMode.tiltCompensatedHover =
+      _hoverThrust;
+
+  _model.state.posHold =
     PosHoldState{};
 
 _posHold.reset();

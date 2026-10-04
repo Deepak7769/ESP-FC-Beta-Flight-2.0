@@ -7934,9 +7934,9 @@ void test_controller_althold_v2_hover_feedforward_and_tilt_compensation()
   model.config.loopSync = 1;
   model.config.mixerSync = 1;
   model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.altHold.hoverThrottle = 60;
   model.config.altHold.hoverLearnRate = 0;
   model.begin();
-  model.config.altHold.hoverThrottle = 60;
 
   Controller controller(model);
   controller.begin();
