@@ -1999,6 +1999,20 @@ const bool altActive =
   assisted.altitudeActive =
       altActive;
 
+  assisted.hoverThrust =
+      _hoverThrust;
+
+  assisted.tiltCompensatedHover =
+      std::clamp(
+          (_hoverThrust + 1.0f) /
+              std::clamp(
+                  _model.state.attitude.cosTheta,
+                  0.35f,
+                  1.0f) -
+          1.0f,
+          -1.0f,
+          1.0f);
+
   _altHoldWasActive =
       altActive;
 
