@@ -2162,6 +2162,30 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU16(_model.state.gps.accuracy.pDop); // pDOP
       break;
 
+    case MSP2_ESPFC_GPS_FILTER: {
+      // ESP-FC custom MSPv2 GPS filter telemetry used by the matching Configurator.
+      // Payload: flags, raw/filtered lat/lon, raw N/E/ground speed,
+      // filtered N/E/ground speed, raw-to-filtered distance,
+      // accepted/rejected filter sample counters.
+      const auto& gps = _model.state.gps;
+      const auto& d = gps.diagnostics;
+      r.writeU8(d.filterAccepted ? 0x01 : 0x00);
+      r.writeU32(static_cast<uint32_t>(gps.location.raw.lat));
+      r.writeU32(static_cast<uint32_t>(gps.location.raw.lon));
+      r.writeU32(static_cast<uint32_t>(gps.location.filtered.lat));
+      r.writeU32(static_cast<uint32_t>(gps.location.filtered.lon));
+      r.writeU32(static_cast<uint32_t>(d.rawNorthSpeed));
+      r.writeU32(static_cast<uint32_t>(d.rawEastSpeed));
+      r.writeU32(d.rawGroundSpeed);
+      r.writeU32(static_cast<uint32_t>(d.filteredNorthSpeed));
+      r.writeU32(static_cast<uint32_t>(d.filteredEastSpeed));
+      r.writeU32(d.filteredGroundSpeed);
+      r.writeU32(d.rawFilteredDistance);
+      r.writeU32(d.acceptedSamples);
+      r.writeU32(d.rejectedSamples);
+      break;
+    }
+
     case MSP_COMP_GPS:
       r.writeU16(std::clamp<uint16_t>(lrintf(_model.state.gps.distanceToHome), 0,
                                       std::numeric_limits<uint16_t>::max()));      // meters
