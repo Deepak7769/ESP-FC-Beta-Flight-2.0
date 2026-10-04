@@ -61,6 +61,15 @@ namespace Espfc::Control {
 #ifndef ESPFC_POSHOLD_MAX_ERROR_M
 #define ESPFC_POSHOLD_MAX_ERROR_M 30.0f // farther than this: re-latch, never chase
 #endif
+#ifndef ESPFC_POSHOLD_FILTER_TAU_S
+#define ESPFC_POSHOLD_FILTER_TAU_S 0.60f // position estimate time constant
+#endif
+#ifndef ESPFC_POSHOLD_DEADBAND_M
+#define ESPFC_POSHOLD_DEADBAND_M 0.75f // do not chase sub-metre GPS noise
+#endif
+#ifndef ESPFC_POSHOLD_MAX_INNOVATION_M
+#define ESPFC_POSHOLD_MAX_INNOVATION_M 8.0f // reject implausible GPS jumps
+#endif
  
 struct PositionHoldParams
 {
@@ -75,6 +84,9 @@ struct PositionHoldParams
   float brakeSpeed = ESPFC_POSHOLD_BRAKE_SPEED_MS;
   float brakeTimeout = ESPFC_POSHOLD_BRAKE_TIMEOUT_S;
   float maxError = ESPFC_POSHOLD_MAX_ERROR_M;
+  float filterTau = ESPFC_POSHOLD_FILTER_TAU_S;
+  float positionDeadband = ESPFC_POSHOLD_DEADBAND_M;
+  float maxInnovation = ESPFC_POSHOLD_MAX_INNOVATION_M;
 };
  
 enum class PosHoldPhase : uint8_t
@@ -91,6 +103,8 @@ struct PositionHoldInput
   int32_t lon = 0;       // deg * 1e7
   float velNorth = 0.0f; // m/s
   float velEast = 0.0f;  // m/s
+  float horizontalAccuracy = 0.0f; // m; 0 means unavailable
+  uint32_t gpsTimestampUs = 0; // changes only when a new GPS solution arrives
   float heading = 0.0f;  // rad, clockwise from north
   float stickRoll = 0.0f;  // -1..1 normalised
   float stickPitch = 0.0f; // -1..1 normalised
@@ -124,6 +138,10 @@ public:
     _iN = _iE = 0.0f;
     _brakeTime = 0.0f;
     _latched = false;
+    _filterInitialized = false;
+    _filterLastGpsTs = 0;
+    _filteredLat = 0.0;
+    _filteredLon = 0.0;
   }
  
   PosHoldPhase phase() const { return _phase; }
@@ -186,9 +204,81 @@ public:
       return out;
     }
  
+    // ---- GPS position estimate ---------------------------------------------
+    // Keep the raw receiver position untouched. Position Hold uses a local
+    // constant-velocity prediction plus a low-pass correction from each new
+    // GPS solution. This suppresses normal NEO-6M wander without turning a
+    // genuine aircraft displacement into a permanent bias.
+    const double METERS_PER_DEG = 111319.49079327357;
+    if (!_filterInitialized)
+    {
+      _filteredLat = static_cast<double>(in.lat) * 1e-7;
+      _filteredLon = static_cast<double>(in.lon) * 1e-7;
+      _filterLastGpsTs = in.gpsTimestampUs;
+      _filterInitialized = true;
+    }
+    else
+    {
+      const double latRad = _filteredLat * 0.017453292519943295;
+      const double cosLat = std::max(0.1, std::fabs(std::cos(latRad)));
+      _filteredLat += static_cast<double>(in.velNorth) * dt / METERS_PER_DEG;
+      _filteredLon += static_cast<double>(in.velEast) * dt / (METERS_PER_DEG * cosLat);
+
+      const bool newGps = (in.gpsTimestampUs == 0) || (in.gpsTimestampUs != _filterLastGpsTs);
+      if (newGps)
+      {
+        float measurementDt = dt;
+        if (in.gpsTimestampUs != 0 && _filterLastGpsTs != 0)
+        {
+          const uint32_t deltaUs = in.gpsTimestampUs - _filterLastGpsTs;
+          measurementDt = std::clamp(static_cast<float>(deltaUs) * 1e-6f, 0.02f, 1.0f);
+        }
+
+        float rawN = 0.0f, rawE = 0.0f;
+        deltaMeters(
+            static_cast<int32_t>(std::lrint(_filteredLat * 1e7)),
+            static_cast<int32_t>(std::lrint(_filteredLon * 1e7)),
+            in.lat, in.lon, rawN, rawE);
+
+        const float innovation = std::hypot(rawN, rawE);
+        const float accuracyGate =
+            in.horizontalAccuracy > 0.0f
+                ? std::max(_p.maxInnovation, 3.0f * in.horizontalAccuracy)
+                : _p.maxInnovation;
+
+        if (innovation <= accuracyGate)
+        {
+          const float alpha =
+              std::clamp(
+                  1.0f - std::exp(-measurementDt / std::max(_p.filterTau, 0.05f)),
+                  0.05f,
+                  0.75f);
+
+          const double latScale = METERS_PER_DEG;
+          const double lonScale = METERS_PER_DEG * cosLat;
+          _filteredLat += static_cast<double>(alpha * rawN) / latScale;
+          _filteredLon += static_cast<double>(alpha * rawE) / lonScale;
+        }
+
+        _filterLastGpsTs = in.gpsTimestampUs;
+      }
+    }
+
+    const int32_t filteredLat =
+        static_cast<int32_t>(std::lrint(_filteredLat * 1e7));
+    const int32_t filteredLon =
+        static_cast<int32_t>(std::lrint(_filteredLon * 1e7));
+
     // ---- position error -> velocity target --------------------------------
     float eN = 0.0f, eE = 0.0f;
-    deltaMeters(_targetLat, _targetLon, in.lat, in.lon, eN, eE);
+    deltaMeters(_targetLat, _targetLon, filteredLat, filteredLon, eN, eE);
+
+    const float errorMagnitude = std::hypot(eN, eE);
+    if (errorMagnitude < _p.positionDeadband)
+    {
+      eN = 0.0f;
+      eE = 0.0f;
+    }
  
     if (std::hypot(eN, eE) > _p.maxError)
     {
@@ -269,6 +359,11 @@ private:
   float _iE = 0.0f;
   float _brakeTime = 0.0f;
   bool _latched = false;
+
+  bool _filterInitialized = false;
+  uint32_t _filterLastGpsTs = 0;
+  double _filteredLat = 0.0;
+  double _filteredLon = 0.0;
 };
  
 } // namespace Espfc::Control
