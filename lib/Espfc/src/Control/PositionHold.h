@@ -346,16 +346,8 @@ public:
 private:
   void latch(const PositionHoldInput& in)
   {
-    if (_filterInitialized)
-    {
-      _targetLat = static_cast<int32_t>(std::lrint(_filteredLat * 1e7));
-      _targetLon = static_cast<int32_t>(std::lrint(_filteredLon * 1e7));
-    }
-    else
-    {
-      _targetLat = in.lat;
-      _targetLon = in.lon;
-    }
+    _targetLat = in.lat;
+    _targetLon = in.lon;
     _latched = true;
   }
  
