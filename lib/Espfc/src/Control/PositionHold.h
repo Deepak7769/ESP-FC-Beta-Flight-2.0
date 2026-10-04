@@ -664,6 +664,7 @@ private:
   float _filteredVelEast = 0.0f;
   uint32_t _acceptedSamples = 0;
   uint32_t _rejectedSamples = 0;
+  uint8_t _consecutiveRejectedSamples = 0;
 };
  
 } // namespace Espfc::Control
