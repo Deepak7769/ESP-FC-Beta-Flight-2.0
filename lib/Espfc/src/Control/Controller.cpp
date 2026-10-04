@@ -576,6 +576,15 @@ constexpr bool altHoldV2OutputActive =
     false;
 #endif
 
+#if defined(ESPFC_LAND_V2_ACTIVE)
+const bool landingV2RequestedForOutput =
+    landingV2OwnsControl(
+        _model);
+#else
+constexpr bool landingV2RequestedForOutput =
+    false;
+#endif
+
 const bool legacyAltHoldActive =
     ENABLE_LEGACY_ALTHOLD_OUTPUT &&
     _model.isModeActive(MODE_ALTHOLD);
