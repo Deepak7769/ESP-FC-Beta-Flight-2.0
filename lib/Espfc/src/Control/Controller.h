@@ -60,6 +60,10 @@ private:
   float _altHoldVerticalRateTarget = 0.0f;
   float _altHoldVerticalAccelerationTarget = 0.0f;
 
+  // Level-flight collective baseline in normalized [-1,1] units.
+  float _hoverThrust = 0.0f;
+  bool _hoverThrustInitialized = false;
+
   uint32_t _assistedLastUpdateUs = 0;
 // Position hold (MODE_POSHOLD) controller and transition state.
 PositionHold _posHold;

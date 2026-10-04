@@ -2176,6 +2176,45 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU16(_model.state.gps.accuracy.pDop); // pDOP
       break;
 
+    case MSP2_ESPFC_ALTHOLD: {
+      const auto& altitude = _model.state.altitude;
+      const auto& assisted = _model.state.assistedMode;
+      const auto& mixer = _model.state.mixer;
+
+      r.writeU8(static_cast<uint8_t>(altitude.estimatorState));
+      r.writeU16(altitude.faultFlags);
+      r.writeU8(altitude.baroAccepted ? 1 : 0);
+      r.writeU8(altitude.baroRateAccepted ? 1 : 0);
+
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.height * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.vario * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.acceleration * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.accelerationBias * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.baroBias * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.baroInnovation * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.baroRateInnovation * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(altitude.rangefinderInnovation * 1000.0f)));
+
+      r.writeU32(static_cast<uint32_t>(lrintf(assisted.hoverThrust * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(assisted.altitudeTarget * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(assisted.verticalRateTarget * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(_model.state.output.ch[AXIS_THRUST] * 1000.0f)));
+
+      uint8_t flags = 0;
+      flags |= mixer.verticalSaturationHigh ? 1u : 0u;
+      flags |= mixer.verticalSaturationLow ? 2u : 0u;
+      flags |= altitude.rangefinderUsed ? 4u : 0u;
+      flags |= altitude.estimatorState == ALTITUDE_ESTIMATOR_DEGRADED ? 8u : 0u;
+      flags |= altitude.estimatorState == ALTITUDE_ESTIMATOR_FAULT ? 16u : 0u;
+      r.writeU8(flags);
+
+      r.writeU32(altitude.baroAcceptedSamples);
+      r.writeU32(altitude.baroRejectedSamples);
+      r.writeU32(altitude.baroRateRejectedSamples);
+      r.writeU16(altitude.baroConsecutiveRejects);
+      break;
+    }
+
     case MSP2_ESPFC_GPS_FILTER: {
       // ESP-FC custom MSPv2 GPS filter telemetry used by the matching Configurator.
       // Payload: flags, raw/filtered lat/lon, raw N/E/ground speed,

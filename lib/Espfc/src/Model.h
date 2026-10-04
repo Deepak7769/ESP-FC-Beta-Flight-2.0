@@ -203,6 +203,23 @@ for(size_t i = 0; i < AXIS_COUNT_RPY; i++)
   // has no additional actuator authority.
   state.innerPid[AXIS_THRUST].outputSaturated = val;
 }
+
+void setOutputSaturation(
+    bool globalSaturated,
+    bool verticalSaturated)
+{
+  state.output.saturated = globalSaturated;
+
+  for(size_t i = 0; i < AXIS_COUNT_RPY; i++)
+  {
+    state.innerPid[i].outputSaturated = globalSaturated;
+  }
+
+  // Vertical PID anti-windup should react only when collective authority is
+  // saturated in the direction requested by the vertical controller.
+  state.innerPid[AXIS_THRUST].outputSaturated =
+      verticalSaturated;
+}
     bool areMotorsRunning() const
     {
       size_t count = state.currentMixer.count;
@@ -856,6 +873,66 @@ config.altHold.itermRange =
         config.altHold.itermRange,
         10,
         60);
+
+config.altHold.hoverThrottle =
+    std::clamp<uint8_t>(
+        config.altHold.hoverThrottle,
+        10,
+        90);
+
+config.altHold.hoverLearnRate =
+    std::clamp<uint8_t>(
+        config.altHold.hoverLearnRate,
+        0,
+        100);
+
+config.altHold.maxClimbRate =
+    std::clamp<uint8_t>(
+        config.altHold.maxClimbRate,
+        1,
+        50);
+
+config.altHold.maxDescentRate =
+    std::clamp<uint8_t>(
+        config.altHold.maxDescentRate,
+        1,
+        50);
+
+config.altHold.verticalAccelLimit =
+    std::clamp<uint8_t>(
+        config.altHold.verticalAccelLimit,
+        5,
+        100);
+
+config.altHold.verticalJerkLimit =
+    std::clamp<uint8_t>(
+        config.altHold.verticalJerkLimit,
+        5,
+        200);
+
+config.altHold.baroInnovationGate =
+    std::clamp<uint8_t>(
+        config.altHold.baroInnovationGate,
+        5,
+        50);
+
+config.altHold.baroRateInnovationGate =
+    std::clamp<uint8_t>(
+        config.altHold.baroRateInnovationGate,
+        5,
+        100);
+
+config.altHold.groundEffectHeight =
+    std::clamp<uint8_t>(
+        config.altHold.groundEffectHeight,
+        0,
+        100);
+
+config.altHold.propWashAccelThreshold =
+    std::clamp<uint8_t>(
+        config.altHold.propWashAccelThreshold,
+        5,
+        150);
 
 config.arming.smallAngle =
     std::min<uint8_t>(

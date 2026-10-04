@@ -10,6 +10,7 @@ constexpr size_t MSP_BUF_OUT_SIZE = 240;
 
 // ESP-FC custom MSPv2 telemetry commands.
 constexpr uint16_t MSP2_ESPFC_GPS_FILTER = 0x3013;
+constexpr uint16_t MSP2_ESPFC_ALTHOLD = 0x3014;
 
 enum MspState
 {

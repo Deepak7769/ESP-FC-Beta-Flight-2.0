@@ -731,7 +731,28 @@ struct AltHoldConfig
 {
   uint8_t itermCenter = 50;
   uint8_t itermRange = 50;
-  uint8_t baroTau = 20; // tau = time constant in seconds / 10
+  uint8_t baroTau = 20;
+
+  // Level-flight hover collective as percent of available thrust.
+  uint8_t hoverThrottle = 50;
+
+  // Adaptive hover-trust learning rate. 0 disables learning.
+  uint8_t hoverLearnRate = 10;
+
+  // Vertical trajectory limits:
+  // rates = dm/s, acceleration = dm/s^2, jerk = dm/s^3.
+  uint8_t maxClimbRate = 15;
+  uint8_t maxDescentRate = 10;
+  uint8_t verticalAccelLimit = 25;
+  uint8_t verticalJerkLimit = 50;
+
+  // Innovation gates: height = dm, vertical rate = dm/s.
+  uint8_t baroInnovationGate = 15;
+  uint8_t baroRateInnovationGate = 25;
+
+  // Near-ground prop-wash protection: height = dm, acceleration = dm/s^2.
+  uint8_t groundEffectHeight = 15;
+  uint8_t propWashAccelThreshold = 30;
 };
  
 struct MixerConfiguration

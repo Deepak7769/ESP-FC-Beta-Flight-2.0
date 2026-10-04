@@ -68,6 +68,16 @@ int Controller::begin()
   reload(MODEL_CHANGE_FILTER);
   reload(MODEL_CHANGE_PID);
 
+  _hoverThrust =
+      std::clamp(
+          static_cast<float>(
+              _model.config.altHold.hoverThrottle) *
+          0.02f -
+          1.0f,
+          -0.80f,
+          0.80f);
+  _hoverThrustInitialized = true;
+
 _angleV2WasActive =
     false;
 
@@ -616,6 +626,17 @@ if (altHoldV2OutputActive)
             verticalPid.oLimitLow,
             verticalPid.oLimitHigh);
 
+    const float entryTiltCos =
+        std::clamp(
+            _model.state.attitude.cosTheta,
+            0.35f,
+            1.0f);
+
+    const float levelEquivalentEntryThrust =
+        ((existingThrust + 1.0f) *
+         entryTiltCos) -
+        1.0f;
+
     verticalPid.prevMeasurement =
         entryMeasurement;
 
@@ -636,7 +657,8 @@ if (altHoldV2OutputActive)
 
     verticalPid.iTerm =
         std::clamp(
-            existingThrust -
+            levelEquivalentEntryThrust -
+                _hoverThrust -
                 entryP -
                 entryF,
             verticalPid.iLimitLow,
@@ -653,11 +675,88 @@ if (altHoldV2OutputActive)
   }
   else
   {
-    output.ch[AXIS_THRUST] =
+    const float pidCorrection =
         verticalPid.update(
             setpoint.rate[AXIS_THRUST],
             altitude.vario);
+
+    const float desiredLevelThrust =
+        std::clamp(
+            _hoverThrust +
+            pidCorrection,
+            -1.0f,
+            1.0f);
+
+    const float tiltCos =
+        std::clamp(
+            _model.state.attitude.cosTheta,
+            0.35f,
+            1.0f);
+
+    const float compensatedThrust =
+        (desiredLevelThrust + 1.0f) /
+            tiltCos -
+        1.0f;
+
+    output.ch[AXIS_THRUST] =
+        std::clamp(
+            compensatedThrust,
+            verticalPid.oLimitLow,
+            verticalPid.oLimitHigh);
+
+    if (!landingV2Requested &&
+        altitude.healthy &&
+        std::fabs(altitude.vario) < 0.15f &&
+        std::fabs(altitude.acceleration) < 0.50f &&
+        std::fabs(setpoint.rate[AXIS_THRUST]) < 0.10f &&
+        !_model.state.mixer.verticalSaturated &&
+        tiltCos > 0.80f)
+    {
+      const float learnRate =
+          std::clamp(
+              static_cast<float>(
+                  _model.config.altHold.hoverLearnRate) *
+              0.01f,
+              0.0f,
+              1.0f);
+
+      const float levelEquivalentOutput =
+          ((output.ch[AXIS_THRUST] + 1.0f) *
+           tiltCos) -
+          1.0f;
+
+      const float alpha =
+          std::clamp(
+              dt * 0.05f * learnRate,
+              0.0f,
+              0.005f);
+
+      _hoverThrust +=
+          (levelEquivalentOutput -
+           _hoverThrust) *
+          alpha;
+
+      _hoverThrust =
+          std::clamp(
+              _hoverThrust,
+              -0.80f,
+              0.80f);
+    }
   }
+
+  _model.state.assistedMode.hoverThrust =
+      _hoverThrust;
+
+  _model.state.assistedMode.tiltCompensatedHover =
+      std::clamp(
+          (_hoverThrust + 1.0f) /
+              std::clamp(
+                  _model.state.attitude.cosTheta,
+                  0.35f,
+                  1.0f) -
+          1.0f,
+          -1.0f,
+          1.0f);
 
   _altHoldV2OutputWasActive =
       true;
@@ -685,7 +784,8 @@ else
   verticalPid.iTerm =
       std::clamp(
           _model.state.input.ch[
-              AXIS_THRUST],
+              AXIS_THRUST] -
+          _hoverThrust,
           verticalPid.iLimitLow,
           verticalPid.iLimitHigh);
 
@@ -1111,11 +1211,21 @@ float Controller::calculatePilotClimbRate() const
   constexpr float DEADBAND =
       0.10f;
 
-  constexpr float MAX_DESCENT_MS =
-      1.0f;
+  const float maxDescentMs =
+      std::clamp(
+          static_cast<float>(
+              _model.config.altHold.maxDescentRate) *
+          0.1f,
+          0.1f,
+          5.0f);
 
-  constexpr float MAX_CLIMB_MS =
-      1.5f;
+  const float maxClimbMs =
+      std::clamp(
+          static_cast<float>(
+              _model.config.altHold.maxClimbRate) *
+          0.1f,
+          0.1f,
+          5.0f);
 
   constexpr size_t PILOT_CHANNEL =
       static_cast<size_t>(
@@ -1156,12 +1266,12 @@ float Controller::calculatePilotClimbRate() const
   {
     return
         stick *
-        MAX_CLIMB_MS;
+        maxClimbMs;
   }
 
   return
       stick *
-      MAX_DESCENT_MS;
+      maxDescentMs;
 }
 
 // Shared assisted-controller update.
@@ -1680,6 +1790,9 @@ const bool altActive =
     _altHoldVerticalRateTarget =
         altitude.vario;
 
+    _altHoldVerticalAccelerationTarget =
+        altitude.acceleration;
+
     assisted.altitudeTargetValid =
         true;
   }
@@ -1747,37 +1860,58 @@ const bool altActive =
           -MAX_POSITION_CORRECTION_MS,
           MAX_POSITION_CORRECTION_MS);
 
-    constexpr float MAX_DESCENT_MS =
-        1.0f;
+    const float maxDescentMs =
+        std::clamp(
+            static_cast<float>(
+                _model.config.altHold.maxDescentRate) *
+            0.1f,
+            0.1f,
+            5.0f);
 
-    constexpr float MAX_CLIMB_MS =
-        1.5f;
+    const float maxClimbMs =
+        std::clamp(
+            static_cast<float>(
+                _model.config.altHold.maxClimbRate) *
+            0.1f,
+            0.1f,
+            5.0f);
 
     const float requestedVz =
         std::clamp(
             pilotVz +
                 velocityCorrection,
-            -MAX_DESCENT_MS,
-            MAX_CLIMB_MS);
+            -maxDescentMs,
+            maxClimbMs);
 
     // Industrial multicopter controllers shape vertical trajectories with
     // both acceleration and jerk limits. Keep a conservative acceleration
     // envelope and also rate-limit changes in that acceleration.
-    constexpr float VERTICAL_ACCEL_LIMIT_MSS =
-        2.5f;
-    constexpr float VERTICAL_JERK_LIMIT_MSSS =
-        5.0f;
+    const float verticalAccelLimitMs2 =
+        std::clamp(
+            static_cast<float>(
+                _model.config.altHold.verticalAccelLimit) *
+            0.1f,
+            0.5f,
+            10.0f);
+
+    const float verticalJerkLimitMs3 =
+        std::clamp(
+            static_cast<float>(
+                _model.config.altHold.verticalJerkLimit) *
+            0.1f,
+            0.5f,
+            20.0f);
 
     const float desiredAcceleration =
         std::clamp(
             (requestedVz -
              _altHoldVerticalRateTarget) /
                 std::max(dt, 0.001f),
-            -VERTICAL_ACCEL_LIMIT_MSS,
-            VERTICAL_ACCEL_LIMIT_MSS);
+            -verticalAccelLimitMs2,
+            verticalAccelLimitMs2);
 
     const float maxAccelerationStep =
-        VERTICAL_JERK_LIMIT_MSSS *
+        verticalJerkLimitMs3 *
         dt;
 
     _altHoldVerticalAccelerationTarget +=
@@ -1790,8 +1924,8 @@ const bool altActive =
     _altHoldVerticalAccelerationTarget =
         std::clamp(
             _altHoldVerticalAccelerationTarget,
-            -VERTICAL_ACCEL_LIMIT_MSS,
-            VERTICAL_ACCEL_LIMIT_MSS);
+            -verticalAccelLimitMs2,
+            verticalAccelLimitMs2);
 
     _altHoldVerticalRateTarget +=
         _altHoldVerticalAccelerationTarget *
@@ -2096,9 +2230,29 @@ void Controller::reloadPid()
   }
 
 
-  // alt hold pid
-  float itermCenter = std::clamp((int)_model.config.altHold.itermCenter, 10, 60) * 0.01f;
-  float itermRange = itermCenter * std::clamp((int)_model.config.altHold.itermRange, 10, 60) * 0.01f;
+  const float itermCenter =
+      std::clamp(
+          static_cast<float>(
+              _model.config.altHold.itermCenter) *
+          0.01f,
+          0.10f,
+          0.60f);
+
+  const float itermRange =
+      itermCenter *
+      std::clamp(
+          static_cast<float>(
+              _model.config.altHold.itermRange) *
+          0.01f,
+          0.10f,
+          0.60f);
+
+  const float correctionRange =
+      std::clamp(
+          2.0f * itermRange,
+          0.10f,
+          1.0f);
+
   const auto& pc = _model.config.pid[FC_PID_VEL];
 
   auto& pid = _model.state.innerPid[AXIS_THRUST];
@@ -2106,9 +2260,9 @@ void Controller::reloadPid()
   pid.Ki = (float)pc.I * VEL_ITERM_SCALE;
   pid.Kd = (float)pc.D * VEL_DTERM_SCALE;
   pid.Kf = (float)pc.F * VEL_FTERM_SCALE;
-  pid.iLimitLow = -1.0f + 2.0f * (itermCenter - itermRange);
-  pid.iLimitHigh = -1.0f + 2.0f * (itermCenter + itermRange);
-  pid.iReset = pid.iLimitLow;
+  pid.iLimitLow = -correctionRange;
+  pid.iLimitHigh = correctionRange;
+  pid.iReset = 0.0f;
   pid.rate = _model.state.loopTimer.rate;
   pid.begin();
 }

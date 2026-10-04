@@ -7815,6 +7815,200 @@ void test_fusion_mode_name_rejects_negative_enum()
           static_cast<FusionMode>(-1)));
 }
 
+
+void test_althold_v2_configurable_limits_are_persisted()
+{
+  Model model;
+
+  model.config.altHold.hoverThrottle = 62;
+  model.config.altHold.hoverLearnRate = 7;
+  model.config.altHold.maxClimbRate = 24;
+  model.config.altHold.maxDescentRate = 12;
+  model.config.altHold.verticalAccelLimit = 35;
+  model.config.altHold.verticalJerkLimit = 70;
+  model.config.altHold.baroInnovationGate = 18;
+  model.config.altHold.baroRateInnovationGate = 30;
+  model.config.altHold.groundEffectHeight = 20;
+  model.config.altHold.propWashAccelThreshold = 40;
+
+  TEST_ASSERT_EQUAL_UINT8(62, model.config.altHold.hoverThrottle);
+  TEST_ASSERT_EQUAL_UINT8(7, model.config.altHold.hoverLearnRate);
+  TEST_ASSERT_EQUAL_UINT8(24, model.config.altHold.maxClimbRate);
+  TEST_ASSERT_EQUAL_UINT8(12, model.config.altHold.maxDescentRate);
+  TEST_ASSERT_EQUAL_UINT8(35, model.config.altHold.verticalAccelLimit);
+  TEST_ASSERT_EQUAL_UINT8(70, model.config.altHold.verticalJerkLimit);
+  TEST_ASSERT_EQUAL_UINT8(18, model.config.altHold.baroInnovationGate);
+  TEST_ASSERT_EQUAL_UINT8(30, model.config.altHold.baroRateInnovationGate);
+  TEST_ASSERT_EQUAL_UINT8(20, model.config.altHold.groundEffectHeight);
+  TEST_ASSERT_EQUAL_UINT8(40, model.config.altHold.propWashAccelThreshold);
+}
+
+void test_altitude_v2_rate_gate_reports_rejection()
+{
+  When(Method(ArduinoFake(), micros)).Return(100000, 200000);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.baro.dev = BARO_BMP280;
+  model.config.altHold.baroRateInnovationGate = 5;
+  model.begin();
+
+  model.state.attitude.healthy = true;
+  model.state.attitude.lastUpdateUs = 100000;
+  model.state.accel.present = true;
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = 100000;
+  model.state.baro.present = true;
+  model.state.baro.sampleValid = true;
+  model.state.baro.altitudeBiasSamples = -1;
+  model.state.baro.rate = 100;
+  model.state.baro.lastUpdateUs = 100000;
+  model.state.baro.altitudeGround = 0.0f;
+  model.state.baro.vario = 0.0f;
+
+  Control::Altitude altitude(model);
+  altitude.begin();
+  altitude.update(true);
+
+  model.state.baro.lastUpdateUs = 200000;
+  model.state.attitude.lastUpdateUs = 200000;
+  model.state.accel.lastUpdateUs = 200000;
+  model.state.baro.vario = 5.0f;
+  altitude.update(true);
+
+  TEST_ASSERT_FALSE(model.state.altitude.baroRateAccepted);
+  TEST_ASSERT_TRUE(model.state.altitude.baroRateRejectedSamples > 0);
+  TEST_ASSERT_TRUE(model.state.altitude.baroRejectedSamples > 0);
+  TEST_ASSERT_TRUE(model.state.altitude.baroConsecutiveRejects > 0);
+}
+
+void test_altitude_v2_rangefinder_is_fused_near_ground()
+{
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(100000);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.baro.dev = BARO_BMP280;
+  model.begin();
+
+  model.state.attitude.healthy = true;
+  model.state.attitude.lastUpdateUs = 100000;
+  model.state.accel.present = true;
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = 100000;
+  model.state.baro.present = true;
+  model.state.baro.sampleValid = true;
+  model.state.baro.altitudeBiasSamples = -1;
+  model.state.baro.rate = 100;
+  model.state.baro.lastUpdateUs = 100000;
+  model.state.baro.altitudeGround = 0.0f;
+  model.state.baro.vario = 0.0f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = 100000;
+  model.state.rangefinder.distance = 1.0f;
+  model.state.rangefinder.quality = 100;
+
+  Control::Altitude altitude(model);
+  altitude.begin();
+  altitude.update(true);
+
+  TEST_ASSERT_TRUE(
+      model.state.altitude.rangefinderUsed ||
+      std::isfinite(model.state.altitude.rangefinderInnovation));
+}
+
+void test_controller_althold_v2_hover_feedforward_and_tilt_compensation()
+{
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.altHold.hoverThrottle = 60;
+  model.config.altHold.hoverLearnRate = 0;
+  model.begin();
+
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, 0);
+
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.altitude.healthy = true;
+  model.state.output.ch[AXIS_THRUST] = 0.20f;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+
+  model.updateModes(uint32_t{1} << MODE_ALTHOLD);
+  controller.update();
+  controller.update();
+
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.02f,
+      0.20f,
+      model.state.assistedMode.hoverThrust);
+
+  model.state.attitude.cosTheta = 0.8660254f;
+  controller.update();
+
+  const float expected =
+      (0.20f + 1.0f) /
+      0.8660254f -
+      1.0f;
+
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.06f,
+      expected,
+      model.state.assistedMode.tiltCompensatedHover);
+}
+
+void test_controller_althold_v2_transition_stress_preserves_target_contract()
+{
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, 0);
+
+  model.state.altitude.height = 1.5f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.altitude.healthy = true;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+
+  for (int i = 0; i < 100; ++i)
+  {
+    model.updateModes(uint32_t{1} << MODE_ALTHOLD);
+    controller.update();
+
+    TEST_ASSERT_TRUE(
+        std::isfinite(model.state.assistedMode.altitudeTarget));
+
+    model.updateModes(0);
+    controller.update();
+
+    TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+  }
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -7840,6 +8034,11 @@ RUN_TEST(
     test_controller_angle_v2_active_path_is_bumpless_and_negative_feedback);
 
 RUN_TEST(test_controller_althold_v2_captures_current_altitude);
+RUN_TEST(test_althold_v2_configurable_limits_are_persisted);
+RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
+RUN_TEST(test_altitude_v2_rangefinder_is_fused_near_ground);
+RUN_TEST(test_controller_althold_v2_hover_feedforward_and_tilt_compensation);
+RUN_TEST(test_controller_althold_v2_transition_stress_preserves_target_contract);
 RUN_TEST(test_controller_althold_v2_center_stick_holds_target);
 RUN_TEST(test_controller_althold_v2_climb_command_moves_target_up);
 RUN_TEST(test_controller_althold_v2_descent_command_moves_target_down);

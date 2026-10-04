@@ -321,6 +321,13 @@ struct MixerState
   float maxThrottle;
   bool digitalOutput;
 
+  // Mixer headroom used by vertical PID anti-windup.
+  bool verticalSaturated{false};
+  bool verticalSaturationHigh{false};
+  bool verticalSaturationLow{false};
+  float verticalHeadroomHigh{1.0f};
+  float verticalHeadroomLow{1.0f};
+
   EscDriver * escMotor;
   EscDriver * escServo;
 };
@@ -363,12 +370,23 @@ struct BaroState
   float altitudePrev;
   float vario;
 
-  // Professional AltHold estimator support
-uint32_t lastUpdateUs{0};
-bool sampleValid{false};
+  uint32_t lastUpdateUs{0};
+  bool sampleValid{false};
 
   int32_t altitudeBiasSamples;
 };
+
+struct RangefinderState
+{
+  // Generic vertical range measurement hook. Drivers may populate this state
+  // without coupling the estimator to a particular rangefinder protocol.
+  bool present{false};
+  bool sampleValid{false};
+  uint32_t lastUpdateUs{0};
+  float distance{0.0f};
+  uint8_t quality{0};
+};
+
 struct GyroState
 {
   Device::GyroDevice* dev;
@@ -468,23 +486,55 @@ struct ModeState
   bool isLongClickActive()   const { return button & (1 << 2); }
 };
 
+enum AltitudeEstimatorState : uint8_t
+{
+  ALTITUDE_ESTIMATOR_UNINITIALIZED = 0,
+  ALTITUDE_ESTIMATOR_TRACKING = 1,
+  ALTITUDE_ESTIMATOR_DEGRADED = 2,
+  ALTITUDE_ESTIMATOR_FAULT = 3,
+};
+
+enum AltitudeEstimatorFault : uint16_t
+{
+  ALTITUDE_FAULT_NONE            = 0,
+  ALTITUDE_FAULT_BARO_SAMPLE     = 1u << 0,
+  ALTITUDE_FAULT_BARO_STALE      = 1u << 1,
+  ALTITUDE_FAULT_HEIGHT_REJECT   = 1u << 2,
+  ALTITUDE_FAULT_RATE_REJECT     = 1u << 3,
+  ALTITUDE_FAULT_ACCEL_STALE     = 1u << 4,
+  ALTITUDE_FAULT_ATTITUDE_STALE  = 1u << 5,
+  ALTITUDE_FAULT_FUSION          = 1u << 6,
+  ALTITUDE_FAULT_NUMERIC         = 1u << 7,
+  ALTITUDE_FAULT_RANGEFINDER     = 1u << 8,
+};
+
 struct AltitudeState
 {
-  // Estimated vertical state
   float height{0.0f};
   float vario{0.0f};
-
-  // Earth-frame vertical acceleration used by the Z estimator and diagnostics.
   float acceleration{0.0f};
 
-  // Barometer estimator diagnostics
+  float accelerationBias{0.0f};
+  float baroBias{0.0f};
+
   float baroInnovation{0.0f};
+  float baroRateInnovation{0.0f};
+  float rangefinderInnovation{0.0f};
 
   bool healthy{false};
   bool baroAccepted{false};
+  bool baroRateAccepted{false};
+  bool rangefinderUsed{false};
 
-  // Timestamp of the most recent altitude-estimator cycle.
-  // Used independently from attitude/barometer freshness.
+  AltitudeEstimatorState estimatorState{
+      ALTITUDE_ESTIMATOR_UNINITIALIZED};
+  uint16_t faultFlags{ALTITUDE_FAULT_NONE};
+
+  uint32_t baroAcceptedSamples{0};
+  uint32_t baroRejectedSamples{0};
+  uint32_t baroRateRejectedSamples{0};
+  uint16_t baroConsecutiveRejects{0};
+
   uint32_t lastUpdateUs{0};
 };
 
@@ -511,20 +561,18 @@ struct AngleV2State
 
 struct AssistedModeState
 {
-  // Runtime controller state shared by AltHold V2 and LAND V2.
-
   float altitudeTarget{0.0f};
-
   float verticalRatePilot{0.0f};
   float verticalRateCorrection{0.0f};
   float verticalRateTarget{0.0f};
+
+  float hoverThrust{0.0f};
+  float tiltCompensatedHover{0.0f};
 
   bool altitudeActive{false};
   bool altitudeTargetValid{false};
 };
 
-
-// Position hold runtime/diagnostic state (see Control/PositionHold.h).
 struct PosHoldState
 {
   bool requested{false};   // MODE_POSHOLD switch is on (and armed)
@@ -717,6 +765,7 @@ struct ModelState
   AccelState accel;
   MagState mag;
   BaroState baro;
+  RangefinderState rangefinder;
   GpsState gps;
 
   InputState input;

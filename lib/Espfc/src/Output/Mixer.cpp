@@ -336,6 +336,16 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
   }
 
   bool saturated = false;
+  bool verticalSaturationHigh = false;
+  bool verticalSaturationLow = false;
+
+  const float motorUpperLimit =
+      _model.config.output.motorLimit >= 100
+          ? 1.0f
+          : (_model.config.output.motorLimit * 0.02f) - 1.0f;
+
+  float verticalHeadroomHigh = 1.0f;
+  float verticalHeadroomLow = 1.0f;
 
   for (size_t i = 0; i < mixerCount; i++)
   {
@@ -358,12 +368,80 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
         {
           saturated = true;
         }
+
+        if (!occ.servo)
+        {
+          const float upperHeadroom =
+              std::max(
+                  0.0f,
+                  motorUpperLimit -
+                      rawOutput);
+
+          const float lowerHeadroom =
+              std::max(
+                  0.0f,
+                  rawOutput + 1.0f);
+
+          verticalHeadroomHigh =
+              std::min(
+                  verticalHeadroomHigh,
+                  upperHeadroom);
+
+          verticalHeadroomLow =
+              std::min(
+                  verticalHeadroomLow,
+                  lowerHeadroom);
+
+          if (upperHeadroom <= 0.02f)
+          {
+            verticalSaturationHigh = true;
+          }
+
+          if (lowerHeadroom <= 0.02f)
+          {
+            verticalSaturationLow = true;
+          }
+        }
       }
 
       outputs[i] = limitedOutput;
     }
 
-  _model.setOutputSaturated(saturated);
+  const float verticalError =
+      _model.state.innerPid[AXIS_THRUST].error;
+
+  const bool verticalDemandHigh =
+      verticalError > 0.001f;
+
+  const bool verticalDemandLow =
+      verticalError < -0.001f;
+
+  const bool verticalSaturated =
+      (verticalDemandHigh &&
+       verticalSaturationHigh) ||
+      (verticalDemandLow &&
+       verticalSaturationLow);
+
+  _model.state.mixer.verticalSaturationHigh =
+      verticalSaturationHigh;
+  _model.state.mixer.verticalSaturationLow =
+      verticalSaturationLow;
+  _model.state.mixer.verticalHeadroomHigh =
+      std::clamp(
+          verticalHeadroomHigh,
+          0.0f,
+          1.0f);
+  _model.state.mixer.verticalHeadroomLow =
+      std::clamp(
+          verticalHeadroomLow,
+          0.0f,
+          1.0f);
+  _model.state.mixer.verticalSaturated =
+      verticalSaturated;
+
+  _model.setOutputSaturation(
+      saturated,
+      verticalSaturated);
 }
 
 float FAST_CODE_ATTR Mixer::limitThrust(float thrust, ThrottleLimitType type, int8_t limit)
