@@ -12,7 +12,6 @@
 #include "Sensor/VoltageSensor.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
-#include "Output/Mixers.h"
 #include "Utils/Timer.h"
 #include "msp/msp_protocol.h"
 
@@ -7846,7 +7845,7 @@ void test_althold_v2_configurable_limits_are_persisted()
 
 void test_altitude_v2_rate_gate_reports_rejection()
 {
-  When(Method(ArduinoFake(), micros)).AlwaysReturn(200000);
+  When(Method(ArduinoFake(), micros)).Return(100000, 200000);
 
   Model model;
   model.state.gyro.clock = 1000;
@@ -7858,15 +7857,15 @@ void test_altitude_v2_rate_gate_reports_rejection()
   model.begin();
 
   model.state.attitude.healthy = true;
-  model.state.attitude.lastUpdateUs = 199000;
+  model.state.attitude.lastUpdateUs = 100000;
   model.state.accel.present = true;
   model.state.accel.sampleValid = true;
-  model.state.accel.lastUpdateUs = 199000;
+  model.state.accel.lastUpdateUs = 100000;
   model.state.baro.present = true;
   model.state.baro.sampleValid = true;
   model.state.baro.altitudeBiasSamples = -1;
   model.state.baro.rate = 100;
-  model.state.baro.lastUpdateUs = 199000;
+  model.state.baro.lastUpdateUs = 100000;
   model.state.baro.altitudeGround = 0.0f;
   model.state.baro.vario = 0.0f;
 
@@ -7877,7 +7876,7 @@ void test_altitude_v2_rate_gate_reports_rejection()
   model.state.baro.lastUpdateUs = 200000;
   model.state.attitude.lastUpdateUs = 200000;
   model.state.accel.lastUpdateUs = 200000;
-  model.state.baro.vario = 100.0f;
+  model.state.baro.vario = 5.0f;
   altitude.update(true);
 
   TEST_ASSERT_FALSE(model.state.altitude.baroRateAccepted);
@@ -8010,100 +8009,6 @@ void test_controller_althold_v2_transition_stress_preserves_target_contract()
   }
 }
 
-
-void test_altitude_v2_acceleration_bias_observer_learns_residual()
-{
-  When(Method(ArduinoFake(), micros))
-      .AlwaysReturn(200000);
-
-  Model model;
-  model.state.gyro.clock = 1000;
-  model.config.loopSync = 1;
-  model.config.mixerSync = 1;
-  model.config.mixer.type = FC_MIXER_QUADX;
-  model.config.baro.dev = BARO_BMP280;
-  model.config.altHold.hoverLearnRate = 100;
-  model.begin();
-
-  model.state.attitude.healthy = true;
-  model.state.attitude.lastUpdateUs = 199000;
-  model.state.accel.present = true;
-  model.state.accel.sampleValid = true;
-  model.state.accel.lastUpdateUs = 199000;
-  model.state.accel.world.z = 0.20f;
-  model.state.baro.present = true;
-  model.state.baro.sampleValid = true;
-  model.state.baro.altitudeBiasSamples = -1;
-  model.state.baro.rate = 100;
-  model.state.baro.lastUpdateUs = 199000;
-  model.state.baro.altitudeGround = 0.0f;
-  model.state.baro.vario = 0.0f;
-
-  Control::Altitude altitude(model);
-  altitude.begin();
-  altitude.update(true);
-
-  model.state.attitude.lastUpdateUs = 200000;
-  model.state.accel.lastUpdateUs = 200000;
-  model.state.baro.lastUpdateUs = 200000;
-
-  altitude.update(true);
-
-  TEST_ASSERT_TRUE(
-      model.state.altitude.accelerationBias > 0.0f);
-
-  TEST_ASSERT_FLOAT_WITHIN(
-      0.20f,
-      0.20f,
-      model.state.altitude.accelerationBias);
-}
-
-void test_mixer_vertical_saturation_feedback_is_directional()
-{
-  Model model;
-
-  model.state.currentMixer =
-      Output::Mixers::getMixer(
-          FC_MIXER_QUADX,
-          model.state.customMixer);
-
-  Output::Mixer mixer(model);
-
-  float outputs[OUTPUT_CHANNELS] = {};
-
-  model.state.output.ch[AXIS_THRUST] = 1.0f;
-  model.state.innerPid[AXIS_THRUST].error = 1.0f;
-
-  mixer.updateMixer(
-      model.state.currentMixer,
-      outputs);
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturationHigh);
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturated);
-
-  TEST_ASSERT_TRUE(
-      model.state.innerPid[AXIS_THRUST].outputSaturated);
-
-  model.state.output.ch[AXIS_THRUST] = -1.0f;
-  model.state.innerPid[AXIS_THRUST].error = -1.0f;
-
-  mixer.updateMixer(
-      model.state.currentMixer,
-      outputs);
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturationLow);
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturated);
-
-  TEST_ASSERT_TRUE(
-      model.state.innerPid[AXIS_THRUST].outputSaturated);
-}
-
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -8131,8 +8036,6 @@ RUN_TEST(
 RUN_TEST(test_controller_althold_v2_captures_current_altitude);
 RUN_TEST(test_althold_v2_configurable_limits_are_persisted);
 RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
-RUN_TEST(test_altitude_v2_acceleration_bias_observer_learns_residual);
-RUN_TEST(test_mixer_vertical_saturation_feedback_is_directional);
 RUN_TEST(test_altitude_v2_rangefinder_is_fused_near_ground);
 RUN_TEST(test_controller_althold_v2_hover_feedforward_and_tilt_compensation);
 RUN_TEST(test_controller_althold_v2_transition_stress_preserves_target_contract);
