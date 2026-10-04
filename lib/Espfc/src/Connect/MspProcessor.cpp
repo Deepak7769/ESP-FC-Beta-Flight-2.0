@@ -2176,41 +2176,6 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU16(_model.state.gps.accuracy.pDop); // pDOP
       break;
 
-    case MSP2_ESPFC_ALTHOLD_CONFIG: {
-      auto& c = _model.config.altHold;
-
-      if (m.remain() == 0)
-      {
-        r.writeU8(c.hoverThrottle);
-        r.writeU8(c.hoverLearnRate);
-        r.writeU8(c.maxClimbRate);
-        r.writeU8(c.maxDescentRate);
-        r.writeU8(c.verticalAccelLimit);
-        r.writeU8(c.verticalJerkLimit);
-        r.writeU8(c.baroInnovationGate);
-        r.writeU8(c.baroRateInnovationGate);
-        r.writeU8(c.groundEffectHeight);
-        r.writeU8(c.propWashAccelThreshold);
-      }
-      else if (m.remain() >= 10)
-      {
-        c.hoverThrottle = m.readU8();
-        c.hoverLearnRate = m.readU8();
-        c.maxClimbRate = m.readU8();
-        c.maxDescentRate = m.readU8();
-        c.verticalAccelLimit = m.readU8();
-        c.verticalJerkLimit = m.readU8();
-        c.baroInnovationGate = m.readU8();
-        c.baroRateInnovationGate = m.readU8();
-        c.groundEffectHeight = m.readU8();
-        c.propWashAccelThreshold = m.readU8();
-
-        _model.sanitize();
-        _model.setRebootRequired();
-      }
-      break;
-    }
-
     case MSP2_ESPFC_ALTHOLD: {
       const auto& altitude = _model.state.altitude;
       const auto& assisted = _model.state.assistedMode;

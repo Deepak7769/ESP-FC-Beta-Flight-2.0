@@ -113,14 +113,7 @@ _model.state.angleV2 =
 
 _model.state.assistedMode =
     AssistedModeState{};
-
-  _model.state.assistedMode.hoverThrust =
-      _hoverThrust;
-
-  _model.state.assistedMode.tiltCompensatedHover =
-      _hoverThrust;
-
-  _model.state.posHold =
+    _model.state.posHold =
     PosHoldState{};
 
 _posHold.reset();
@@ -583,15 +576,6 @@ constexpr bool altHoldV2OutputActive =
     false;
 #endif
 
-#if defined(ESPFC_LAND_V2_ACTIVE)
-const bool landingV2RequestedForOutput =
-    landingV2OwnsControl(
-        _model);
-#else
-constexpr bool landingV2RequestedForOutput =
-    false;
-#endif
-
 const bool legacyAltHoldActive =
     ENABLE_LEGACY_ALTHOLD_OUTPUT &&
     _model.isModeActive(MODE_ALTHOLD);
@@ -720,7 +704,7 @@ if (altHoldV2OutputActive)
             verticalPid.oLimitLow,
             verticalPid.oLimitHigh);
 
-    if (!landingV2RequestedForOutput &&
+    if (!landingV2Requested &&
         altitude.healthy &&
         std::fabs(altitude.vario) < 0.15f &&
         std::fabs(altitude.acceleration) < 0.50f &&
@@ -741,16 +725,9 @@ if (altHoldV2OutputActive)
            tiltCos) -
           1.0f;
 
-      const float hoverLearnDt =
-          1.0f /
-          static_cast<float>(
-              std::max<int>(
-                  _model.state.loopTimer.rate,
-                  1));
-
       const float alpha =
           std::clamp(
-              hoverLearnDt * 0.05f * learnRate,
+              dt * 0.05f * learnRate,
               0.0f,
               0.005f);
 
@@ -1957,8 +1934,8 @@ const bool altActive =
     _altHoldVerticalRateTarget =
         std::clamp(
             _altHoldVerticalRateTarget,
-            -maxDescentMs,
-            maxClimbMs);
+            -MAX_DESCENT_MS,
+            MAX_CLIMB_MS);
 
     assisted.altitudeTarget =
         _altHoldAltitudeTarget;
@@ -1998,20 +1975,6 @@ const bool altActive =
 
   assisted.altitudeActive =
       altActive;
-
-  assisted.hoverThrust =
-      _hoverThrust;
-
-  assisted.tiltCompensatedHover =
-      std::clamp(
-          (_hoverThrust + 1.0f) /
-              std::clamp(
-                  _model.state.attitude.cosTheta,
-                  0.35f,
-                  1.0f) -
-          1.0f,
-          -1.0f,
-          1.0f);
 
   _altHoldWasActive =
       altActive;

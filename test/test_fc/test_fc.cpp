@@ -12,6 +12,7 @@
 #include "Sensor/VoltageSensor.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
+#include "Output/Mixers.h"
 #include "Utils/Timer.h"
 #include "msp/msp_protocol.h"
 
@@ -8061,24 +8062,45 @@ void test_mixer_vertical_saturation_feedback_is_directional()
 {
   Model model;
 
-  model.setOutputSaturation(
-      true,
-      true);
+  model.state.currentMixer =
+      Output::Mixers::getMixer(
+          FC_MIXER_QUADX,
+          model.state.customMixer);
+
+  Output::Mixer mixer(model);
+
+  float outputs[OUTPUT_CHANNELS] = {};
+
+  model.state.output.ch[AXIS_THRUST] = 1.0f;
+  model.state.innerPid[AXIS_THRUST].error = 1.0f;
+
+  mixer.updateMixer(
+      model.state.currentMixer,
+      outputs);
 
   TEST_ASSERT_TRUE(
-      model.state.output.saturated);
+      model.state.mixer.verticalSaturationHigh);
+
+  TEST_ASSERT_TRUE(
+      model.state.mixer.verticalSaturated);
 
   TEST_ASSERT_TRUE(
       model.state.innerPid[AXIS_THRUST].outputSaturated);
 
-  model.setOutputSaturation(
-      true,
-      false);
+  model.state.output.ch[AXIS_THRUST] = -1.0f;
+  model.state.innerPid[AXIS_THRUST].error = -1.0f;
+
+  mixer.updateMixer(
+      model.state.currentMixer,
+      outputs);
 
   TEST_ASSERT_TRUE(
-      model.state.output.saturated);
+      model.state.mixer.verticalSaturationLow);
 
-  TEST_ASSERT_FALSE(
+  TEST_ASSERT_TRUE(
+      model.state.mixer.verticalSaturated);
+
+  TEST_ASSERT_TRUE(
       model.state.innerPid[AXIS_THRUST].outputSaturated);
 }
 

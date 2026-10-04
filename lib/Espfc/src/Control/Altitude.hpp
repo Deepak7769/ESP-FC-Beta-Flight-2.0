@@ -334,10 +334,6 @@ int update(
       altitude.baroAccepted = true;
       altitude.baroRateAccepted = true;
       altitude.baroAcceptedSamples++;
-      altitude.vario =
-          std::isfinite(_filteredBaroVario)
-              ? _filteredBaroVario
-              : 0.0f;
       initializedThisCycle = true;
     }
 
