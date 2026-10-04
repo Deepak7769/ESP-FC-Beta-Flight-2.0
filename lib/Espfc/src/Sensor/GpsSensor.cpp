@@ -855,6 +855,9 @@ void GpsSensor::updateRawPositionDiagnostics(
   d.positionIntervalUs =
       dtMs * 1000U;
 
+  d.positionTimestampUs =
+      gpsTimeMs * 1000U;
+
   _previousRawLat = lat;
   _previousRawLon = lon;
   _previousRawGpsTimeMs = gpsTimeMs;
