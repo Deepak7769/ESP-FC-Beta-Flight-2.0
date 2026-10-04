@@ -178,19 +178,13 @@ void reset()
   _filteredLat = 0.0;
   _filteredLon = 0.0;
 
-  _filterLastLat = 0;
-  _filterLastLon = 0;
-
   _previousFilteredLat = 0;
   _previousFilteredLon = 0;
 
   _filteredVelNorth = 0.0f;
   _filteredVelEast = 0.0f;
 
-  _filteredVelocityInitialized = false;
 
-  _acceptedSamples = 0;
-  _rejectedSamples = 0;
 }
  
   PosHoldPhase phase() const { return _phase; }
@@ -556,38 +550,40 @@ void reset()
     out.errEast = eE;
     out.velTargetN = vtN;
     out.velTargetE = vtE;
-out.accelN = aN;
-out.accelE = aE;
+    out.accelN = aN;
+    out.accelE = aE;
 
-out.filteredLat =
-    static_cast<int32_t>(
-        std::lrint(
-            _filteredLat * 1e7));
+    out.filteredLat =
+        static_cast<int32_t>(
+            std::lrint(
+                _filteredLat * 1e7));
 
-out.filteredLon =
-    static_cast<int32_t>(
-        std::lrint(
-            _filteredLon * 1e7));
+    out.filteredLon =
+        static_cast<int32_t>(
+            std::lrint(
+                _filteredLon * 1e7));
 
-out.filteredVelNorth =
-    _filteredVelNorth;
+    out.filteredVelNorth =
+        _filteredVelNorth;
 
-out.filteredVelEast =
-    _filteredVelEast;
+    out.filteredVelEast =
+        _filteredVelEast;
 
-out.filteredGroundSpeed =
-    std::hypot(
-        _filteredVelNorth,
-        _filteredVelEast);
+    out.filteredGroundSpeed =
+        std::hypot(
+            _filteredVelNorth,
+            _filteredVelEast);
 
-return out;
+    return out;
   }
  
 private:
-  void latch(const PositionHoldInput& in)
+  void latch(
+      int32_t lat,
+      int32_t lon)
   {
-    _targetLat = in.lat;
-    _targetLon = in.lon;
+    _targetLat = lat;
+    _targetLon = lon;
     _latched = true;
   }
  
@@ -611,19 +607,11 @@ private:
 
   uint32_t _filterLastGpsTimestampMs = 0;
 
-  int32_t _filterLastLat = 0;
-  int32_t _filterLastLon = 0;
-
   int32_t _previousFilteredLat = 0;
   int32_t _previousFilteredLon = 0;
 
   float _filteredVelNorth = 0.0f;
   float _filteredVelEast = 0.0f;
-
-  bool _filteredVelocityInitialized = false;
-
-  uint32_t _acceptedSamples = 0;
-  uint32_t _rejectedSamples = 0;
 };
  
 } // namespace Espfc::Control
