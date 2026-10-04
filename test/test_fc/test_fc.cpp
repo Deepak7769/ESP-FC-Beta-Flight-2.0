@@ -7876,7 +7876,7 @@ void test_altitude_v2_rate_gate_reports_rejection()
   model.state.baro.lastUpdateUs = 200000;
   model.state.attitude.lastUpdateUs = 200000;
   model.state.accel.lastUpdateUs = 200000;
-  model.state.baro.vario = 5.0f;
+  model.state.baro.vario = 100.0f;
   altitude.update(true);
 
   TEST_ASSERT_FALSE(model.state.altitude.baroRateAccepted);
