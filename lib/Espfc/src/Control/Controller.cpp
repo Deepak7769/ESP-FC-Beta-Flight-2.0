@@ -567,6 +567,15 @@ constexpr bool landingV2Requested =
     false;
   #endif
 
+#if defined(ESPFC_LAND_V2_ACTIVE)
+const bool landingV2RequestedForOutput =
+    landingV2OwnsControl(
+        _model);
+#else
+constexpr bool landingV2RequestedForOutput =
+    false;
+#endif
+
 const bool altHoldV2OutputActive =
     _model.state.assistedMode.altitudeActive &&
     (_model.isModeActive(MODE_ALTHOLD) ||
@@ -704,7 +713,7 @@ if (altHoldV2OutputActive)
             verticalPid.oLimitLow,
             verticalPid.oLimitHigh);
 
-    if (!landingV2Requested &&
+    if (!landingV2RequestedForOutput &&
         altitude.healthy &&
         std::fabs(altitude.vario) < 0.15f &&
         std::fabs(altitude.acceleration) < 0.50f &&
@@ -725,9 +734,16 @@ if (altHoldV2OutputActive)
            tiltCos) -
           1.0f;
 
+      const float hoverLearnDt =
+          1.0f /
+          static_cast<float>(
+              std::max<int>(
+                  _model.state.loopTimer.rate,
+                  1));
+
       const float alpha =
           std::clamp(
-              dt * 0.05f * learnRate,
+              hoverLearnDt * 0.05f * learnRate,
               0.0f,
               0.005f);
 
@@ -1934,8 +1950,8 @@ const bool altActive =
     _altHoldVerticalRateTarget =
         std::clamp(
             _altHoldVerticalRateTarget,
-            -MAX_DESCENT_MS,
-            MAX_CLIMB_MS);
+            -maxDescentMs,
+            maxClimbMs);
 
     assisted.altitudeTarget =
         _altHoldAltitudeTarget;
