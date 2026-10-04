@@ -78,6 +78,12 @@ int Controller::begin()
           0.80f);
   _hoverThrustInitialized = true;
 
+  _model.state.assistedMode.hoverThrust =
+      _hoverThrust;
+
+  _model.state.assistedMode.tiltCompensatedHover =
+      _hoverThrust;
+
 _angleV2WasActive =
     false;
 
@@ -113,14 +119,7 @@ _model.state.angleV2 =
 
 _model.state.assistedMode =
     AssistedModeState{};
-
-  _model.state.assistedMode.hoverThrust =
-      _hoverThrust;
-
-  _model.state.assistedMode.tiltCompensatedHover =
-      _hoverThrust;
-
-  _model.state.posHold =
+    _model.state.posHold =
     PosHoldState{};
 
 _posHold.reset();
@@ -1998,20 +1997,6 @@ const bool altActive =
 
   assisted.altitudeActive =
       altActive;
-
-  assisted.hoverThrust =
-      _hoverThrust;
-
-  assisted.tiltCompensatedHover =
-      std::clamp(
-          (_hoverThrust + 1.0f) /
-              std::clamp(
-                  _model.state.attitude.cosTheta,
-                  0.35f,
-                  1.0f) -
-          1.0f,
-          -1.0f,
-          1.0f);
 
   _altHoldWasActive =
       altActive;
