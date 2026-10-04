@@ -82,7 +82,7 @@ private:
   void handleNavPvt() const;
   void handleNavSat() const;
   void handleNavSol() const;
-  void handleNavPosllh() const;
+  void handleNavPosllh();
   void handleNavVelned() const;
   void handleNavSvinfo() const;
   void fallbackLegacyNav();
@@ -123,6 +123,18 @@ private:
 
   Gps::UbxParser _ubxParser;
   Gps::UbxMessage _ubxMsg;
+  // Raw GPS position diagnostic state.
+  bool _rawPositionInitialized = false;
+
+  int32_t _previousRawLat = 0;
+  int32_t _previousRawLon = 0;
+
+  uint32_t _previousRawGpsTimeMs = 0;
+
+  void updateRawPositionDiagnostics(
+      int32_t lat,
+      int32_t lon,
+      uint32_t gpsTimeMs);
 
   Gps::NmeaParser _nmeaParser;
   Gps::NmeaMessage _nmeaMsg;
