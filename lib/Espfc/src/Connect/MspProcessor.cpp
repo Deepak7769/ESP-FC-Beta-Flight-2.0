@@ -2177,33 +2177,75 @@ constexpr int REQUIRED_PID_BYTES =
       break;
 
     case MSP2_ESPFC_ALTHOLD_CONFIG: {
-      auto& c = _model.config.altHold;
+      auto& a = _model.config.altHold;
+      auto& rf = _model.config.rangefinder;
 
       if (m.remain() == 0)
       {
-        r.writeU8(c.hoverThrottle);
-        r.writeU8(c.hoverLearnRate);
-        r.writeU8(c.maxClimbRate);
-        r.writeU8(c.maxDescentRate);
-        r.writeU8(c.verticalAccelLimit);
-        r.writeU8(c.verticalJerkLimit);
-        r.writeU8(c.baroInnovationGate);
-        r.writeU8(c.baroRateInnovationGate);
-        r.writeU8(c.groundEffectHeight);
-        r.writeU8(c.propWashAccelThreshold);
+        // AltHold V2 config, fixed 22-byte payload.
+        r.writeU8(a.itermCenter);
+        r.writeU8(a.itermRange);
+        r.writeU8(a.baroTau);
+        r.writeU8(a.hoverThrottle);
+        r.writeU8(a.hoverLearnRate);
+        r.writeU8(a.maxClimbRate);
+        r.writeU8(a.maxDescentRate);
+        r.writeU8(a.verticalAccelLimit);
+        r.writeU8(a.verticalJerkLimit);
+        r.writeU8(a.baroInnovationGate);
+        r.writeU8(a.baroRateInnovationGate);
+        r.writeU8(a.groundEffectHeight);
+        r.writeU8(a.propWashAccelThreshold);
+
+        r.writeU8(rf.type);
+        r.writeU8(static_cast<uint8_t>(rf.triggerPin));
+        r.writeU8(static_cast<uint8_t>(rf.echoPin));
+        r.writeU16(rf.minDistanceCm);
+        r.writeU16(rf.maxDistanceCm);
+        r.writeU16(rf.updateIntervalMs);
       }
-      else if (m.remain() >= 10)
+      else if (m.remain() == 10)
       {
-        c.hoverThrottle = m.readU8();
-        c.hoverLearnRate = m.readU8();
-        c.maxClimbRate = m.readU8();
-        c.maxDescentRate = m.readU8();
-        c.verticalAccelLimit = m.readU8();
-        c.verticalJerkLimit = m.readU8();
-        c.baroInnovationGate = m.readU8();
-        c.baroRateInnovationGate = m.readU8();
-        c.groundEffectHeight = m.readU8();
-        c.propWashAccelThreshold = m.readU8();
+        // Backward compatible with the original ten-byte V2 payload.
+        a.hoverThrottle = m.readU8();
+        a.hoverLearnRate = m.readU8();
+        a.maxClimbRate = m.readU8();
+        a.maxDescentRate = m.readU8();
+        a.verticalAccelLimit = m.readU8();
+        a.verticalJerkLimit = m.readU8();
+        a.baroInnovationGate = m.readU8();
+        a.baroRateInnovationGate = m.readU8();
+        a.groundEffectHeight = m.readU8();
+        a.propWashAccelThreshold = m.readU8();
+
+        _model.sanitize();
+        _model.setRebootRequired();
+      }
+      else if (m.remain() >= 22)
+      {
+        a.itermCenter = m.readU8();
+        a.itermRange = m.readU8();
+        a.baroTau = m.readU8();
+        a.hoverThrottle = m.readU8();
+        a.hoverLearnRate = m.readU8();
+        a.maxClimbRate = m.readU8();
+        a.maxDescentRate = m.readU8();
+        a.verticalAccelLimit = m.readU8();
+        a.verticalJerkLimit = m.readU8();
+        a.baroInnovationGate = m.readU8();
+        a.baroRateInnovationGate = m.readU8();
+        a.groundEffectHeight = m.readU8();
+        a.propWashAccelThreshold = m.readU8();
+
+        rf.type =
+            static_cast<uint8_t>(m.readU8());
+        rf.triggerPin =
+            static_cast<int8_t>(m.readU8());
+        rf.echoPin =
+            static_cast<int8_t>(m.readU8());
+        rf.minDistanceCm = m.readU16();
+        rf.maxDistanceCm = m.readU16();
+        rf.updateIntervalMs = m.readU16();
 
         _model.sanitize();
         _model.setRebootRequired();
@@ -2231,6 +2273,7 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU32(static_cast<uint32_t>(lrintf(altitude.rangefinderInnovation * 1000.0f)));
 
       r.writeU32(static_cast<uint32_t>(lrintf(assisted.hoverThrust * 1000.0f)));
+      r.writeU32(static_cast<uint32_t>(lrintf(assisted.tiltCompensatedHover * 1000.0f)));
       r.writeU32(static_cast<uint32_t>(lrintf(assisted.altitudeTarget * 1000.0f)));
       r.writeU32(static_cast<uint32_t>(lrintf(assisted.verticalRateTarget * 1000.0f)));
       r.writeU32(static_cast<uint32_t>(lrintf(_model.state.output.ch[AXIS_THRUST] * 1000.0f)));
@@ -2247,6 +2290,26 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU32(altitude.baroRejectedSamples);
       r.writeU32(altitude.baroRateRejectedSamples);
       r.writeU16(altitude.baroConsecutiveRejects);
+
+      // Normalized live rangefinder diagnostics. A backend may be absent or
+      // invalid without affecting the rest of the AltHold telemetry payload.
+      const auto& range = _model.state.rangefinder;
+      r.writeU8(
+          range.present ? 1 : 0);
+      r.writeU8(
+          range.sampleValid ? 1 : 0);
+      r.writeU16(
+          static_cast<uint16_t>(
+              std::clamp(
+                  lrintf(range.distance * 1000.0f),
+                  0L,
+                  65535L)));
+      r.writeU8(range.quality);
+      r.writeU32(
+          range.lastUpdateUs);
+      r.writeU8(
+          static_cast<uint8_t>(
+              _model.config.rangefinder.type));
       break;
     }
 

@@ -8,6 +8,7 @@
 #include "Sensor/BaroSensor.hpp"
 #include "Sensor/GyroSensor.hpp"
 #include "Sensor/MagSensor.hpp"
+#include "Sensor/RangefinderSensor.hpp"
 #include "Sensor/VoltageSensor.hpp"
 
 namespace Espfc {
@@ -40,6 +41,7 @@ private:
   Sensor::AccelSensor _accel;
   Sensor::MagSensor _mag;
   Sensor::BaroSensor _baro;
+  Sensor::RangefinderSensor _rangefinder;
   Sensor::VoltageSensor _voltage;
   Control::Fusion _fusion;
   Control::Altitude _altitude;

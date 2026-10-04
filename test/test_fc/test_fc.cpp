@@ -7816,6 +7816,44 @@ void test_fusion_mode_name_rejects_negative_enum()
 }
 
 
+void test_althold_v2_rangefinder_config_is_sanitized()
+{
+  Model model;
+
+  model.config.rangefinder.type =
+      255;
+  model.config.rangefinder.triggerPin =
+      5;
+  model.config.rangefinder.echoPin =
+      5;
+  model.config.rangefinder.minDistanceCm =
+      200;
+  model.config.rangefinder.maxDistanceCm =
+      1;
+  model.config.rangefinder.updateIntervalMs =
+      1;
+
+  model.sanitize();
+
+  TEST_ASSERT_EQUAL_UINT8(
+      RANGEFINDER_HCSR04,
+      model.config.rangefinder.type);
+
+  TEST_ASSERT_TRUE(
+      model.config.rangefinder.minDistanceCm <= 100);
+
+  TEST_ASSERT_TRUE(
+      model.config.rangefinder.maxDistanceCm >
+      model.config.rangefinder.minDistanceCm);
+
+  TEST_ASSERT_TRUE(
+      model.config.rangefinder.updateIntervalMs >= 20);
+
+  TEST_ASSERT_EQUAL_INT8(
+      -1,
+      model.config.rangefinder.echoPin);
+}
+
 void test_althold_v2_configurable_limits_are_persisted()
 {
   Model model;
@@ -7899,6 +7937,7 @@ void test_altitude_v2_rangefinder_is_fused_near_ground()
 
   model.state.attitude.healthy = true;
   model.state.attitude.lastUpdateUs = 100000;
+  model.state.attitude.cosTheta = 0.8660254f;
   model.state.accel.present = true;
   model.state.accel.sampleValid = true;
   model.state.accel.lastUpdateUs = 100000;
@@ -7919,9 +7958,19 @@ void test_altitude_v2_rangefinder_is_fused_near_ground()
   altitude.begin();
   altitude.update(true);
 
+  // A changed range observation is treated as a vertical measurement after
+  // tilt compensation and must pull the estimate toward it.
+  model.state.rangefinder.distance = 1.2f;
+  altitude.update(true);
+
   TEST_ASSERT_TRUE(
-      model.state.altitude.rangefinderUsed ||
-      std::isfinite(model.state.altitude.rangefinderInnovation));
+      model.state.altitude.rangefinderUsed);
+
+  TEST_ASSERT_TRUE(
+      model.state.altitude.rangefinderInnovation > 0.10f);
+
+  TEST_ASSERT_TRUE(
+      model.state.altitude.height > 0.0f);
 }
 
 void test_controller_althold_v2_hover_feedforward_and_tilt_compensation()
@@ -8108,6 +8157,7 @@ RUN_TEST(
 
 RUN_TEST(test_controller_althold_v2_captures_current_altitude);
 RUN_TEST(test_althold_v2_configurable_limits_are_persisted);
+RUN_TEST(test_althold_v2_rangefinder_config_is_sanitized);
 RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
 RUN_TEST(test_altitude_v2_acceleration_bias_observer_learns_residual);
 RUN_TEST(test_mixer_vertical_saturation_feedback_is_directional);

@@ -727,6 +727,23 @@ struct LevelConfig
   int16_t rateLimit = 300;
 };
  
+enum RangefinderType : uint8_t
+{
+  RANGEFINDER_NONE = 0,
+  RANGEFINDER_HCSR04 = 1,
+  RANGEFINDER_MAX
+};
+
+struct RangefinderConfig
+{
+  uint8_t type = RANGEFINDER_NONE;
+  int8_t triggerPin = -1;
+  int8_t echoPin = -1;
+  uint16_t minDistanceCm = 2;
+  uint16_t maxDistanceCm = 400;
+  uint16_t updateIntervalMs = 60;
+};
+
 struct AltHoldConfig
 {
   uint8_t itermCenter = 50;
@@ -887,6 +904,7 @@ class ModelConfig
     DtermConfig dterm;
     ItermConfig iterm;
     AltHoldConfig altHold;
+    RangefinderConfig rangefinder;
     ControllerConfig controller;
     SimplifiedTuningConfig simplifiedTuning;
     // hardware

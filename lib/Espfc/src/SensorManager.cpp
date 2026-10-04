@@ -4,7 +4,7 @@ namespace Espfc {
 
 SensorManager::SensorManager(Model& model)
     : _model(model), _gyro(model), _accel(model), _mag(model), _baro(model), _voltage(model), _fusion(model),
-      _altitude(model), _fusionUpdate(false)
+      _altitude(model), _rangefinder(model), _fusionUpdate(false)
 {
 }
 
@@ -15,6 +15,7 @@ int SensorManager::begin()
   _accel.begin();
   _mag.begin();
   _baro.begin();
+  _rangefinder.begin();
   _voltage.begin();
   _fusion.begin();
   _altitude.begin();
@@ -29,6 +30,7 @@ int SensorManager::reload(ModelChangeEvent event)
   _accel.reload(event);
   _fusion.reload(event);
   _baro.reload(event);
+  _rangefinder.reload(event);
   _mag.reload(event);
   _altitude.reload(event);
   _voltage.reload(event);
@@ -136,6 +138,11 @@ int FAST_CODE_ATTR SensorManager::update()
 int SensorManager::updateDelayed()
 {
   _gyro.postLoop();
+
+  // The rangefinder backend is non-blocking. Poll it every delayed
+  // sensor pass so HC-SR04 echo timing is independent of the one-sensor
+  // barometer/magnetometer scheduler below.
+  _rangefinder.update();
 
   // update at most one sensor besides gyro
   int status = 0;

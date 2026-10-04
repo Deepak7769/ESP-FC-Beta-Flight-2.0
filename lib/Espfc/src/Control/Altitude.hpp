@@ -195,6 +195,7 @@ int update(
     altitude.baroAccepted = false;
     altitude.baroRateAccepted = false;
     altitude.rangefinderUsed = false;
+    altitude.rangefinderInnovation = 0.0f;
     altitude.faultFlags = ALTITUDE_FAULT_NONE;
 
     constexpr uint32_t BARO_STALE_US = 350000;
@@ -533,17 +534,32 @@ int update(
             now - range.lastUpdateUs) <
         RANGEFINDER_STALE_US;
 
+    const float rangeTiltCos =
+        std::clamp(
+            attitude.cosTheta,
+            0.50f,
+            1.0f);
+
     const bool rangeValid =
         rangeFresh &&
         range.quality > 0 &&
         std::isfinite(range.distance) &&
         range.distance >= 0.05f &&
-        range.distance <= 10.0f;
+        range.distance <= 10.0f &&
+        attitudeFresh &&
+        rangeTiltCos >= 0.50f;
+
+    if (range.present &&
+        (!range.sampleValid || !rangeFresh))
+    {
+      altitude.faultFlags |= ALTITUDE_FAULT_RANGEFINDER;
+    }
 
     if (rangeValid &&
         !_rangefinderReferenceValid)
     {
-      _rangefinderReference = range.distance;
+      _rangefinderReference =
+          range.distance * rangeTiltCos;
       _rangefinderReferenceValid = true;
     }
 
@@ -555,7 +571,8 @@ int update(
             0.1f + 0.5f)
     {
       const float rangeHeight =
-          range.distance - _rangefinderReference;
+          range.distance * rangeTiltCos -
+          _rangefinderReference;
 
       const float rangePrediction =
           altitude.height +

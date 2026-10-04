@@ -378,8 +378,9 @@ struct BaroState
 
 struct RangefinderState
 {
-  // Generic vertical range measurement hook. Drivers may populate this state
-  // without coupling the estimator to a particular rangefinder protocol.
+  // Generic vertical range measurement state. Backends publish only this
+  // normalized representation, keeping AltHold fusion independent of sensor
+  // protocol and allowing future rangefinder drivers to be added cleanly.
   bool present{false};
   bool sampleValid{false};
   uint32_t lastUpdateUs{0};

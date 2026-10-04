@@ -48,11 +48,12 @@ StorageResult Storage::load(ModelConfig& config) const
     return STORAGE_LOAD_SUCCESS;
   }
 
-  if (version == EEPROM_VERSION_LEGACY)
+  if (version == EEPROM_VERSION_PREVIOUS ||
+      version == EEPROM_VERSION_LEGACY)
   {
-    // v2 stored the original three-byte AltHoldConfig in place. The new
-    // fields must not shift the bytes that follow it, so migrate the prefix,
-    // then skip the inserted v3 AltHold bytes before copying the tail.
+    // v3 already contained the expanded AltHoldConfig. v2 stored only the
+    // original three-byte AltHoldConfig. Both migrate into v4, which inserts
+    // RangefinderConfig immediately after AltHoldConfig.
     ModelConfig migrated{};
 
     const size_t altHoldOffset =
@@ -62,9 +63,7 @@ StorageResult Storage::load(ModelConfig& config) const
         static_cast<size_t>(size);
 
     const size_t prefixSize =
-        std::min(
-            storedSize,
-            altHoldOffset);
+        std::min(storedSize, altHoldOffset);
 
     for (size_t i = 0; i < prefixSize; ++i)
     {
@@ -74,31 +73,58 @@ StorageResult Storage::load(ModelConfig& config) const
               static_cast<int>(i));
     }
 
-    if (storedSize > altHoldOffset)
+    size_t oldTailStart;
+    if (version == EEPROM_VERSION_LEGACY)
     {
-      const size_t legacyAltBytes =
-          std::min(
-              LEGACY_ALTHOLD_SIZE,
-              storedSize -
-                  altHoldOffset);
-
-      for (size_t i = 0; i < legacyAltBytes; ++i)
+      if (storedSize > altHoldOffset)
       {
-        reinterpret_cast<uint8_t*>(&migrated.altHold)[i] =
-            EEPROM.read(
-                addr +
-                static_cast<int>(
-                    altHoldOffset + i));
-      }
-    }
+        const size_t legacyAltBytes =
+            std::min(
+                LEGACY_ALTHOLD_SIZE,
+                storedSize - altHoldOffset);
 
-    const size_t oldTailStart =
-        altHoldOffset +
-        LEGACY_ALTHOLD_SIZE;
+        for (size_t i = 0; i < legacyAltBytes; ++i)
+        {
+          reinterpret_cast<uint8_t*>(&migrated.altHold)[i] =
+              EEPROM.read(
+                  addr +
+                  static_cast<int>(
+                      altHoldOffset + i));
+        }
+      }
+
+      oldTailStart =
+          altHoldOffset +
+          LEGACY_ALTHOLD_SIZE;
+    }
+    else
+    {
+      if (storedSize > altHoldOffset)
+      {
+        const size_t altBytes =
+            std::min(
+                sizeof(AltHoldConfig),
+                storedSize - altHoldOffset);
+
+        for (size_t i = 0; i < altBytes; ++i)
+        {
+          reinterpret_cast<uint8_t*>(&migrated.altHold)[i] =
+              EEPROM.read(
+                  addr +
+                  static_cast<int>(
+                      altHoldOffset + i));
+        }
+      }
+
+      oldTailStart =
+          altHoldOffset +
+          sizeof(AltHoldConfig);
+    }
 
     const size_t newTailStart =
         altHoldOffset +
-        sizeof(AltHoldConfig);
+        sizeof(AltHoldConfig) +
+        sizeof(RangefinderConfig);
 
     if (storedSize > oldTailStart &&
         newTailStart < sizeof(ModelConfig))

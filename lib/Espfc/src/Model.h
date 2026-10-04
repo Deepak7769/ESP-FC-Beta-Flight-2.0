@@ -934,6 +934,38 @@ config.altHold.propWashAccelThreshold =
         5,
         150);
 
+config.rangefinder.type =
+    std::min<uint8_t>(
+        config.rangefinder.type,
+        RANGEFINDER_MAX - 1);
+
+config.rangefinder.minDistanceCm =
+    std::clamp<uint16_t>(
+        config.rangefinder.minDistanceCm,
+        1,
+        100);
+
+config.rangefinder.maxDistanceCm =
+    std::clamp<uint16_t>(
+        config.rangefinder.maxDistanceCm,
+        static_cast<uint16_t>(
+            config.rangefinder.minDistanceCm + 1),
+        500);
+
+config.rangefinder.updateIntervalMs =
+    std::clamp<uint16_t>(
+        config.rangefinder.updateIntervalMs,
+        20,
+        500);
+
+if (config.rangefinder.triggerPin >= 0 &&
+    config.rangefinder.echoPin >= 0 &&
+    config.rangefinder.triggerPin ==
+        config.rangefinder.echoPin)
+{
+  config.rangefinder.echoPin = -1;
+}
+
 config.arming.smallAngle =
     std::min<uint8_t>(
         config.arming.smallAngle,
