@@ -251,7 +251,7 @@ public:
           const float alpha =
               std::clamp(
                   1.0f - std::exp(-measurementDt / std::max(_p.filterTau, 0.05f)),
-                  0.05f,
+                  0.15f,
                   0.75f);
 
           const double latScale = METERS_PER_DEG;
