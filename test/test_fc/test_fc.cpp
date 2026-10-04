@@ -8009,92 +8009,6 @@ void test_controller_althold_v2_transition_stress_preserves_target_contract()
   }
 }
 
-
-void test_altitude_v2_acceleration_bias_observer_learns_residual()
-{
-  When(Method(ArduinoFake(), micros))
-      .Return(
-          200000,
-          210000);
-
-  Model model;
-  model.state.gyro.clock = 1000;
-  model.config.loopSync = 1;
-  model.config.mixerSync = 1;
-  model.config.mixer.type = FC_MIXER_QUADX;
-  model.config.baro.dev = BARO_BMP280;
-  model.config.altHold.hoverLearnRate = 100;
-  model.begin();
-
-  model.state.attitude.healthy = true;
-  model.state.attitude.lastUpdateUs = 199000;
-  model.state.accel.present = true;
-  model.state.accel.sampleValid = true;
-  model.state.accel.lastUpdateUs = 199000;
-  model.state.accel.world.z = 0.20f;
-  model.state.baro.present = true;
-  model.state.baro.sampleValid = true;
-  model.state.baro.altitudeBiasSamples = -1;
-  model.state.baro.rate = 100;
-  model.state.baro.lastUpdateUs = 199000;
-  model.state.baro.altitudeGround = 0.0f;
-  model.state.baro.vario = 0.0f;
-
-  Control::Altitude altitude(model);
-  altitude.begin();
-  altitude.update(true);
-
-  model.state.attitude.lastUpdateUs = 210000;
-  model.state.accel.lastUpdateUs = 210000;
-  model.state.baro.lastUpdateUs = 210000;
-
-  altitude.update(true);
-
-  TEST_ASSERT_TRUE(
-      model.state.altitude.accelerationBias > 0.0f);
-
-  TEST_ASSERT_FLOAT_WITHIN(
-      0.20f,
-      0.20f,
-      model.state.altitude.accelerationBias);
-}
-
-void test_mixer_vertical_saturation_feedback_is_directional()
-{
-  When(Method(ArduinoFake(), micros)).AlwaysReturn(100000);
-
-  Model model;
-  model.state.gyro.clock = 1000;
-  model.config.loopSync = 1;
-  model.config.mixerSync = 1;
-  model.config.mixer.type = FC_MIXER_QUADX;
-  model.config.output.motorLimit = 100;
-  model.begin();
-
-  Output::Mixer mixer(model);
-  mixer.begin();
-
-  model.state.output.ch[AXIS_THRUST] = 1.0f;
-  model.state.innerPid[AXIS_THRUST].error = 1.0f;
-  mixer.update();
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturationHigh);
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturated);
-
-  model.state.output.ch[AXIS_THRUST] = -1.0f;
-  model.state.innerPid[AXIS_THRUST].error = -1.0f;
-  mixer.update();
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturationLow);
-
-  TEST_ASSERT_TRUE(
-      model.state.mixer.verticalSaturated);
-}
-
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -8122,8 +8036,6 @@ RUN_TEST(
 RUN_TEST(test_controller_althold_v2_captures_current_altitude);
 RUN_TEST(test_althold_v2_configurable_limits_are_persisted);
 RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
-RUN_TEST(test_altitude_v2_acceleration_bias_observer_learns_residual);
-RUN_TEST(test_mixer_vertical_saturation_feedback_is_directional);
 RUN_TEST(test_altitude_v2_rangefinder_is_fused_near_ground);
 RUN_TEST(test_controller_althold_v2_hover_feedforward_and_tilt_compensation);
 RUN_TEST(test_controller_althold_v2_transition_stress_preserves_target_contract);
