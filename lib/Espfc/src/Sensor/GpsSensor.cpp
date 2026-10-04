@@ -43,6 +43,11 @@ int GpsSensor::begin(Stream::ReadWritable* port, int baud)
   _counter = 0;
   _versionTries = 0;
   _legacyTried = false;
+  _rawPositionInitialized = false;
+  _previousRawLat = 0;
+  _previousRawLon = 0;
+  _previousRawGpsTimeMs = 0;
+  _model.state.gps.diagnostics = GpsPositionDiagnostics{};
   setBaud(_targetBaud);
 
   return 1;

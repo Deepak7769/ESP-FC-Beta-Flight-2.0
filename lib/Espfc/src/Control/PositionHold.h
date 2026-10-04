@@ -66,7 +66,7 @@ namespace Espfc::Control {
 #endif
 
 #ifndef ESPFC_POSHOLD_MAX_INNOVATION_M
-#define ESPFC_POSHOLD_MAX_INNOVATION_M 8.0f
+#define ESPFC_POSHOLD_MAX_INNOVATION_M 12.0f
 #endif
 
 #ifndef ESPFC_POSHOLD_FILTER_MIN_ALPHA
@@ -150,6 +150,8 @@ struct PositionHoldOutput
   float filteredVelNorth = 0.0f;
   float filteredVelEast = 0.0f;
   float filteredGroundSpeed = 0.0f;
+  uint32_t acceptedSamples = 0;
+  uint32_t rejectedSamples = 0;
   float errNorth = 0.0f;   // m, target - current
   float errEast = 0.0f;    // m
   float velTargetN = 0.0f; // m/s
@@ -174,6 +176,7 @@ void reset()
 
   _filterInitialized = false;
   _filterLastGpsTimestampMs = 0;
+  _filterFallbackElapsedS = 0.0f;
 
   _filteredLat = 0.0;
   _filteredLon = 0.0;
@@ -183,8 +186,8 @@ void reset()
 
   _filteredVelNorth = 0.0f;
   _filteredVelEast = 0.0f;
-
-
+  _acceptedSamples = 0;
+  _rejectedSamples = 0;
 }
  
   PosHoldPhase phase() const { return _phase; }
@@ -205,7 +208,17 @@ void reset()
   PositionHoldOutput update(const PositionHoldInput& in)
   {
     PositionHoldOutput out;
-       // -----------------------------------------------------------------
+
+    const float controllerDt =
+        std::clamp(in.dt, 0.001f, 0.25f);
+
+    // When the receiver does not provide a timestamp (0), detect a new
+    // position by coordinate change and use elapsed controller time for the
+    // filter interval. This keeps legacy callers from treating the same GPS
+    // fix as a new sample.
+    _filterFallbackElapsedS += controllerDt;
+
+    // -----------------------------------------------------------------
     // GPS position filter.
     //
     // RAW GPS is never modified.
@@ -216,6 +229,17 @@ void reset()
     // changes. This prevents the 200 Hz controller loop from treating
     // the same GPS sample as new data.
     // -----------------------------------------------------------------
+
+    const bool timestamped =
+        in.gpsTimestampMs != 0;
+
+    const bool newGpsSample =
+        !_filterInitialized ||
+        (timestamped
+             ? in.gpsTimestampMs !=
+                   _filterLastGpsTimestampMs
+             : (in.lat != _filterLastLat ||
+                in.lon != _filterLastLon));
 
     if (!_filterInitialized)
     {
@@ -232,27 +256,30 @@ void reset()
 
       _filterLastGpsTimestampMs =
           in.gpsTimestampMs;
-
       _filterLastLat = in.lat;
       _filterLastLon = in.lon;
+      _filterFallbackElapsedS = 0.0f;
 
       out.gpsFilterAccepted = true;
-      _acceptedSamples++;
-
-      _filteredVelocityInitialized = false;
+      ++_acceptedSamples;
     }
-    else if (in.gpsTimestampMs !=
-             _filterLastGpsTimestampMs)
+    else if (newGpsSample)
     {
       const uint32_t dtMs =
           in.gpsTimestampMs -
           _filterLastGpsTimestampMs;
 
       const float gpsDt =
-          std::clamp(
-              static_cast<float>(dtMs) * 0.001f,
-              0.02f,
-              2.0f);
+          timestamped
+              ? std::clamp(
+                    static_cast<float>(dtMs) *
+                        0.001f,
+                    0.02f,
+                    2.0f)
+              : std::clamp(
+                    _filterFallbackElapsedS,
+                    0.02f,
+                    2.0f);
 
       constexpr double METERS_PER_DEG =
           111319.49079327357;
@@ -306,6 +333,7 @@ void reset()
 
       if (accepted)
       {
+        ++_acceptedSamples;
         const float alpha =
             std::clamp(
                 1.0f -
@@ -333,7 +361,7 @@ void reset()
       }
       else
       {
-        _rejectedSamples++;
+        ++_rejectedSamples;
       }
 
       _filterLastGpsTimestampMs =
@@ -383,8 +411,6 @@ void reset()
       _previousFilteredLon =
           filteredLon;
 
-      _filterLastLat = in.lat;
-      _filterLastLon = in.lon;
     }
 
     const int32_t filteredLat =
@@ -606,12 +632,18 @@ private:
   double _filteredLon = 0.0;
 
   uint32_t _filterLastGpsTimestampMs = 0;
+  float _filterFallbackElapsedS = 0.0f;
+
+  int32_t _filterLastLat = 0;
+  int32_t _filterLastLon = 0;
 
   int32_t _previousFilteredLat = 0;
   int32_t _previousFilteredLon = 0;
 
   float _filteredVelNorth = 0.0f;
   float _filteredVelEast = 0.0f;
+  uint32_t _acceptedSamples = 0;
+  uint32_t _rejectedSamples = 0;
 };
  
 } // namespace Espfc::Control

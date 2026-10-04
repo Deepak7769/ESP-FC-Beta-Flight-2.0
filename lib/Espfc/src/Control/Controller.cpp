@@ -1283,7 +1283,7 @@ auto& posHoldState =
 PositionHoldOutput posHoldOut{};
  
 {
-  const auto& gps =
+  auto& gps =
       _model.state.gps;
  
   const bool phRequested =
@@ -1422,6 +1422,10 @@ PositionHoldOutput posHoldOut{};
 
     gps.diagnostics.filterAccepted =
         posHoldOut.gpsFilterAccepted;
+    gps.diagnostics.acceptedSamples =
+        posHoldOut.acceptedSamples;
+    gps.diagnostics.rejectedSamples =
+        posHoldOut.rejectedSamples;
   }
   else
   {
@@ -1532,11 +1536,6 @@ if (angleActive)
        axis < AXIS_COUNT_RP;
        ++axis)
   {
-      const float pilotAngle =
-    Utils::toRad(
-        _model.config.level
-            .angleLimit) *
-    input.ch[axis];
 
       // Position Hold output uses the stick sign convention:
       // axis 0 = roll (right +), axis 1 = pitch (forward +).

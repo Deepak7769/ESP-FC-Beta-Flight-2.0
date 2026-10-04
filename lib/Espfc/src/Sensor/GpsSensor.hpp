@@ -125,10 +125,8 @@ private:
   Gps::UbxMessage _ubxMsg;
   // Raw GPS position diagnostic state.
   bool _rawPositionInitialized = false;
-
   int32_t _previousRawLat = 0;
   int32_t _previousRawLon = 0;
-
   uint32_t _previousRawGpsTimeMs = 0;
 
   void updateRawPositionDiagnostics(
