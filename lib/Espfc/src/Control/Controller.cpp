@@ -567,21 +567,21 @@ constexpr bool landingV2Requested =
     false;
   #endif
 
-#if defined(ESPFC_LAND_V2_ACTIVE)
-const bool landingV2RequestedForOutput =
-    landingV2OwnsControl(
-        _model);
-#else
-constexpr bool landingV2RequestedForOutput =
-    false;
-#endif
-
 const bool altHoldV2OutputActive =
     _model.state.assistedMode.altitudeActive &&
     (_model.isModeActive(MODE_ALTHOLD) ||
      landingV2Requested);
 #else
 constexpr bool altHoldV2OutputActive =
+    false;
+#endif
+
+#if defined(ESPFC_LAND_V2_ACTIVE)
+const bool landingV2RequestedForOutput =
+    landingV2OwnsControl(
+        _model);
+#else
+constexpr bool landingV2RequestedForOutput =
     false;
 #endif
 
