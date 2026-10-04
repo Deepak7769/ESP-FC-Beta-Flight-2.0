@@ -1362,6 +1362,12 @@ PositionHoldOutput posHoldOut{};
         static_cast<float>(
             gps.velocity.raw.east) *
         0.001f;
+    phIn.horizontalAccuracy =
+        static_cast<float>(
+            gps.accuracy.horizontal) *
+        0.001f; // mm -> m
+    phIn.gpsTimestampUs =
+        gps.lastMsgTs;
     // MSP_ATTITUDE reports yaw as -euler.z (clockwise heading).
     phIn.heading =
         -attitude.euler[
@@ -1508,13 +1514,21 @@ const float posHoldAngle =
             _model.config.level
                 .angleLimit));
       
+    const float pilotAngleRequest =
+        Utils::toRad(
+            _model.config.level
+                .angleLimit) *
+        input.ch[axis];
+
+    // Position Hold owns roll/pitch only while its estimator is actually
+    // controlling. Pilot stick remains authoritative during PILOT phase and
+    // whenever GPS readiness is lost.
     const float requestedAngle =
         landingV2Requested
             ? 0.0f
-            : Utils::toRad(
-                  _model.config.level
-                      .angleLimit) *
-                  input.ch[axis];
+            : (posHoldState.controlling
+                ? posHoldAngle
+                : pilotAngleRequest);
 
     const float change =
         std::clamp(
