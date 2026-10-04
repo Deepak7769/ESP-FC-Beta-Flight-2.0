@@ -30,9 +30,10 @@ enum GpsRescueFault : uint16_t
   GPS_RESCUE_FAULT_ACCURACY   = 1u << 4,
   GPS_RESCUE_FAULT_ATTITUDE   = 1u << 5,
   GPS_RESCUE_FAULT_ALTITUDE   = 1u << 6,
-  GPS_RESCUE_FAULT_POSITION   = 1u << 7,
-  GPS_RESCUE_FAULT_VELOCITY   = 1u << 8,
-  GPS_RESCUE_FAULT_NUMERIC    = 1u << 9
+  GPS_RESCUE_FAULT_POSITION    = 1u << 7,
+  GPS_RESCUE_FAULT_VELOCITY    = 1u << 8,
+  GPS_RESCUE_FAULT_NUMERIC     = 1u << 9,
+  GPS_RESCUE_FAULT_NO_PROGRESS = 1u << 10
 };
 
 enum GpsRescueAltitudeMode : uint8_t
@@ -124,6 +125,9 @@ public:
     _phase = GpsRescuePhase::IDLE;
     _targetAltitude = 0.0f;
     _phaseElapsed = 0.0f;
+    _returnStartDistance = 0.0f;
+    _bestReturnDistance = 0.0f;
+    _noProgressElapsed = 0.0f;
     _headingOffset = 0.0f;
     _headingOffsetValid = false;
   }
@@ -190,12 +194,11 @@ public:
                 0.0f,
                 p.climbRate);
 
-        horizontalControl(
+        // Establish safe altitude before starting the horizontal return leg.
+        // Existing horizontal velocity is still damped during the climb.
+        horizontalHold(
             in,
             p,
-            0.0f,
-            0.0f,
-            p.approachSpeed,
             out);
         yawControl(
             out.bearingToHome,
@@ -228,12 +231,9 @@ public:
                 -p.descentRate,
                 p.climbRate);
 
-        horizontalControl(
+        horizontalHold(
             in,
             p,
-            0.0f,
-            0.0f,
-            p.approachSpeed,
             out);
         yawControl(
             out.bearingToHome,
@@ -255,18 +255,34 @@ public:
         break;
 
       case GpsRescuePhase::RETURN:
+      {
         out.controlling = true;
         out.verticalRate =
             verticalReturnRate(
                 altitude,
                 p);
 
+        // Taper horizontal speed as home is approached.
+        const float taperDistance =
+            std::max(
+                p.approachDistance * 2.0f,
+                p.approachDistance + 1.0f);
+        const float speedFraction =
+            std::clamp(
+                distance / taperDistance,
+                0.0f,
+                1.0f);
+        const float returnSpeed =
+            std::max(
+                p.approachSpeed,
+                p.maxSpeed * speedFraction);
+
         horizontalControl(
             in,
             p,
             0.0f,
             0.0f,
-            p.maxSpeed,
+            returnSpeed,
             out);
         yawControl(
             out.bearingToHome,
@@ -274,12 +290,51 @@ public:
             p,
             out);
 
+        if (distance < _bestReturnDistance - 0.5f)
+        {
+          _bestReturnDistance = distance;
+          _noProgressElapsed = 0.0f;
+        }
+        else
+        {
+          _noProgressElapsed +=
+              std::max(
+                  in.dt,
+                  0.001f);
+        }
+
+        const float progressTimeout =
+            std::clamp(
+                (_returnStartDistance /
+                     std::max(
+                         p.maxSpeed,
+                         0.5f)) *
+                    3.0f +
+                    15.0f,
+                20.0f,
+                120.0f);
+
+        // Never allow an apparently healthy but non-progressing return leg
+        // to continue indefinitely. The existing supervisor will land.
+        if (_noProgressElapsed >= 8.0f ||
+            _phaseElapsed >= progressTimeout)
+        {
+          _phase = GpsRescuePhase::ABORT;
+          out.controlling = false;
+          out.requestLand = in.altitudeHealthy;
+          out.faultFlags |=
+              GPS_RESCUE_FAULT_NO_PROGRESS;
+          break;
+        }
+
         if (distance <= p.approachDistance)
         {
           _phase = GpsRescuePhase::APPROACH;
           _phaseElapsed = 0.0f;
+          _noProgressElapsed = 0.0f;
         }
         break;
+      }
 
       case GpsRescuePhase::APPROACH:
         out.controlling = true;
@@ -362,6 +417,28 @@ public:
   }
 
 private:
+  static void horizontalControl(
+      const GpsRescueInput& in,
+      const GpsRescueParams& p,
+      float targetNorth,
+      float targetEast,
+      float maxSpeed,
+      GpsRescueOutput& out);
+
+  static void horizontalHold(
+      const GpsRescueInput& in,
+      const GpsRescueParams& p,
+      GpsRescueOutput& out)
+  {
+    horizontalControl(
+        in,
+        p,
+        in.north,
+        in.east,
+        0.0f,
+        out);
+  }
+
   static uint16_t validate(
       const GpsRescueInput& in,
       const GpsRescueParams& p)
@@ -438,6 +515,10 @@ private:
             in.north,
             in.east);
 
+    _returnStartDistance = distance;
+    _bestReturnDistance = distance;
+    _noProgressElapsed = 0.0f;
+
     if (distance <= p.landDistance)
     {
       _phase =
@@ -447,7 +528,14 @@ private:
     }
     else if (distance < p.minDistance)
     {
-      _phase = GpsRescuePhase::ALIGN;
+      // Already inside the configured rescue envelope: do not start a full
+      // return leg; use the final approach/descent path.
+      _phase =
+          altitude <=
+                  p.minLandingAltitude +
+                  p.altitudeTolerance
+              ? GpsRescuePhase::DESCEND
+              : GpsRescuePhase::APPROACH;
     }
     else
     {
@@ -621,6 +709,9 @@ private:
   GpsRescuePhase _phase{GpsRescuePhase::IDLE};
   float _targetAltitude{0.0f};
   float _phaseElapsed{0.0f};
+  float _returnStartDistance{0.0f};
+  float _bestReturnDistance{0.0f};
+  float _noProgressElapsed{0.0f};
   float _headingOffset{0.0f};
   bool _headingOffsetValid{false};
 };

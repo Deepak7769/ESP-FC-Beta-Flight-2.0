@@ -1447,6 +1447,15 @@ bool Actuator::gpsRescueEligible() const
     return false;
   }
 
+  // Do not enter Rescue inside its configured minimum-distance envelope.
+  // Failsafe falls back to the existing LAND supervisor instead.
+  if (gps.distanceToHome <
+      static_cast<float>(
+          _model.config.gpsRescue.minDistanceM))
+  {
+    return false;
+  }
+
   return
       attitudeEstimateHealthy() &&
       altitudeEstimateHealthy();

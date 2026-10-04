@@ -385,6 +385,114 @@ void test_gps_rescue_limits_horizontal_command()
       p.maxAngle + 1e-5f);
 }
 
+
+void test_gps_rescue_climb_holds_horizontal_position()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.1f;
+  in.north = 50.0f;
+  in.east = 0.0f;
+  in.velocityNorth = 2.0f;
+  in.altitudeAboveHome = 2.0f;
+  in.yawHeading = 0.0f;
+  in.dt = 0.02f;
+
+  const auto out = r.update(in, p);
+
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(GpsRescuePhase::CLIMB),
+      static_cast<uint8_t>(out.phase));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out.targetVelocityNorth);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out.targetVelocityEast);
+  TEST_ASSERT_TRUE(out.pitchAngle < 0.0f);
+}
+
+void test_gps_rescue_stops_return_after_no_progress()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.1f;
+  in.north = 50.0f;
+  in.altitudeAboveHome = 20.0f;
+  in.yawHeading = 3.14159265358979323846f;
+  in.dt = 0.02f;
+
+  r.update(in, p);
+  in.altitudeAboveHome = 30.0f;
+  r.update(in, p);
+  r.update(in, p);
+  r.update(in, p);
+
+  GpsRescueOutput out{};
+  for (int i = 0; i < 500 && out.phase != GpsRescuePhase::ABORT; ++i)
+  {
+    out = r.update(in, p);
+  }
+
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(GpsRescuePhase::ABORT),
+      static_cast<uint8_t>(out.phase));
+  TEST_ASSERT_TRUE(
+      (out.faultFlags & GPS_RESCUE_FAULT_NO_PROGRESS) != 0);
+  TEST_ASSERT_TRUE(out.requestLand);
+}
+
+void test_gps_rescue_inside_min_distance_skips_return_leg()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+  p.minDistance = 15.0f;
+  p.landDistance = 4.0f;
+
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.1f;
+  in.north = 8.0f;
+  in.altitudeAboveHome = 20.0f;
+  in.yawHeading = 0.0f;
+  in.dt = 0.02f;
+
+  const auto out = r.update(in, p);
+
+  TEST_ASSERT_EQUAL_UINT8(
+      static_cast<uint8_t>(GpsRescuePhase::APPROACH),
+      static_cast<uint8_t>(out.phase));
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -404,5 +512,8 @@ int main(int, char**)
   RUN_TEST(test_gps_rescue_state_machine_reaches_return);
   RUN_TEST(test_gps_rescue_falls_back_to_land_on_gps_loss);
   RUN_TEST(test_gps_rescue_limits_horizontal_command);
+  RUN_TEST(test_gps_rescue_climb_holds_horizontal_position);
+  RUN_TEST(test_gps_rescue_stops_return_after_no_progress);
+  RUN_TEST(test_gps_rescue_inside_min_distance_skips_return_leg);
   return UNITY_END();
 }
