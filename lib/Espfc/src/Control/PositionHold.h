@@ -61,6 +61,21 @@ namespace Espfc::Control {
 #ifndef ESPFC_POSHOLD_MAX_ERROR_M
 #define ESPFC_POSHOLD_MAX_ERROR_M 30.0f // farther than this: re-latch, never chase
 #endif
+#ifndef ESPFC_POSHOLD_FILTER_TAU_S
+#define ESPFC_POSHOLD_FILTER_TAU_S 0.60f
+#endif
+
+#ifndef ESPFC_POSHOLD_MAX_INNOVATION_M
+#define ESPFC_POSHOLD_MAX_INNOVATION_M 8.0f
+#endif
+
+#ifndef ESPFC_POSHOLD_FILTER_MIN_ALPHA
+#define ESPFC_POSHOLD_FILTER_MIN_ALPHA 0.15f
+#endif
+
+#ifndef ESPFC_POSHOLD_FILTER_MAX_ALPHA
+#define ESPFC_POSHOLD_FILTER_MAX_ALPHA 0.75f
+#endif
  
 struct PositionHoldParams
 {
@@ -75,6 +90,10 @@ struct PositionHoldParams
   float brakeSpeed = ESPFC_POSHOLD_BRAKE_SPEED_MS;
   float brakeTimeout = ESPFC_POSHOLD_BRAKE_TIMEOUT_S;
   float maxError = ESPFC_POSHOLD_MAX_ERROR_M;
+  float filterTau = ESPFC_POSHOLD_FILTER_TAU_S;
+  float maxInnovation = ESPFC_POSHOLD_MAX_INNOVATION_M;
+  float filterMinAlpha = ESPFC_POSHOLD_FILTER_MIN_ALPHA;
+  float filterMaxAlpha = ESPFC_POSHOLD_FILTER_MAX_ALPHA;
 };
  
 enum class PosHoldPhase : uint8_t
@@ -87,14 +106,28 @@ enum class PosHoldPhase : uint8_t
  
 struct PositionHoldInput
 {
+  // RAW GPS position.
   int32_t lat = 0;       // deg * 1e7
   int32_t lon = 0;       // deg * 1e7
+
+  // Receiver velocity from NAV-VELNED / NAV-PVT.
   float velNorth = 0.0f; // m/s
   float velEast = 0.0f;  // m/s
+
   float heading = 0.0f;  // rad, clockwise from north
-  float stickRoll = 0.0f;  // -1..1 normalised
-  float stickPitch = 0.0f; // -1..1 normalised
-  float dt = 0.02f;        // s
+
+  float stickRoll = 0.0f;
+  float stickPitch = 0.0f;
+
+  float dt = 0.02f;
+
+  // GPS solution timestamp.
+  // NEO-6M NAV-POSLLH iTOW is milliseconds.
+  uint32_t gpsTimestampMs = 0;
+
+  // Horizontal accuracy from receiver.
+  // Input units: metres.
+  float horizontalAccuracy = 0.0f;
 };
  
 struct PositionHoldOutput
@@ -103,6 +136,20 @@ struct PositionHoldOutput
   float pitchAngle = 0.0f; // rad, same sign as pitch stick
   bool controlling = false; // true: angles replace the pilot's angle request
   PosHoldPhase phase = PosHoldPhase::OFF;
+  // Final filtered GPS position used by Position Hold.
+  int32_t filteredLat = 0;
+  int32_t filteredLon = 0;
+
+  // Raw-to-filtered separation.
+  float rawFilteredDistance = 0.0f;
+
+  // Whether the latest RAW GPS solution was accepted.
+  bool gpsFilterAccepted = false;
+
+  // Filtered position-derived velocity.
+  float filteredVelNorth = 0.0f;
+  float filteredVelEast = 0.0f;
+  float filteredGroundSpeed = 0.0f;
   float errNorth = 0.0f;   // m, target - current
   float errEast = 0.0f;    // m
   float velTargetN = 0.0f; // m/s
@@ -118,13 +165,33 @@ public:
  
   explicit PositionHold(const PositionHoldParams& p = PositionHoldParams{}): _p(p) {}
  
-  void reset()
-  {
-    _phase = PosHoldPhase::OFF;
-    _iN = _iE = 0.0f;
-    _brakeTime = 0.0f;
-    _latched = false;
-  }
+void reset()
+{
+  _phase = PosHoldPhase::OFF;
+  _iN = _iE = 0.0f;
+  _brakeTime = 0.0f;
+  _latched = false;
+
+  _filterInitialized = false;
+  _filterLastGpsTimestampMs = 0;
+
+  _filteredLat = 0.0;
+  _filteredLon = 0.0;
+
+  _filterLastLat = 0;
+  _filterLastLon = 0;
+
+  _previousFilteredLat = 0;
+  _previousFilteredLon = 0;
+
+  _filteredVelNorth = 0.0f;
+  _filteredVelEast = 0.0f;
+
+  _filteredVelocityInitialized = false;
+
+  _acceptedSamples = 0;
+  _rejectedSamples = 0;
+}
  
   PosHoldPhase phase() const { return _phase; }
   const PositionHoldParams& params() const { return _p; }
@@ -144,6 +211,228 @@ public:
   PositionHoldOutput update(const PositionHoldInput& in)
   {
     PositionHoldOutput out;
+       // -----------------------------------------------------------------
+    // GPS position filter.
+    //
+    // RAW GPS is never modified.
+    // _filteredLat/_filteredLon are the final coordinates used by
+    // Position Hold.
+    //
+    // The filter only consumes a GPS sample when gpsTimestampMs
+    // changes. This prevents the 200 Hz controller loop from treating
+    // the same GPS sample as new data.
+    // -----------------------------------------------------------------
+
+    if (!_filterInitialized)
+    {
+      _filterInitialized = true;
+
+      _filteredLat =
+          static_cast<double>(in.lat) * 1e-7;
+
+      _filteredLon =
+          static_cast<double>(in.lon) * 1e-7;
+
+      _previousFilteredLat = in.lat;
+      _previousFilteredLon = in.lon;
+
+      _filterLastGpsTimestampMs =
+          in.gpsTimestampMs;
+
+      _filterLastLat = in.lat;
+      _filterLastLon = in.lon;
+
+      out.gpsFilterAccepted = true;
+      _acceptedSamples++;
+
+      _filteredVelocityInitialized = false;
+    }
+    else if (in.gpsTimestampMs !=
+             _filterLastGpsTimestampMs)
+    {
+      const uint32_t dtMs =
+          in.gpsTimestampMs -
+          _filterLastGpsTimestampMs;
+
+      const float gpsDt =
+          std::clamp(
+              static_cast<float>(dtMs) * 0.001f,
+              0.02f,
+              2.0f);
+
+      constexpr double METERS_PER_DEG =
+          111319.49079327357;
+
+      const double latRad =
+          static_cast<double>(in.lat) *
+          1e-7 *
+          0.017453292519943295;
+
+      const double cosLat =
+          std::max(
+              0.1,
+              std::fabs(std::cos(latRad)));
+
+      const double rawLat =
+          static_cast<double>(in.lat) * 1e-7;
+
+      const double rawLon =
+          static_cast<double>(in.lon) * 1e-7;
+
+      const double innovationNorth =
+          (rawLat - _filteredLat) *
+          METERS_PER_DEG;
+
+      const double innovationEast =
+          (rawLon - _filteredLon) *
+          METERS_PER_DEG *
+          cosLat;
+
+      const float innovation =
+          static_cast<float>(
+              std::hypot(
+                  innovationNorth,
+                  innovationEast));
+
+      float innovationLimit =
+          _p.maxInnovation;
+
+      if (in.horizontalAccuracy > 0.0f)
+      {
+        innovationLimit =
+            std::max(
+                innovationLimit,
+                3.0f * in.horizontalAccuracy);
+      }
+
+      const bool accepted =
+          innovation <= innovationLimit;
+
+      out.gpsFilterAccepted = accepted;
+
+      if (accepted)
+      {
+        const float alpha =
+            std::clamp(
+                1.0f -
+                std::exp(
+                    -gpsDt /
+                    std::max(
+                        0.05f,
+                        _p.filterTau)),
+                _p.filterMinAlpha,
+                _p.filterMaxAlpha);
+
+        _filteredLat +=
+            static_cast<double>(
+                alpha) *
+            innovationNorth /
+            METERS_PER_DEG;
+
+        _filteredLon +=
+            static_cast<double>(
+                alpha) *
+            innovationEast /
+            (METERS_PER_DEG * cosLat);
+
+        _acceptedSamples++;
+      }
+      else
+      {
+        _rejectedSamples++;
+      }
+
+      _filterLastGpsTimestampMs =
+          in.gpsTimestampMs;
+
+      // Filtered position-derived velocity.
+      const int32_t filteredLat =
+          static_cast<int32_t>(
+              std::lrint(
+                  _filteredLat * 1e7));
+
+      const int32_t filteredLon =
+          static_cast<int32_t>(
+              std::lrint(
+                  _filteredLon * 1e7));
+
+      const double filteredNorth =
+          (static_cast<double>(
+              filteredLat) -
+           static_cast<double>(
+              _previousFilteredLat)) *
+          1e-7 *
+          METERS_PER_DEG;
+
+      const double filteredEast =
+          (static_cast<double>(
+              filteredLon) -
+           static_cast<double>(
+              _previousFilteredLon)) *
+          1e-7 *
+          METERS_PER_DEG *
+          cosLat;
+
+      _filteredVelNorth =
+          static_cast<float>(
+              filteredNorth /
+              gpsDt);
+
+      _filteredVelEast =
+          static_cast<float>(
+              filteredEast /
+              gpsDt);
+
+      _previousFilteredLat =
+          filteredLat;
+
+      _previousFilteredLon =
+          filteredLon;
+
+      _filterLastLat = in.lat;
+      _filterLastLon = in.lon;
+    }
+
+    const int32_t filteredLat =
+        static_cast<int32_t>(
+            std::lrint(
+                _filteredLat * 1e7));
+
+    const int32_t filteredLon =
+        static_cast<int32_t>(
+            std::lrint(
+                _filteredLon * 1e7));
+
+    out.filteredLat = filteredLat;
+    out.filteredLon = filteredLon;
+
+    out.filteredVelNorth =
+        _filteredVelNorth;
+
+    out.filteredVelEast =
+        _filteredVelEast;
+
+    out.filteredGroundSpeed =
+        std::hypot(
+            _filteredVelNorth,
+            _filteredVelEast);
+
+    float rawFilteredNorth = 0.0f;
+    float rawFilteredEast = 0.0f;
+
+    deltaMeters(
+        filteredLat,
+        filteredLon,
+        in.lat,
+        in.lon,
+        rawFilteredNorth,
+        rawFilteredEast);
+
+    out.rawFilteredDistance =
+        std::hypot(
+            rawFilteredNorth,
+            rawFilteredEast);
+   
     const float dt = std::clamp(in.dt, 0.001f, 0.25f);
     const float speed = std::hypot(in.velNorth, in.velEast);
  
@@ -188,7 +477,13 @@ public:
  
     // ---- position error -> velocity target --------------------------------
     float eN = 0.0f, eE = 0.0f;
-    deltaMeters(_targetLat, _targetLon, in.lat, in.lon, eN, eE);
+    deltaMeters(
+    _targetLat,
+    _targetLon,
+    out.filteredLat,
+    out.filteredLon,
+    eN,
+    eE);
  
     if (std::hypot(eN, eE) > _p.maxError)
     {
@@ -263,12 +558,37 @@ private:
  
   PositionHoldParams _p;
   PosHoldPhase _phase = PosHoldPhase::OFF;
+
   int32_t _targetLat = 0;
   int32_t _targetLon = 0;
+
   float _iN = 0.0f;
   float _iE = 0.0f;
   float _brakeTime = 0.0f;
+
   bool _latched = false;
+
+  // GPS filter state.
+  bool _filterInitialized = false;
+
+  double _filteredLat = 0.0;
+  double _filteredLon = 0.0;
+
+  uint32_t _filterLastGpsTimestampMs = 0;
+
+  int32_t _filterLastLat = 0;
+  int32_t _filterLastLon = 0;
+
+  int32_t _previousFilteredLat = 0;
+  int32_t _previousFilteredLon = 0;
+
+  float _filteredVelNorth = 0.0f;
+  float _filteredVelEast = 0.0f;
+
+  bool _filteredVelocityInitialized = false;
+
+  uint32_t _acceptedSamples = 0;
+  uint32_t _rejectedSamples = 0;
 };
  
 } // namespace Espfc::Control
