@@ -441,7 +441,10 @@ void reset()
     // ---- phase machine ----------------------------------------------------
     if (!_latched)
     {
-      latch(in);
+      latch(
+          out.filteredLat,
+          out.filteredLon);
+
       _phase = PosHoldPhase::HOLD;
     }
  
@@ -461,7 +464,10 @@ void reset()
       _brakeTime += dt;
       if (speed < _p.brakeSpeed || _brakeTime > _p.brakeTimeout)
       {
-        latch(in);
+        latch(
+            out.filteredLat,
+            out.filteredLon);
+
         _phase = PosHoldPhase::HOLD;
       }
     }
@@ -470,7 +476,10 @@ void reset()
  
     if (_phase == PosHoldPhase::PILOT)
     {
-      latch(in); // target follows the aircraft while the pilot flies
+      latch(
+          out.filteredLat,
+          out.filteredLon); // target follows the filtered aircraft position
+
       out.controlling = false;
       return out;
     }
@@ -488,7 +497,11 @@ void reset()
     if (std::hypot(eN, eE) > _p.maxError)
     {
       // Too far from the hold point (GPS jump, long drift): never chase it.
-      latch(in);
+      // Re-latch to the FILTERED position, never the raw GPS position.
+      latch(
+          out.filteredLat,
+          out.filteredLon);
+
       eN = eE = 0.0f;
     }
  
