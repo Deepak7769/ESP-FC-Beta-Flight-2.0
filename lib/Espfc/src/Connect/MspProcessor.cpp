@@ -2399,10 +2399,12 @@ constexpr int REQUIRED_PID_BYTES =
                   -2147483647L,
                   2147483647L))));
       r.writeU32(static_cast<uint32_t>(
-          std::clamp(
-              lrintf(state.distanceToHome * 100.0f),
-              0L,
-              4294967295L)));
+          std::clamp<int64_t>(
+              static_cast<int64_t>(
+                  lrintf(state.distanceToHome * 100.0f)),
+              int64_t{0},
+              static_cast<int64_t>(
+                  std::numeric_limits<uint32_t>::max()))));
       r.writeU32(static_cast<uint32_t>(
           lrintf(state.bearingToHome * 100000.0f)));
       r.writeU32(static_cast<uint32_t>(
@@ -2412,10 +2414,12 @@ constexpr int REQUIRED_PID_BYTES =
                   -2147483647L,
                   2147483647L))));
       r.writeU32(static_cast<uint32_t>(
-          std::clamp(
-              lrintf(state.targetAltitude * 100.0f),
-              0L,
-              4294967295L)));
+          std::clamp<int64_t>(
+              static_cast<int64_t>(
+                  lrintf(state.targetAltitude * 100.0f)),
+              int64_t{0},
+              static_cast<int64_t>(
+                  std::numeric_limits<uint32_t>::max()))));
       r.writeU16(static_cast<uint16_t>(
           std::clamp(
               lrintf(state.rollAngle * 1000.0f),
