@@ -50,14 +50,14 @@ class Navigation
 {
 public:
   static constexpr float PI_FC = 3.14159265358979323846f;
-  static constexpr float DEG_TO_RAD_FC = PI / 180.0f;
+  static constexpr float DEG_TO_RAD_FC = PI_FC / 180.0f;
   static constexpr float ACCEL_G = 9.80665f;
   static constexpr double METERS_PER_DEG = 111319.49079327357;
 
   static float wrapRadians(float a)
   {
-    while (a > PI) a -= 2.0f * PI;
-    while (a < -PI) a += 2.0f * PI;
+    while (a > PI_FC) a -= 2.0f * PI_FC;
+    while (a < -PI_FC) a += 2.0f * PI_FC;
     return a;
   }
 
@@ -111,7 +111,7 @@ public:
               std::fabs(
                   std::cos(
                       homeLat *
-                      static_cast<double>(DEG_TO_RAD))));
+                      static_cast<double>(DEG_TO_RAD_FC))));
 
       out.north =
           static_cast<float>(
@@ -142,7 +142,7 @@ public:
         if (out.bearingToHome < 0.0f)
         {
           out.bearingToHome +=
-              2.0f * PI;
+              2.0f * PI_FC;
         }
       }
     }
