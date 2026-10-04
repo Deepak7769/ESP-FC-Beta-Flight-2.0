@@ -208,10 +208,177 @@ void reset()
     east = static_cast<float>(dlon) * M_PER_UNIT * std::cos(latRad);
   }
  
+  // Update only the GPS filter/diagnostic state. This is intentionally
+  // separate from controller authority so filtered telemetry remains live
+  // whenever GPS is healthy, even when Position Hold is not engaged.
+  PositionHoldOutput filterGps(const PositionHoldInput& in)
+  {
+    PositionHoldOutput out;
+    updateFilter(in, out);
+    return out;
+  }
+
   PositionHoldOutput update(const PositionHoldInput& in)
   {
     PositionHoldOutput out;
 
+    updateFilter(in, out);
+
+    const float dt = std::clamp(in.dt, 0.001f, 0.25f);
+    const float speed = std::hypot(in.velNorth, in.velEast);
+ 
+    const bool stickActive = std::fabs(in.stickRoll) > _p.deadband || std::fabs(in.stickPitch) > _p.deadband;
+ 
+    // ---- phase machine ----------------------------------------------------
+    if (!_latched)
+    {
+      latch(
+          out.filteredLat,
+          out.filteredLon);
+
+      _phase = PosHoldPhase::HOLD;
+    }
+ 
+    if (stickActive)
+    {
+      _phase = PosHoldPhase::PILOT;
+      _iN = _iE = 0.0f;
+    }
+    else if (_phase == PosHoldPhase::PILOT)
+    {
+      _phase = PosHoldPhase::BRAKE;
+      _brakeTime = 0.0f;
+    }
+ 
+    if (_phase == PosHoldPhase::BRAKE)
+    {
+      _brakeTime += dt;
+      if (speed < _p.brakeSpeed || _brakeTime > _p.brakeTimeout)
+      {
+        latch(
+            out.filteredLat,
+            out.filteredLon);
+
+        _phase = PosHoldPhase::HOLD;
+      }
+    }
+ 
+    out.phase = _phase;
+ 
+    if (_phase == PosHoldPhase::PILOT)
+    {
+      latch(
+          out.filteredLat,
+          out.filteredLon); // target follows the filtered aircraft position
+
+      out.controlling = false;
+      return out;
+    }
+ 
+    // ---- position error -> velocity target --------------------------------
+    float eN = 0.0f, eE = 0.0f;
+    deltaMeters(
+    _targetLat,
+    _targetLon,
+    out.filteredLat,
+    out.filteredLon,
+    eN,
+    eE);
+ 
+    if (std::hypot(eN, eE) > _p.maxError)
+    {
+      // Too far from the hold point (GPS jump, long drift): never chase it.
+      // Re-latch to the FILTERED position, never the raw GPS position.
+      latch(
+          out.filteredLat,
+          out.filteredLon);
+
+      eN = eE = 0.0f;
+    }
+ 
+    float vtN = 0.0f, vtE = 0.0f;
+    if (_phase == PosHoldPhase::HOLD)
+    {
+      vtN = _p.posP * eN;
+      vtE = _p.posP * eE;
+      const float vt = std::hypot(vtN, vtE);
+      if (vt > _p.maxSpeed)
+      {
+        const float k = _p.maxSpeed / vt;
+        vtN *= k;
+        vtE *= k;
+      }
+    }
+    // BRAKE: velocity target stays zero, position P is not applied.
+ 
+    // ---- velocity PI -> acceleration (north/east) -------------------------
+    const float evN = vtN - in.velNorth;
+    const float evE = vtE - in.velEast;
+ 
+    float aN = _p.velP * evN + _iN;
+    float aE = _p.velP * evE + _iE;
+ 
+    float a = std::hypot(aN, aE);
+    const bool saturated = a > _p.maxAccel;
+    if (saturated)
+    {
+      const float k = _p.maxAccel / a;
+      aN *= k;
+      aE *= k;
+    }
+ 
+    // Integrate only while not saturated (anti-windup), and only while holding.
+    if (!saturated && _phase == PosHoldPhase::HOLD)
+    {
+      _iN = std::clamp(_iN + _p.velI * evN * dt, -_p.iLimit, _p.iLimit);
+      _iE = std::clamp(_iE + _p.velI * evE * dt, -_p.iLimit, _p.iLimit);
+    }
+ 
+    // ---- rotate north/east acceleration into body forward/right -----------
+    const float c = std::cos(in.heading);
+    const float s = std::sin(in.heading);
+    const float aForward = aN * c + aE * s;
+    const float aRight = -aN * s + aE * c;
+ 
+    out.pitchAngle = std::clamp(std::atan(aForward / GRAVITY), -_p.maxAngle, _p.maxAngle);
+    out.rollAngle = std::clamp(std::atan(aRight / GRAVITY), -_p.maxAngle, _p.maxAngle);
+    out.controlling = true;
+    out.errNorth = eN;
+    out.errEast = eE;
+    out.velTargetN = vtN;
+    out.velTargetE = vtE;
+    out.accelN = aN;
+    out.accelE = aE;
+
+    out.filteredLat =
+        static_cast<int32_t>(
+            std::lrint(
+                _filteredLat * 1e7));
+
+    out.filteredLon =
+        static_cast<int32_t>(
+            std::lrint(
+                _filteredLon * 1e7));
+
+    out.filteredVelNorth =
+        _filteredVelNorth;
+
+    out.filteredVelEast =
+        _filteredVelEast;
+
+    out.filteredGroundSpeed =
+        std::hypot(
+            _filteredVelNorth,
+            _filteredVelEast);
+
+    return out;
+  }
+ 
+private:
+  void updateFilter(
+      const PositionHoldInput& in,
+      PositionHoldOutput& out)
+  {
     const float controllerDt =
         std::clamp(in.dt, 0.001f, 0.25f);
 
@@ -473,157 +640,8 @@ void reset()
             rawFilteredNorth,
             rawFilteredEast);
    
-    const float dt = std::clamp(in.dt, 0.001f, 0.25f);
-    const float speed = std::hypot(in.velNorth, in.velEast);
- 
-    const bool stickActive = std::fabs(in.stickRoll) > _p.deadband || std::fabs(in.stickPitch) > _p.deadband;
- 
-    // ---- phase machine ----------------------------------------------------
-    if (!_latched)
-    {
-      latch(
-          out.filteredLat,
-          out.filteredLon);
-
-      _phase = PosHoldPhase::HOLD;
-    }
- 
-    if (stickActive)
-    {
-      _phase = PosHoldPhase::PILOT;
-      _iN = _iE = 0.0f;
-    }
-    else if (_phase == PosHoldPhase::PILOT)
-    {
-      _phase = PosHoldPhase::BRAKE;
-      _brakeTime = 0.0f;
-    }
- 
-    if (_phase == PosHoldPhase::BRAKE)
-    {
-      _brakeTime += dt;
-      if (speed < _p.brakeSpeed || _brakeTime > _p.brakeTimeout)
-      {
-        latch(
-            out.filteredLat,
-            out.filteredLon);
-
-        _phase = PosHoldPhase::HOLD;
-      }
-    }
- 
-    out.phase = _phase;
- 
-    if (_phase == PosHoldPhase::PILOT)
-    {
-      latch(
-          out.filteredLat,
-          out.filteredLon); // target follows the filtered aircraft position
-
-      out.controlling = false;
-      return out;
-    }
- 
-    // ---- position error -> velocity target --------------------------------
-    float eN = 0.0f, eE = 0.0f;
-    deltaMeters(
-    _targetLat,
-    _targetLon,
-    out.filteredLat,
-    out.filteredLon,
-    eN,
-    eE);
- 
-    if (std::hypot(eN, eE) > _p.maxError)
-    {
-      // Too far from the hold point (GPS jump, long drift): never chase it.
-      // Re-latch to the FILTERED position, never the raw GPS position.
-      latch(
-          out.filteredLat,
-          out.filteredLon);
-
-      eN = eE = 0.0f;
-    }
- 
-    float vtN = 0.0f, vtE = 0.0f;
-    if (_phase == PosHoldPhase::HOLD)
-    {
-      vtN = _p.posP * eN;
-      vtE = _p.posP * eE;
-      const float vt = std::hypot(vtN, vtE);
-      if (vt > _p.maxSpeed)
-      {
-        const float k = _p.maxSpeed / vt;
-        vtN *= k;
-        vtE *= k;
-      }
-    }
-    // BRAKE: velocity target stays zero, position P is not applied.
- 
-    // ---- velocity PI -> acceleration (north/east) -------------------------
-    const float evN = vtN - in.velNorth;
-    const float evE = vtE - in.velEast;
- 
-    float aN = _p.velP * evN + _iN;
-    float aE = _p.velP * evE + _iE;
- 
-    float a = std::hypot(aN, aE);
-    const bool saturated = a > _p.maxAccel;
-    if (saturated)
-    {
-      const float k = _p.maxAccel / a;
-      aN *= k;
-      aE *= k;
-    }
- 
-    // Integrate only while not saturated (anti-windup), and only while holding.
-    if (!saturated && _phase == PosHoldPhase::HOLD)
-    {
-      _iN = std::clamp(_iN + _p.velI * evN * dt, -_p.iLimit, _p.iLimit);
-      _iE = std::clamp(_iE + _p.velI * evE * dt, -_p.iLimit, _p.iLimit);
-    }
- 
-    // ---- rotate north/east acceleration into body forward/right -----------
-    const float c = std::cos(in.heading);
-    const float s = std::sin(in.heading);
-    const float aForward = aN * c + aE * s;
-    const float aRight = -aN * s + aE * c;
- 
-    out.pitchAngle = std::clamp(std::atan(aForward / GRAVITY), -_p.maxAngle, _p.maxAngle);
-    out.rollAngle = std::clamp(std::atan(aRight / GRAVITY), -_p.maxAngle, _p.maxAngle);
-    out.controlling = true;
-    out.errNorth = eN;
-    out.errEast = eE;
-    out.velTargetN = vtN;
-    out.velTargetE = vtE;
-    out.accelN = aN;
-    out.accelE = aE;
-
-    out.filteredLat =
-        static_cast<int32_t>(
-            std::lrint(
-                _filteredLat * 1e7));
-
-    out.filteredLon =
-        static_cast<int32_t>(
-            std::lrint(
-                _filteredLon * 1e7));
-
-    out.filteredVelNorth =
-        _filteredVelNorth;
-
-    out.filteredVelEast =
-        _filteredVelEast;
-
-    out.filteredGroundSpeed =
-        std::hypot(
-            _filteredVelNorth,
-            _filteredVelEast);
-
-    return out;
   }
- 
-private:
+
   void latch(
       int32_t lat,
       int32_t lon)
