@@ -256,7 +256,7 @@ void test_navigation_local_ned_for_rescue()
   in.altitudeValid = true;
   in.homeLatitudeE7 = 450000000;
   in.homeLongitudeE7 = 100000000;
-  in.latitudeE7 = 450000100;
+  in.latitudeE7 = 450001000;
   in.longitudeE7 = 100000000;
   in.altitude = 12.0f;
   in.homeAltitude = 10.0f;
