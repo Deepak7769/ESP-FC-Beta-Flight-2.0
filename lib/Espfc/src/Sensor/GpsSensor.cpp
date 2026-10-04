@@ -443,12 +443,14 @@ void GpsSensor::enableNav5()
             .tDOP = 250,
             .pAcc = 100,
             .tAcc = 300,
-            .staticHoldThresh = 0,
+            // NEO-6 static hold: suppress position wander while the
+            // receiver is stationary. Threshold is cm/s.
+            .staticHoldThresh = 20, // 0.20 m/s
             .dgnssTimeout = 60,
             .cnoThreshNumSVs = 0,
             .cnoThresh = 0,
             .reserved0 = {0, 0},
-            .staticHoldMaxDist = 200,
+            .staticHoldMaxDist = 2, // leave static hold after 2 m movement
             .utcStandard = 0,
             .reserved1 = {0, 0, 0, 0, 0},
         },
