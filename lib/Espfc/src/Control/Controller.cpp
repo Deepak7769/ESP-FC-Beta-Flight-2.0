@@ -1494,12 +1494,6 @@ if (angleActive)
        axis < AXIS_COUNT_RP;
        ++axis)
   {
-      const float pilotAngle =
-    Utils::toRad(
-        _model.config.level
-            .angleLimit) *
-    input.ch[axis];
-
 // Position hold output uses the stick sign convention:
 // axis 0 = roll (right +), axis 1 = pitch (forward +).
 const float posHoldAngle =
