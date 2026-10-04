@@ -108,6 +108,9 @@ _posHold.reset();
 _posHoldWasReady =
     false;
 
+_posHoldNotReadySinceUs =
+    0;
+
   return 1;
 }
 
