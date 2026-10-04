@@ -543,9 +543,31 @@ void reset()
     out.errEast = eE;
     out.velTargetN = vtN;
     out.velTargetE = vtE;
-    out.accelN = aN;
-    out.accelE = aE;
-    return out;
+out.accelN = aN;
+out.accelE = aE;
+
+out.filteredLat =
+    static_cast<int32_t>(
+        std::lrint(
+            _filteredLat * 1e7));
+
+out.filteredLon =
+    static_cast<int32_t>(
+        std::lrint(
+            _filteredLon * 1e7));
+
+out.filteredVelNorth =
+    _filteredVelNorth;
+
+out.filteredVelEast =
+    _filteredVelEast;
+
+out.filteredGroundSpeed =
+    std::hypot(
+        _filteredVelNorth,
+        _filteredVelEast);
+
+return out;
   }
  
 private:
