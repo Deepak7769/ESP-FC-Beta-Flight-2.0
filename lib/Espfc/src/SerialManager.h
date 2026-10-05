@@ -21,7 +21,7 @@ public:
 
   int begin();
   int reload(ModelChangeEvent event);
-  int update();
+  int update(bool allowMsp = true, bool allowTelemetry = true, bool allowOptional = true, bool allowNavigation = true);
 
 private:
   static Stream::ReadWritable* getSerialPortById(SerialPort portId);

@@ -8,6 +8,7 @@
 #include "Input.h"
 #include "Model.h"
 #include "Output/Mixer.h"
+#include "ResourceManager.h"
 #include "SensorManager.h"
 #include "SerialManager.h"
 #include "TelemetryManager.h"
@@ -23,6 +24,7 @@ public:
   int begin();
   int update(bool externalTrigger = false);
   int updateOther();
+  void noteFlightDeadlineMisses(uint32_t count) { _resourceManager.noteFlightDeadlineMisses(count); }
 
   int getGyroInterval() const
   {
@@ -41,6 +43,7 @@ private:
   Blackbox::Blackbox _blackbox;
   Connect::Buzzer _buzzer;
   SerialManager _serial;
+  ResourceManager _resourceManager;
 };
 
 } // namespace Espfc

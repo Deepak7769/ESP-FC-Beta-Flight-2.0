@@ -1399,7 +1399,7 @@ if (config.debug.axis >= AXIS_COUNT_RPY)
                   1000u) != 0;
 
       timersOk &=
-          state.stats.timer.setRate(3) != 0;
+          state.stats.timer.setRate(100) != 0;
 
       if (magActive())
       {

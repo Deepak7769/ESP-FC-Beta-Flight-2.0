@@ -830,6 +830,14 @@ const bool altHoldHealthy =
 
   handleGpsRescueSupervisor(newMask);
 
+  if (_model.state.failsafe.gpsRescueLandNoDrop &&
+      _model.state.failsafe.phase == FC_FAILSAFE_LANDING)
+  {
+    newMask &= ~(uint32_t{1} << MODE_GPS_RESCUE);
+    newMask &= ~(uint32_t{1} << MODE_POSHOLD);
+    newMask &= ~(uint32_t{1} << MODE_ALTHOLD);
+  }
+
   for (size_t i = 0; i < MODE_COUNT; i++)
   {
     bool newVal = newMask & (1 << i);
@@ -1576,6 +1584,13 @@ void Actuator::handleGpsRescueSupervisor(uint32_t& newMask)
     failsafe.gpsRescueLandNoDrop = true;
     newMask &= ~RESCUE_BIT;
     startFailsafeLanding();
+    return;
+  }
+
+  if (failsafe.gpsRescueLandNoDrop &&
+      failsafe.phase == FC_FAILSAFE_LANDING)
+  {
+    newMask &= ~RESCUE_BIT;
     return;
   }
 

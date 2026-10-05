@@ -5,7 +5,8 @@ namespace Espfc {
 
 Espfc::Espfc()
     : _hardware{_model}, _controller{_model}, _telemetry{_model}, _input{_model, _telemetry}, _actuator{_model},
-      _sensor{_model}, _mixer{_model}, _blackbox{_model}, _buzzer{_model}, _serial{_model, _telemetry}
+      _sensor{_model}, _mixer{_model}, _blackbox{_model}, _buzzer{_model}, _serial{_model, _telemetry},
+      _resourceManager{_model}
 {
 }
 
@@ -29,6 +30,7 @@ int Espfc::begin()
   _input.begin();    // requires _serial.begin()
   _actuator.begin(); // requires _model.begin()
   _controller.begin();
+  _resourceManager.begin();
   _blackbox.begin(); // requires _serial.begin(), _actuator.begin()
   _buzzer.begin();
 
@@ -98,6 +100,7 @@ int FAST_CODE_ATTR Espfc::update(bool externalTrigger)
 
   if (sensorFlags & SENSOR_READ_CONTROL)
   {
+    _resourceManager.update();
     _controller.update();
 
     if (_model.state.mixer.timer.syncTo(
@@ -106,7 +109,10 @@ int FAST_CODE_ATTR Espfc::update(bool externalTrigger)
       _mixer.update();
     }
 
-    _blackbox.update();
+    if (_resourceManager.blackboxAllowed())
+    {
+      _blackbox.update();
+    }
 
     _sensor.postLoop();
   }
@@ -167,6 +173,7 @@ if (_model.state.actuatorTimer.check())
   if (gyroSampleValid &&
       controlDue)
   {
+    _resourceManager.update();
     _controller.update();
 
     if (_model.state.mixer.timer.syncTo(
@@ -175,7 +182,10 @@ if (_model.state.actuatorTimer.check())
       _mixer.update();
     }
 
-    _blackbox.update();
+    if (_resourceManager.blackboxAllowed())
+    {
+      _blackbox.update();
+    }
   }
 
   // Arming/failsafe supervision is likewise independent of the PID sample.
@@ -199,7 +209,11 @@ if (_model.state.actuatorTimer.check())
 
 #endif
 
-  _serial.update();
+  _serial.update(
+      _resourceManager.mspAllowed(),
+      _resourceManager.telemetryAllowed(),
+      _resourceManager.optionalAllowed(),
+      _resourceManager.navigationAllowed());
   _buzzer.update();
   _model.state.led.update();
   _model.state.stats.update();

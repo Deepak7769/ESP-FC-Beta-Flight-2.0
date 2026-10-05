@@ -115,6 +115,7 @@ if (notifications > 1)
 {
   gyroTaskMissedDeadlines +=
       notifications - 1;
+  espfc.noteFlightDeadlineMisses(notifications - 1);
 }
 
 espfc.update(true);

@@ -182,7 +182,7 @@ int SerialManager::reload(ModelChangeEvent event)
   return 1;
 }
 
-int FAST_CODE_ATTR SerialManager::update()
+int FAST_CODE_ATTR SerialManager::update(bool allowMsp, bool allowTelemetry, bool allowOptional, bool allowNavigation)
 {
   const SerialPortConfig& sc = _model.config.serial[_current];
   SerialPortState& ss = _model.state.serial[_current];
@@ -190,7 +190,7 @@ int FAST_CODE_ATTR SerialManager::update()
   if(ss.stream && !(sc.functionMask & SERIAL_FUNCTION_RX_SERIAL))
   {
     Utils::Stats::Measure measure(_model.state.stats, COUNTER_SERIAL);
-    if (sc.functionMask & SERIAL_FUNCTION_MSP)
+    if (allowMsp && (sc.functionMask & SERIAL_FUNCTION_MSP))
     {
       processMsp(ss);
 
@@ -224,26 +224,26 @@ int FAST_CODE_ATTR SerialManager::update()
       }
 #endif
     }
-    if(sc.functionMask & SERIAL_FUNCTION_TELEMETRY_FRSKY && _model.state.telemetryTimer.check())
+    if(allowTelemetry && sc.functionMask & SERIAL_FUNCTION_TELEMETRY_FRSKY && _model.state.telemetryTimer.check())
     {
       _telemetry.process(*ss.stream, TELEMETRY_PROTOCOL_TEXT);
     }
-    if(sc.functionMask & SERIAL_FUNCTION_TELEMETRY_IBUS)
+    if(allowTelemetry && sc.functionMask & SERIAL_FUNCTION_TELEMETRY_IBUS)
     {
       _ibus.update();
     }
-    if(sc.functionMask & SERIAL_FUNCTION_VTX_SMARTAUDIO)
+    if(allowOptional && sc.functionMask & SERIAL_FUNCTION_VTX_SMARTAUDIO)
     {
       _vtx.update();
     }
-    if(sc.functionMask & SERIAL_FUNCTION_GPS)
+    if(allowNavigation && sc.functionMask & SERIAL_FUNCTION_GPS)
     {
       _gps.update();
     }
   }
 
 #ifdef ESPFC_SERIAL_SOFT_0_WIFI
-  if(_current == SERIAL_SOFT_0)
+  if(allowOptional && _current == SERIAL_SOFT_0)
   {
     _wireless.update();
   }
