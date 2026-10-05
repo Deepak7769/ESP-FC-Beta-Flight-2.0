@@ -16,17 +16,21 @@ jobs:
       - name: Build S2 with linker map
         run: |
           set +e
-          platformio run -e esp32s2
+          PLATFORMIO_BUILD_FLAGS="-Wl,-Map=.pio/build/esp32s2/firmware.map" platformio run -e esp32s2
           rc=$?
           echo "PLATFORMIO_RC=$rc"
           echo "=== map files ==="
           find .pio/build/esp32s2 -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
           echo "=== firmware.map tail ==="
           if [ -f .pio/build/esp32s2/firmware.map ]; then
-            tail -n 250 .pio/build/esp32s2/firmware.map
+            tail -n 300 .pio/build/esp32s2/firmware.map
           fi
           echo "=== bss/noload sections ==="
           if [ -f .pio/build/esp32s2/firmware.map ]; then
-            grep -nE "\\.dram0\\.bss|_bss_start|_bss_end|\\.bss" .pio/build/esp32s2/firmware.map | tail -n 120
+            grep -nE "\\.dram0\\.bss|_bss_start|_bss_end|\\.bss" .pio/build/esp32s2/firmware.map | tail -n 160
+          fi
+          echo "=== largest symbols in BSS ==="
+          if [ -f .pio/build/esp32s2/firmware.map ]; then
+            grep -A5000 "^\\.dram0\\.bss" .pio/build/esp32s2/firmware.map | grep -E "^ \\.[[:alnum:]_.]+ +0x" | tail -n 200
           fi
           exit 0
