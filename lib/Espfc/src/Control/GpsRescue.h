@@ -103,6 +103,8 @@ struct GpsRescueOutput
   bool active{false};
   bool controlling{false};
   bool requestLand{false};
+  // Brief confirmation window for transient GPS/navigation anomalies.
+  bool faultEvaluationPending{false};
   GpsRescuePhase phase{GpsRescuePhase::IDLE};
   uint16_t faultFlags{GPS_RESCUE_FAULT_NONE};
   float rollAngle{0.0f};
@@ -130,6 +132,8 @@ public:
     _noProgressElapsed = 0.0f;
     _headingOffset = 0.0f;
     _headingOffsetValid = false;
+    _faultEvaluationElapsed = 0.0f;
+    _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
   }
 
   GpsRescueOutput update(
@@ -150,15 +154,37 @@ public:
 
     if (faults != GPS_RESCUE_FAULT_NONE)
     {
-      _phase = GpsRescuePhase::ABORT;
+      // Do not turn one bad sample into a motor-off event. Keep Rescue
+      // active while the navigation fault is confirmed.
+      _faultFlagsLatched |= faults;
+      _faultEvaluationElapsed +=
+          std::max(in.dt, 0.001f);
+
       out.active = true;
       out.controlling = false;
-      out.requestLand = in.altitudeHealthy;
-      out.phase = _phase;
-      out.faultFlags = faults;
+      out.faultFlags = _faultFlagsLatched;
       out.targetAltitude = _targetAltitude;
+
+      constexpr float FAULT_CONFIRM_S = 0.25f;
+
+      if (_faultEvaluationElapsed < FAULT_CONFIRM_S)
+      {
+        out.faultEvaluationPending = true;
+        out.phase = _phase;
+        return out;
+      }
+
+      _phase = GpsRescuePhase::ABORT;
+      out.requestLand = true;
+      out.phase = _phase;
+      out.faultEvaluationPending = false;
       return out;
     }
+
+    // A transient fault that clears inside the confirmation window recovers
+    // Rescue instead of forcing a failsafe transition.
+    _faultEvaluationElapsed = 0.0f;
+    _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
 
     updateHeadingEstimate(in, p);
     _phaseElapsed += std::max(in.dt, 0.001f);
@@ -706,6 +732,8 @@ private:
   float _noProgressElapsed{0.0f};
   float _headingOffset{0.0f};
   bool _headingOffsetValid{false};
+  float _faultEvaluationElapsed{0.0f};
+  uint16_t _faultFlagsLatched{GPS_RESCUE_FAULT_NONE};
 };
 
 } // namespace Espfc::Control

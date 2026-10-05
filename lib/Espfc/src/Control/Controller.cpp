@@ -815,6 +815,27 @@ else if (legacyAltHoldActive)
   _altHoldV2OutputWasActive =
       false;
 }
+else if (
+    _model.isModeActive(MODE_ARMED) &&
+    (_model.state.gpsRescue.faultEvaluationPending ||
+     _model.state.gpsRescue.requestLand ||
+     _model.state.failsafe.gpsRescueLandNoDrop))
+{
+  // GPS Rescue has strict no-drop semantics. During fault evaluation and
+  // the GPS-origin LAND handoff, preserve the last thrust command.
+  verticalPid.update(
+      0.0f,
+      altitude.vario);
+
+  output.ch[AXIS_THRUST] =
+      std::clamp(
+          output.ch[AXIS_THRUST],
+          -1.0f,
+          1.0f);
+
+  _altHoldV2OutputWasActive =
+      false;
+}
 else
 {
   // Keep the vertical PID state synchronized while
@@ -1797,6 +1818,8 @@ gpsRescueState.active =
     rescueOut.active;
 gpsRescueState.controlling =
     rescueOut.controlling;
+gpsRescueState.faultEvaluationPending =
+    rescueOut.faultEvaluationPending;
 gpsRescueState.ready =
     navigationIn.gpsValid &&
     navigationIn.attitudeValid &&

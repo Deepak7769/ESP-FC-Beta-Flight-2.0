@@ -245,6 +245,10 @@ public:
   float landingEntryThrust{0.0f};
 
   bool gpsRescueLandingRequested{false};
+
+  // GPS Rescue -> LAND V2 origin marker. This path may never fall through
+  // to an airborne DROP/disarm decision.
+  bool gpsRescueLandNoDrop{false};
 };
 
 constexpr float ACCEL_G = 9.80665f;
@@ -600,6 +604,7 @@ struct GpsRescueState
   bool controlling{false};
   bool ready{false};
   bool requestLand{false};
+  bool faultEvaluationPending{false};
   uint8_t phase{
       static_cast<uint8_t>(
           Control::GpsRescuePhase::IDLE)};
