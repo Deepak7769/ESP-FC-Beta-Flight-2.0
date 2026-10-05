@@ -39,6 +39,8 @@ int ResourceManager::begin()
   _peakWindowStartUs = micros();
   _highLoadSinceUs = 0;
   _flightDeadlineMisses = 0;
+  _lastDeadlineMisses = 0;
+  _deadlineStressUntilUs = 0;
   return 1;
 }
 
@@ -122,6 +124,12 @@ void ResourceManager::applyPolicy(float cpu, uint32_t now)
 {
   _cpuLoad = std::clamp(cpu, 0.0f, 100.0f);
 
+  const uint32_t deadlineMisses = _flightDeadlineMisses;
+  const uint32_t newDeadlineMisses = deadlineMisses - _lastDeadlineMisses;
+  _lastDeadlineMisses = deadlineMisses;
+  if (newDeadlineMisses > 0) _deadlineStressUntilUs = now + 500000u;
+  const bool deadlineStress = static_cast<int32_t>(now - _deadlineStressUntilUs) < 0;
+
   if (_peakWindowStartUs == 0 ||
       static_cast<uint32_t>(now - _peakWindowStartUs) >= PEAK_WINDOW_US)
   {
@@ -162,12 +170,13 @@ void ResourceManager::applyPolicy(float cpu, uint32_t now)
     return;
   }
 
-  _state = classify(_cpuLoad);
+  const float policyCpu = std::max(_cpuLoad, _cpuPeak);
+  _state = classify(policyCpu);
 
-  _blackboxAllowed = _cpuLoad < CPU_AGGRESSIVE;
-  _mspAllowed = _cpuLoad < CPU_AGGRESSIVE;
-  _telemetryAllowed = _cpuLoad < CPU_AGGRESSIVE;
-  _optionalAllowed = _cpuLoad < CPU_LOAD_MANAGEMENT;
+  _blackboxAllowed = policyCpu < CPU_AGGRESSIVE && !deadlineStress;
+  _mspAllowed = policyCpu < CPU_EMERGENCY;
+  _telemetryAllowed = policyCpu < CPU_AGGRESSIVE && !deadlineStress;
+  _optionalAllowed = policyCpu < CPU_LOAD_MANAGEMENT && !deadlineStress;
 
   if (_state == ResourceState::EMERGENCY_RESOURCE)
   {
