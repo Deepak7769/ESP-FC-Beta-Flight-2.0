@@ -253,9 +253,10 @@ void setOutputSaturation(
             state.gps.homeAltitude = state.altitude.height;
           }
           else if(state.baro.sampleValid &&
-                  std::isfinite(state.baro.altitude))
+                  std::isfinite(state.baro.altitudeGround))
           {
-            state.gps.homeAltitude = state.baro.altitude;
+            // Navigation altitudeAboveHome is local/ground-relative.
+            state.gps.homeAltitude = state.baro.altitudeGround;
           }
           else
           {
@@ -1400,6 +1401,11 @@ if (config.debug.axis >= AXIS_COUNT_RPY)
 
       timersOk &=
           state.stats.timer.setRate(100) != 0;
+
+      // Keep MSP/configurator/GPS/telemetry service outside the 4 kHz
+      // stabilization iteration.
+      timersOk &=
+          state.serialTimer.setRate(100) != 0;
 
       if (magActive())
       {
