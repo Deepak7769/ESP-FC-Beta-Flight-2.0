@@ -86,6 +86,8 @@ private:
   uint32_t _peakWindowStartUs{0};
   uint32_t _highLoadSinceUs{0};
   uint32_t _flightDeadlineMisses{0};
+  uint32_t _lastDeadlineMisses{0};
+  uint32_t _deadlineStressUntilUs{0};
 };
 
 #endif
