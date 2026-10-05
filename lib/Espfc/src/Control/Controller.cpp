@@ -1818,6 +1818,8 @@ gpsRescueState.active =
     rescueOut.active;
 gpsRescueState.controlling =
     rescueOut.controlling;
+gpsRescueState.requestLand =
+    rescueOut.requestLand;
 gpsRescueState.faultEvaluationPending =
     rescueOut.faultEvaluationPending;
 gpsRescueState.ready =
