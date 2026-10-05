@@ -1,0 +1,32 @@
+name: diag-s2-bss
+
+on:
+  push:
+    branches: [ "diag-esp32s2-bss" ]
+
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade "platformio==6.2.0"
+      - name: Build S2 with linker map
+        run: |
+          set +e
+          platformio run -e esp32s2
+          rc=$?
+          echo "PLATFORMIO_RC=$rc"
+          echo "=== map files ==="
+          find .pio/build/esp32s2 -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          echo "=== firmware.map tail ==="
+          if [ -f .pio/build/esp32s2/firmware.map ]; then
+            tail -n 250 .pio/build/esp32s2/firmware.map
+          fi
+          echo "=== bss/noload sections ==="
+          if [ -f .pio/build/esp32s2/firmware.map ]; then
+            grep -nE "\\.dram0\\.bss|_bss_start|_bss_end|\\.bss" .pio/build/esp32s2/firmware.map | tail -n 120
+          fi
+          exit 0
