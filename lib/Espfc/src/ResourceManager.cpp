@@ -13,14 +13,14 @@ constexpr uint32_t PEAK_WINDOW_US = 1000000u;
 constexpr float CPU_WATCH = 65.0f;
 constexpr float CPU_LOAD_MANAGEMENT = 70.0f;
 constexpr float CPU_AGGRESSIVE = 75.0f;
-constexpr float CPU_CRITICAL = 80.0f;
-constexpr float CPU_EMERGENCY = 85.0f;
+constexpr float CPU_CRITICAL = 78.0f;
+constexpr float CPU_EMERGENCY = 80.0f;
 constexpr float CPU_LAND = 95.0f;
 constexpr float HYST_WATCH = 62.0f;
 constexpr float HYST_LOAD_MANAGEMENT = 67.0f;
 constexpr float HYST_AGGRESSIVE = 72.0f;
-constexpr float HYST_CRITICAL = 77.0f;
-constexpr float HYST_EMERGENCY = 82.0f;
+constexpr float HYST_CRITICAL = 75.0f;
+constexpr float HYST_EMERGENCY = 77.0f;
 }
 
 ResourceManager::ResourceManager(Model& model): _model(model) {}
