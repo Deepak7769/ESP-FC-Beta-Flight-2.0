@@ -1237,6 +1237,16 @@ void Actuator::updateFailsafeLand()
                 -0.8f,
                 0.8f);
 
+        const float runtimeHoverThrust =
+            _model.state.assistedMode.hoverThrust;
+
+        // Runtime hover learning is authoritative after controller startup;
+        // configuration remains the initialization/fallback reference.
+        const float hoverThrustReference =
+            std::isfinite(runtimeHoverThrust)
+                ? std::clamp(runtimeHoverThrust, -0.8f, 0.8f)
+                : configuredHoverThrust;
+
         const float entryThrust =
             std::isfinite(
                 failsafe.landingEntryThrust)
@@ -1252,7 +1262,7 @@ void Actuator::updateFailsafeLand()
         // real thrust reduction before disarming.
         const float touchdownReferenceThrust =
             std::min(
-                configuredHoverThrust,
+                hoverThrustReference,
                 entryThrust);
 
         constexpr float
@@ -1683,6 +1693,8 @@ void Actuator::updateArmed()
       failsafe.landingRequested =
           false;
 
+      _model.state.mode.rescueConfigEntryUs = 0;
+
       failsafe.gpsRescueLandingRequested =
           false;
 
@@ -1929,10 +1941,28 @@ void Actuator::updateRescueConfig()
       {
         _model.state.mode.rescueConfigMode = RESCUE_CONFIG_DISABLED;
       }
-      if (_model.state.failsafe.phase != FC_FAILSAFE_IDLE && _model.config.rescueConfigDelay > 0 &&
-          millis() > _model.config.rescueConfigDelay * 1000)
+      if (_model.state.failsafe.phase != FC_FAILSAFE_IDLE &&
+          _model.config.rescueConfigDelay > 0)
       {
-        _model.state.mode.rescueConfigMode = RESCUE_CONFIG_ACTIVE;
+        const uint32_t now = micros();
+        if (_model.state.mode.rescueConfigEntryUs == 0)
+        {
+          _model.state.mode.rescueConfigEntryUs = now;
+        }
+
+        const uint32_t delayUs =
+            static_cast<uint32_t>(_model.config.rescueConfigDelay) *
+            1000000u;
+
+        if (static_cast<uint32_t>(
+                now - _model.state.mode.rescueConfigEntryUs) >= delayUs)
+        {
+          _model.state.mode.rescueConfigMode = RESCUE_CONFIG_ACTIVE;
+        }
+      }
+      else if (_model.state.failsafe.phase == FC_FAILSAFE_IDLE)
+      {
+        _model.state.mode.rescueConfigEntryUs = 0;
       }
       break;
     case RESCUE_CONFIG_ACTIVE:
