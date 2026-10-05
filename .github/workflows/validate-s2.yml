@@ -1,0 +1,16 @@
+name: validate-s2-dram-fix
+
+on:
+  push:
+    branches: [ "validate-s2-dram-fix" ]
+
+jobs:
+  esp32s2:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade "platformio==6.2.0"
+      - run: platformio run -e esp32s2
