@@ -25,6 +25,8 @@ int GyroSensor::begin()
   _model.state.gyro.lastUpdateUs =
       0;
 
+  _lastConnectionCheckUs = 0;
+
   _gyro = _model.state.gyro.dev;
   if (!_gyro) return 0;
 
@@ -217,11 +219,24 @@ int FAST_CODE_ATTR GyroSensor::read()
     return 0;
   }
 
-  _model.state.gyro.lastUpdateUs =
-      micros();
+  const uint32_t now = micros();
 
-  _model.state.gyro.sampleValid =
-      true;
+  // Periodic WHO_AM_I validation makes SPI device health truthful without
+  // adding a register transaction to every 4 kHz control sample.
+  if (_gyro->getBus() &&
+      _gyro->getBus()->isSPI() &&
+      static_cast<uint32_t>(now - _lastConnectionCheckUs) >= 100000u)
+  {
+    _lastConnectionCheckUs = now;
+    if (!_gyro->testConnection())
+    {
+      _model.state.gyro.sampleValid = false;
+      return 0;
+    }
+  }
+
+  _model.state.gyro.lastUpdateUs = now;
+  _model.state.gyro.sampleValid = true;
 
   return 1;
 }
