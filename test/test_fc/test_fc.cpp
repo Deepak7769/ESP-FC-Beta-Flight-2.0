@@ -383,6 +383,11 @@ void test_controller_angle_mode_does_not_latch_fterm_scale()
   model.config.input.filterDerivative = {FILTER_NONE, 0};
   model.begin();
 
+  // Angle V2 requires a fresh attitude estimate before it owns the rate
+  // setpoint. Keep the fixture deterministic with micros()==0.
+  model.state.attitude.healthy = true;
+  model.state.attitude.lastUpdateUs = 0;
+
   Controller controller(model);
   controller.begin();
 
