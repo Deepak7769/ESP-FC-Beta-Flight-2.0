@@ -209,11 +209,14 @@ if (_model.state.actuatorTimer.check())
 
 #endif
 
-  _serial.update(
-      _resourceManager.mspAllowed(),
-      _resourceManager.telemetryAllowed(),
-      _resourceManager.optionalAllowed(),
-      _resourceManager.navigationAllowed());
+  if (_model.state.serialTimer.check())
+  {
+    _serial.update(
+        _resourceManager.mspAllowed(),
+        _resourceManager.telemetryAllowed(),
+        _resourceManager.optionalAllowed(),
+        _resourceManager.navigationAllowed());
+  }
   _buzzer.update();
   _model.state.led.update();
   _model.state.stats.update();
