@@ -1496,7 +1496,9 @@ PositionHoldOutput posHoldOut{};
           gps.lastMsgTs) <
           ESPFC_POSHOLD_GPS_STALE_US;
  
+  // Zero/unknown accuracy is not a trustworthy GPS quality value.
   const bool phAcc =
+      gps.accuracy.horizontal > 0 &&
       gps.accuracy.horizontal <=
       ESPFC_POSHOLD_MAX_HACC_MM;
  
