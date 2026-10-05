@@ -791,8 +791,10 @@ struct GpsRescueConfig
   uint8_t altitudeMarginM = 10;
   uint8_t fixedAltitudeM = 20;
   uint8_t maxAltitudeM = 50;
-  uint8_t climbRateDmS = 20;
-  uint8_t descentRateDmS = 6;
+  // User-selected GPS Rescue vertical trajectory: 0.30 m/s climb, 0.10 m/s descent.
+  // Units: decimetres per second (dm/s).
+  uint8_t climbRateDmS = 3;
+  uint8_t descentRateDmS = 1;
   uint8_t speedDmS = 80;
   uint8_t approachSpeedDmS = 20;
   uint8_t maxAngleDeg = 25;
