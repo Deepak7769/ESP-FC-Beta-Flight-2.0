@@ -49,6 +49,7 @@ private:
 
   Model& _model;
   Device::GyroDevice* _gyro;
+  uint32_t _lastConnectionCheckUs{0};
 
 #ifdef ESPFC_DSP
   Utils::FFTAnalyzer<128> _fft[3];
