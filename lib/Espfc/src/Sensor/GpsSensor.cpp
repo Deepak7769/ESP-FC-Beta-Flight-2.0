@@ -915,6 +915,7 @@ void GpsSensor::handleCfgValGet() const
 
 void GpsSensor::handleNavPvt() const
 {
+  if (_ubxMsg.length < sizeof(Gps::UbxNavPvt92)) return;
   const auto& m = *_ubxMsg.getAs<Gps::UbxNavPvt92>();
 
   _model.state.gps.fix = m.fixType == 3 && m.flags.gnssFixOk;
@@ -967,11 +968,17 @@ void GpsSensor::handleNavPvt() const
 
 void GpsSensor::handleNavSat() const
 {
+  constexpr size_t NAV_SAT_HEADER = 8u;
+  constexpr size_t NAV_SAT_ENTRY = 12u;
+  if (_ubxMsg.length < NAV_SAT_HEADER) return;
+
   const auto& m = *_ubxMsg.getAs<Gps::UbxNavSat>();
-  _model.state.gps.numCh = m.numSvs;
+  const size_t available = (_ubxMsg.length - NAV_SAT_HEADER) / NAV_SAT_ENTRY;
+  const size_t count = std::min<size_t>(m.numSvs, std::min<size_t>(available, SAT_MAX));
+  _model.state.gps.numCh = count;
   for (uint8_t i = 0; i < SAT_MAX; i++)
   {
-    if (i < m.numSvs)
+    if (i < count)
     {
       _model.state.gps.svinfo[i].id = m.sats[i].svId;
       _model.state.gps.svinfo[i].gnssId = m.sats[i].gnssId;
