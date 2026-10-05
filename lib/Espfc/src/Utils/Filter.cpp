@@ -441,7 +441,7 @@ void FAST_CODE_ATTR Filter::reconfigure(const FilterConfig& config, int rate)
     case FILTER_NOTCH:
     case FILTER_NOTCH_DF1:
     case FILTER_BPF:
-      reconfigure(config, rate, getNotchQApprox(config.freq, config.cutoff), 1.0f);
+      reconfigure(_conf, rate, getNotchQApprox(_conf.freq, _conf.cutoff), 1.0f);
       break;
     default:
       reconfigure(config, rate, 0.0f, 1.0f);
