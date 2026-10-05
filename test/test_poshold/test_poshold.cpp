@@ -337,16 +337,38 @@ void test_gps_rescue_falls_back_to_land_on_gps_loss()
   in.north = 20.0f;
   in.altitudeAboveHome = 12.0f;
   in.yawHeading = 3.14159265358979323846f;
+  in.dt = 0.02f;
 
   r.update(in, p);
   in.gpsValid = false;
-  const auto out = r.update(in, p);
+
+  // One bad sample only starts the confirmation window.
+  auto out = r.update(in, p);
+  TEST_ASSERT_TRUE(out.active);
+  TEST_ASSERT_TRUE(out.faultEvaluationPending);
+  TEST_ASSERT_FALSE(out.requestLand);
+  TEST_ASSERT_FALSE(out.controlling);
+  TEST_ASSERT_NOT_EQUAL(
+      static_cast<uint8_t>(GpsRescuePhase::ABORT),
+      static_cast<uint8_t>(out.phase));
+
+  // A transient recovery inside the window cancels the handoff.
+  in.gpsValid = true;
+  out = r.update(in, p);
+  TEST_ASSERT_FALSE(out.faultEvaluationPending);
+  TEST_ASSERT_FALSE(out.requestLand);
+
+  // A persistent failure is confirmed only after the evaluation window.
+  in.gpsValid = false;
+  out = r.update(in, p);
+  for (int i = 0; i < 20 && !out.requestLand; ++i)
+  {
+    out = r.update(in, p);
+  }
 
   TEST_ASSERT_EQUAL_UINT8(
-      static_cast<uint8_t>(
-          GpsRescuePhase::ABORT),
-      static_cast<uint8_t>(
-          out.phase));
+      static_cast<uint8_t>(GpsRescuePhase::ABORT),
+      static_cast<uint8_t>(out.phase));
   TEST_ASSERT_FALSE(out.controlling);
   TEST_ASSERT_TRUE(out.requestLand);
 }

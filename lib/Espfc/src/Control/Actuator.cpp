@@ -1054,6 +1054,20 @@ void Actuator::updateFailsafeLand()
       {
         // An automatic descent without a trustworthy
         // attitude/altitude estimate is not allowed.
+        // GPS-origin LAND is never allowed to fall through to an airborne
+        // DROP/disarm decision.
+        if (failsafe.gpsRescueLandNoDrop &&
+            _model.isModeActive(MODE_ARMED))
+        {
+          failsafe.landingOutputBlocked = true;
+          failsafe.landingActive = false;
+          failsafe.landingLevelRequested = false;
+          failsafe.landingDescentRequested = false;
+          failsafe.landingTouchdownCandidate = false;
+          failsafe.landingTouchdownStartedUs = 0;
+          return;
+        }
+
         // The active validation path falls back to DROP.
         failsafe.landingOutputBlocked =
             true;
@@ -1287,7 +1301,21 @@ void Actuator::updateFailsafeLand()
                 touchdownReferenceThrust -
                     TOUCHDOWN_HOLD_THRUST_MARGIN;
 
-        if (landingTimedOut)
+        if (landingTimedOut &&
+            failsafe.gpsRescueLandNoDrop &&
+            _model.isModeActive(MODE_ARMED))
+        {
+          // GPS-origin LAND timeout: keep the aircraft armed and preserve
+          // propulsion rather than ever issuing an airborne DROP.
+          failsafe.landingFault = true;
+          failsafe.landingActive = false;
+          failsafe.landingLevelRequested = false;
+          failsafe.landingDescentRequested = false;
+          failsafe.landingOutputBlocked = true;
+          failsafe.landingTouchdownCandidate = false;
+          failsafe.landingTouchdownStartedUs = 0;
+        }
+        else if (landingTimedOut)
         {
           failsafe.landingFault =
               true;
@@ -1358,6 +1386,8 @@ void Actuator::updateFailsafeLand()
 
             failsafe.phase =
                 FC_FAILSAFE_LANDED;
+
+            failsafe.gpsRescueLandNoDrop = false;
 
             _model.disarm(
                 DISARM_REASON_FAILSAFE);
@@ -1466,12 +1496,10 @@ void Actuator::startFailsafeLanding()
   auto& failsafe = _model.state.failsafe;
 
 #if defined(ESPFC_LAND_V2_ACTIVE)
-  if (!_model.isModeActive(MODE_ARMED) ||
-      !altitudeEstimateHealthy())
+  if (!_model.isModeActive(MODE_ARMED))
   {
     failsafe.phase = FC_FAILSAFE_LANDED;
     failsafe.landingRequested = false;
-    _model.disarm(DISARM_REASON_FAILSAFE);
     return;
   }
 
@@ -1497,8 +1525,40 @@ void Actuator::startFailsafeLanding()
     failsafe.landingTouchdownStartedUs = 0;
   }
 
+  // If GPS Rescue handed us here while LAND's estimator is unavailable,
+  // stay armed and keep the request latched. Controller.cpp preserves the
+  // previous thrust until LAND V2 is healthy enough to take control.
+  if (!altitudeEstimateHealthy())
+  {
+    if (failsafe.gpsRescueLandNoDrop)
+    {
+      failsafe.landingFault = true;
+      failsafe.landingActive = false;
+      failsafe.landingLevelRequested = false;
+      failsafe.landingDescentRequested = false;
+      failsafe.landingOutputBlocked = true;
+      failsafe.phase = FC_FAILSAFE_LANDING;
+      return;
+    }
+
+    failsafe.phase = FC_FAILSAFE_LANDED;
+    failsafe.landingRequested = false;
+    _model.disarm(DISARM_REASON_FAILSAFE);
+    return;
+  }
+
   failsafe.phase = FC_FAILSAFE_LANDING;
 #else
+  if (failsafe.gpsRescueLandNoDrop &&
+      _model.isModeActive(MODE_ARMED))
+  {
+    failsafe.phase = FC_FAILSAFE_LANDING;
+    failsafe.landingRequested = true;
+    failsafe.landingActive = false;
+    failsafe.landingOutputBlocked = true;
+    return;
+  }
+
   failsafe.phase = FC_FAILSAFE_LANDED;
   _model.disarm(DISARM_REASON_FAILSAFE);
 #endif
@@ -1513,8 +1573,17 @@ void Actuator::handleGpsRescueSupervisor(uint32_t& newMask)
   if (failsafe.gpsRescueLandingRequested)
   {
     failsafe.gpsRescueLandingRequested = false;
+    failsafe.gpsRescueLandNoDrop = true;
     newMask &= ~RESCUE_BIT;
     startFailsafeLanding();
+    return;
+  }
+
+  // Keep Rescue active during the 250 ms fault-confirmation window. The
+  // generic eligibility check must not divert to LAND prematurely.
+  if (_model.state.gpsRescue.faultEvaluationPending)
+  {
+    newMask |= RESCUE_BIT;
     return;
   }
 
@@ -1645,6 +1714,9 @@ void Actuator::updateArmed()
           0.0f;
 
       failsafe.gpsRescueLandingRequested =
+          false;
+
+      failsafe.gpsRescueLandNoDrop =
           false;
 
       _model.setGpsHome(true);
