@@ -8159,6 +8159,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_model_inner_pid_init);
   RUN_TEST(test_controller_rates);
 RUN_TEST(test_controller_rates_limit);
+RUN_TEST(test_controller_angle_mode_does_not_latch_fterm_scale);
 
 // Angle V2 controller regression tests
 RUN_TEST(
