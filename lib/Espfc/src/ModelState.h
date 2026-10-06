@@ -777,11 +777,11 @@ struct GpsDateTime
   uint16_t msec; // 0-999
 };
 
-// ESP32-S2 has a very tight internal DRAM budget. Keep enough GNSS
-// satellite slots for rescue/navigation while avoiding a link-time BSS
-// overflow. Other targets retain the full 32-entry table.
+// ESP32-S2 has a very tight internal DRAM budget. Keep a compact GNSS
+// satellite table for compatibility; the active ESP32 target retains the
+// full 32-entry table used by navigation/rescue.
 #if defined(ESP32S2)
-static constexpr size_t SAT_MAX = 20u;
+static constexpr size_t SAT_MAX = 8u;
 #else
 static constexpr size_t SAT_MAX = 32u;
 #endif
