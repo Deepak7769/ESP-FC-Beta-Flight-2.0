@@ -1946,14 +1946,6 @@ void Actuator::updateRescueConfig()
       if (_model.state.failsafe.phase != FC_FAILSAFE_IDLE &&
           _model.config.rescueConfigDelay > 0)
       {
-#if defined(ESP32S2)
-        // S2 uses the legacy delay path to preserve its zero-cost state stub.
-        if (millis() >=
-            static_cast<uint32_t>(_model.config.rescueConfigDelay) * 1000u)
-        {
-          _model.state.mode.rescueConfigMode = RESCUE_CONFIG_ACTIVE;
-        }
-#else
         const uint32_t now = micros();
         if (_model.state.mode.rescueConfigEntryUs == 0)
         {
@@ -1969,13 +1961,10 @@ void Actuator::updateRescueConfig()
         {
           _model.state.mode.rescueConfigMode = RESCUE_CONFIG_ACTIVE;
         }
-#endif
       }
       else if (_model.state.failsafe.phase == FC_FAILSAFE_IDLE)
       {
-#if !defined(ESP32S2)
         _model.state.mode.rescueConfigEntryUs = 0;
-#endif
       }
       break;
     case RESCUE_CONFIG_ACTIVE:
