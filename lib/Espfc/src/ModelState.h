@@ -488,7 +488,9 @@ struct ModeState
   uint32_t disarmReason;
   uint32_t armingDisabledFlags;
   RescueConfigMode rescueConfigMode;
+#if !defined(ESP32S2)
   uint32_t rescueConfigEntryUs{0};
+#endif
   bool airmodeAllowed;
   uint32_t button;
   bool isSingleClickActive() const { return button & (1 << 0); }
