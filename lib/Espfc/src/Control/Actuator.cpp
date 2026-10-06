@@ -1693,9 +1693,7 @@ void Actuator::updateArmed()
       failsafe.landingRequested =
           false;
 
-#if !defined(ESP32S2)
       _model.state.mode.rescueConfigEntryUs = 0;
-#endif
 
       failsafe.gpsRescueLandingRequested =
           false;
