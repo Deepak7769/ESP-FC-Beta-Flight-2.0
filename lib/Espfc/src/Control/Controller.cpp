@@ -1502,30 +1502,17 @@ PositionHoldOutput posHoldOut{};
       gps.accuracy.horizontal <=
       ESPFC_POSHOLD_MAX_HACC_MM;
  
-  // GPS course-over-ground is north-referenced and is available on
-  // NEO-6M through NAV-VELNED. Use it once the aircraft is moving
-  // enough for COG to be meaningful; below that threshold retain the
-  // attitude yaw reference for stationary/low-speed operation.
-  const float phGroundSpeedMs =
-      static_cast<float>(gps.velocity.raw.groundSpeed) * 0.001f;
-
-  const bool phUseCog =
-      phGroundSpeedMs > 0.5f &&
-      gps.fix &&
-      gps.fixType >= 3;
-
-  const float phHeading =
-      phUseCog
-          ? static_cast<float>(gps.velocity.raw.heading) *
-                1e-5f *
-                0.017453292519943295f
-          : -attitude.euler[AXIS_YAW];
-
-  // Magnetometer remains a diagnostic/optional heading aid; it is not a
-  // hard prerequisite because the target's default configuration has no mag.
+  // Position hold needs yaw aligned with north to rotate the N/E acceleration
+  // request into body axes. Course-over-ground is not body heading on a
+  // multirotor, which can translate sideways while its nose points elsewhere.
+  // Require the configured magnetometer-backed AHRS heading until another
+  // trustworthy absolute heading source is available.
   const bool phMag =
       _model.config.fusion.useMag &&
       _model.magActive();
+
+  const float phHeading =
+      -attitude.euler[AXIS_YAW];
  
   uint16_t phFlags = 0;
   phFlags |= phRequested ? (1u << 0) : 0u;
@@ -1544,6 +1531,7 @@ PositionHoldOutput posHoldOut{};
       phSats &&
       phFresh &&
       phAcc &&
+      phMag &&
       attitudeFresh;
  
   // Keep the GPS filter running independently of Position Hold authority.
@@ -1612,6 +1600,7 @@ PositionHoldOutput posHoldOut{};
   if (phReady)
   {
     _posHoldNotReadySinceUs = 0;
+    _posHoldWasReady = true;
   }
   else if (!phRequested)
   {
@@ -1619,6 +1608,7 @@ PositionHoldOutput posHoldOut{};
     // filter state alive so the next engagement is not a cold start.
     _posHold.resetController();
     _posHoldNotReadySinceUs = 0;
+    _posHoldWasReady = false;
   }
   else
   {
@@ -1637,11 +1627,9 @@ PositionHoldOutput posHoldOut{};
     {
       _posHold.resetController();
       _posHoldNotReadySinceUs = 0;
+      _posHoldWasReady = false;
     }
   }
-
-  _posHoldWasReady =
-      phReady;
 
 // =====================================================
 // GPS RESCUE / LOCAL NED NAVIGATION

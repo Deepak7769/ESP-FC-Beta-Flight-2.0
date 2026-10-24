@@ -104,6 +104,31 @@ It is required to enable this mode to be able to fly. Armed quad cause that moto
 
 By default ACRO mode is engaged if none of flying mode is active. This mode enables self-leveling. In this case you control titlt angle of multirotor instead of rotationg rate. It affects only Roll and Pitch axes. Yaw axis behave the same way as in Acro mode.
 
+### Altitude hold (AltHold V2)
+
+AltHold V2 is enabled in the standard ESP32 production build. It captures the
+current altitude on entry and uses the barometer/vertical estimator to hold it.
+The production build expects a separate spring-centered vertical command on
+logical input channel 6 (AUX3), with approximately 1500 us at center. Stick up
+requests climb and stick down requests descent; the normal throttle channel
+remains the manual throttle input. Configure and verify this receiver mapping
+before flight. AltHold is rejected if the vertical estimator is unhealthy or
+the required receiver channel is absent or not centered when entering the mode.
+See the [Assisted V2 integration contract](/docs/ASSISTED_V2_INTEGRATION.md) for
+the complete channel and validation details.
+
+### GPS position hold
+
+Position hold is available as `POSHOLD`. It requires a fresh 3D GPS fix,
+sufficient satellites, usable horizontal accuracy, a fresh attitude estimate,
+and a configured, active magnetometer-backed yaw estimate. GPS course-over-
+ground is not a substitute for aircraft heading on a multirotor, which can move
+sideways relative to its nose. If these prerequisites are not met, the
+controller does not take position-hold authority; the Angle mode may still
+provide self-leveling while you retain roll/pitch control. Confirm the
+position-hold ready/controlling flags in blackbox debug data before relying on
+the mode.
+
 ### Air mode
 
 Increases the range of control at extreme throttle positions. Recommended to enable, can be controlled by the same RC channel as Arm to get permanent behaviour. Activates, when throttle achive about 40% remains active until disarmed.
@@ -146,7 +171,11 @@ In Other features you can enable only `Dynamic Filter`, `GPS`, and `SoftSerial`
 
 ### Failsafe tab
 
-Only "Drop" Stage 2 procedule is possible
+The standard ESP32 build includes the LAND V2 controller. The configured
+Stage-2 procedure defaults to `DROP`; select `AUTO_LAND` explicitly if LAND is
+desired. LAND requires a healthy vertical estimator and the configured
+barometer/receiver setup. Review the [Assisted V2 integration contract](/docs/ASSISTED_V2_INTEGRATION.md)
+for LAND ownership, timeout, and fallback behavior before enabling it.
 
 ### GPS tab
 

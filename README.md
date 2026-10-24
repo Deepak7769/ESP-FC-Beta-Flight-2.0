@@ -9,7 +9,7 @@ The mini, DIY, Low cost, ESP32 based, high performance flight controller for hob
 * PPM, SBUS, IBUS and CRSF Receivers
 * Builtin ESP-NOW receiver and WiFi configuration [read more...](/docs/wireless.md)
 * SPI and I2C gyro modules support (MPU6050, MPU9250, ICM20602, ICM42688, BMI160)
-* Flight modes (ACRO, ANGLE V2, AIRMODE, ALTHOLD V2; failsafe LAND V2 controller implemented)
+* Flight modes (ACRO, ANGLE V2, AIRMODE, ALTHOLD V2, GPS POSHOLD; failsafe LAND V2 controller implemented)
 * Anti-Gravity feature/mode, MSP configuration and Blackbox diagnostics
 * Frames (Quad X)
 * Betaflight configuration tool compatible (v10.10)
