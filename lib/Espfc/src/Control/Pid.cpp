@@ -2,6 +2,7 @@
 #include "Utils/Math.hpp"
 #include "Utils/MemoryHelper.h"
 #include <algorithm>
+#include <cmath>
 
 namespace Espfc::Control {
 
@@ -16,7 +17,7 @@ Pid::Pid()
 
 void Pid::begin()
 {
-  dt = 1.f / rate;
+  dt = 1.f / std::max(rate, 1.0f);
 }
 
 void Pid::resetIterm()
@@ -32,6 +33,15 @@ float FAST_CODE_ATTR Pid::update(
     float pMultiplier,
     float iGainAdd)
 {
+  // The scheduled PID rate is the filter design rate. The elapsed sample
+  // interval may differ after a missed deadline; use a finite bounded dt
+  // for I, measurement D and derivative feed-forward.
+  const float sampleDt =
+      dt > 0.0f && std::isfinite(dt)
+          ? dt
+          : 1.0f / std::max(rate, 1.0f);
+  const float sampleRate = 1.0f / sampleDt;
+
   error = setpoint - measurement;
    const float tpa =
     std::clamp(tpaFactor, 0.0f, 1.0f);
@@ -57,7 +67,7 @@ float FAST_CODE_ATTR Pid::update(
   if (Kd > 0.f && dScale > 0.f)
   {
     // dTerm = (Kd * dScale * (((error - prevError) * dGamma) + (prevMeasurement - measure) * (1.f - dGamma)) / dt);
-    dTerm = Kd * dScale * ((prevMeasurement - measurement) * rate);
+    dTerm = Kd * dScale * ((prevMeasurement - measurement) * sampleRate);
     dTerm = dtermNotchFilter.update(dTerm);
     dTerm = dtermFilter.update(dTerm);
     dTerm = dtermFilter2.update(dTerm);
@@ -73,7 +83,7 @@ float FAST_CODE_ATTR Pid::update(
   {
     if (ftermDerivative)
     {
-      fTerm = Kf * fScale * (setpoint - prevSetpoint) * rate;
+      fTerm = Kf * fScale * (setpoint - prevSetpoint) * sampleRate;
     }
     else
     {
@@ -99,7 +109,7 @@ float FAST_CODE_ATTR Pid::update(
       if (!incrementOnly || increasing) iTermError *= itermRelaxFactor;
     }
 
-    const float deltaI = effectiveIGain * iTermError * dt;
+    const float deltaI = effectiveIGain * iTermError * sampleDt;
     const float preIntegralOutput = pTerm + iTerm + dTerm + fTerm;
     const bool unwindsExistingIntegral =
         (iTerm > 0.0f && deltaI < 0.0f) ||

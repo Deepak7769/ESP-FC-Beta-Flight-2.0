@@ -975,6 +975,34 @@ void test_pid_update_sum()
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.3f, result);
 }
 
+
+void test_pid_measured_dt_changes_integral_and_derivative_scales()
+{
+  // A 20 ms interval after a nominal 10 ms sample must not be treated as
+  // one 10 ms interval by either I or D/feed-forward.
+  Pid pid;
+  pid.rate = 100.0f;
+  pid.Kp = 0.0f;
+  pid.Ki = 1.0f;
+  pid.Kd = 1.0f;
+  pid.Kf = 1.0f;
+  pid.iScale = 1.0f;
+  pid.dScale = 1.0f;
+  pid.fScale = 1.0f;
+  pid.iLimitLow = -10.0f;
+  pid.iLimitHigh = 10.0f;
+  pid.oLimitLow = -100.0f;
+  pid.oLimitHigh = 100.0f;
+  pid.begin();
+  pid.dt = 0.02f;
+
+  pid.update(0.2f, 0.1f);
+
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.002f, pid.iTerm);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -5.0f, pid.dTerm);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 10.0f, pid.fTerm);
+}
+
 void test_pid_update_sum_limit()
 {
   Pid pid;
@@ -1366,6 +1394,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_pid_update_f);
   RUN_TEST(test_pid_update_sum);
   RUN_TEST(test_pid_update_sum_limit);
+  RUN_TEST(test_pid_measured_dt_changes_integral_and_derivative_scales);
 
   RUN_TEST(test_queue_atomic);
   RUN_TEST(test_ring_buf);

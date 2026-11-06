@@ -166,6 +166,24 @@ int Controller::reload(ModelChangeEvent event)
 
 int FAST_CODE_ATTR Controller::update()
 {
+  // syncTo() measures actual elapsed time between control samples. Use a
+  // bounded interval for PID derivatives/integration instead of treating
+  // delayed or coalesced RTOS timer notifications as one nominal sample.
+  // Filters remain designed for the configured nominal sample frequency;
+  // worst-case timing still needs hardware measurement.
+  const auto& controlTimer = _model.state.loopTimer;
+  if (controlTimer.rate > 0)
+  {
+    const float nominalDt = 1.0f / static_cast<float>(controlTimer.rate);
+    const float observedDt =
+        controlTimer.iteration > 1 && controlTimer.delta > 0
+            ? static_cast<float>(controlTimer.delta) * 0.000001f
+            : nominalDt;
+    const float boundedDt =
+        std::clamp(observedDt, nominalDt * 0.5f, nominalDt * 2.0f);
+    for (size_t axis = 0; axis <= AXIS_THRUST; ++axis)
+      _model.state.innerPid[axis].dt = boundedDt;
+  }
   uint32_t startTime = 0;
   if (_model.config.debug.mode == DEBUG_PIDLOOP)
   {
@@ -1128,10 +1146,9 @@ void Controller::updateAntiGravity()
   }
 
   const float loopRate =
-      static_cast<float>(
-          std::max<int>(
-              _model.state.loopTimer.rate,
-              1));
+      1.0f / std::max(
+          _model.state.innerPid[AXIS_ROLL].dt,
+          0.000001f);
 
   const float throttleInv =
       1.0f -
