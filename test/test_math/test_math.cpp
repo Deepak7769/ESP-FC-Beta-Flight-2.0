@@ -850,6 +850,44 @@ void test_pid_update_i_limit()
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.20f, result3);
 }
 
+void test_pid_saturation_unwinds_without_reversing_iterm()
+{
+  Pid pid;
+  gain(pid, 0, 10, 0, 0);
+  pid.rate = 100.0f;
+  pid.begin();
+  pid.outputSaturated = true;
+
+  // Saturated motors must not accumulate more positive I.
+  pid.iTerm = 0.2f;
+  pid.update(0.5f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.2f, pid.iTerm);
+
+  // An opposing error can still release the stored positive I.
+  pid.update(-0.5f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.15f, pid.iTerm);
+
+  // The same property must hold for negative saturation history.
+  pid.iTerm = -0.2f;
+  pid.update(-0.5f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.2f, pid.iTerm);
+  pid.update(0.5f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.15f, pid.iTerm);
+
+  // A large opposite error must not build an I-term of the other sign
+  // until the mixer reports actuator authority again.
+  pid.iTerm = 0.01f;
+  pid.update(-1.0f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, pid.iTerm);
+  pid.iTerm = -0.01f;
+  pid.update(1.0f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, pid.iTerm);
+
+  pid.outputSaturated = false;
+  pid.update(0.5f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.05f, pid.iTerm);
+}
+
 void test_pid_update_i_relax()
 {
   Pid pid;
@@ -1359,6 +1397,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_pid_update_p);
   RUN_TEST(test_pid_update_i);
   RUN_TEST(test_pid_update_i_limit);
+  RUN_TEST(test_pid_saturation_unwinds_without_reversing_iterm);
   RUN_TEST(test_pid_update_i_relax);
   RUN_TEST(test_pid_update_d);
   RUN_TEST(test_pid_update_f);

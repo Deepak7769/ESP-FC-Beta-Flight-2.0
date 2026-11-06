@@ -60,20 +60,23 @@ float FAST_CODE_ATTR Pid::update(
 
   if (effectiveIGain > 0.f)
   {
-    if (!outputSaturated)
+    // Keep I-term relax filter history advancing even at mixer saturation.
+    if (itermRelax)
     {
-      // I-term relax
-      if (itermRelax)
-      {
-        const bool increasing = (iTerm > 0 && iTermError > 0) || (iTerm < 0 && iTermError < 0);
-        const bool incrementOnly = itermRelax == ITERM_RELAX_RP_INC || itermRelax == ITERM_RELAX_RPY_INC;
-        itermRelaxBase = setpoint - itermRelaxFilter.update(setpoint);
-        itermRelaxFactor = std::max(0.0f, 1.0f - std::abs(Utils::toDeg(itermRelaxBase)) * 0.025f);
-        if (!incrementOnly || increasing) iTermError *= itermRelaxFactor;
-      }
-      iTerm += effectiveIGain * iTermError * dt;
-      iTerm = std::clamp(iTerm, iLimitLow, iLimitHigh);
+      const bool increasing = (iTerm > 0 && iTermError > 0) || (iTerm < 0 && iTermError < 0);
+      const bool incrementOnly = itermRelax == ITERM_RELAX_RP_INC || itermRelax == ITERM_RELAX_RPY_INC;
+      itermRelaxBase = setpoint - itermRelaxFilter.update(setpoint);
+      itermRelaxFactor = std::max(0.0f, 1.0f - std::abs(Utils::toDeg(itermRelaxBase)) * 0.025f);
+      if (!incrementOnly || increasing) iTermError *= itermRelaxFactor;
     }
+
+    const float proposedIterm = iTerm + effectiveIGain * iTermError * dt;
+    // Actuator saturation blocks further windup, but never blocks unwinding.
+    // Clamping to [min(old I, 0), max(old I, 0)] also prevents crossing zero.
+    iTerm = outputSaturated
+        ? std::clamp(proposedIterm, std::min(iTerm, 0.f), std::max(iTerm, 0.f))
+        : proposedIterm;
+    iTerm = std::clamp(iTerm, iLimitLow, iLimitHigh);
   }
   else
   {
