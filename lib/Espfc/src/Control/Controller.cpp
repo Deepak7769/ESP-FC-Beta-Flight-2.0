@@ -92,11 +92,6 @@ _altHoldWasActive =
 _altHoldV2OutputWasActive =
     false;
 
-#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
-_manualThrustHandoverActive =
-    false;
-#endif
-
 _altHoldAltitudeTarget =
     0.0f;
 
@@ -171,24 +166,6 @@ int Controller::reload(ModelChangeEvent event)
 
 int FAST_CODE_ATTR Controller::update()
 {
-  // syncTo() measures actual elapsed time between control samples. Use a
-  // bounded interval for PID derivatives/integration instead of treating
-  // delayed or coalesced RTOS timer notifications as one nominal sample.
-  // Filters remain designed for the configured nominal sample frequency;
-  // worst-case timing still needs hardware measurement.
-  const auto& controlTimer = _model.state.loopTimer;
-  if (controlTimer.rate > 0)
-  {
-    const float nominalDt = 1.0f / static_cast<float>(controlTimer.rate);
-    const float observedDt =
-        controlTimer.iteration > 1 && controlTimer.delta > 0
-            ? static_cast<float>(controlTimer.delta) * 0.000001f
-            : nominalDt;
-    const float boundedDt =
-        std::clamp(observedDt, nominalDt * 0.5f, nominalDt * 2.0f);
-    for (size_t axis = 0; axis <= AXIS_THRUST; ++axis)
-      _model.state.innerPid[axis].dt = boundedDt;
-  }
   uint32_t startTime = 0;
   if (_model.config.debug.mode == DEBUG_PIDLOOP)
   {
@@ -328,17 +305,8 @@ void FAST_CODE_ATTR Controller::outerLoop()
   // -----------------------------------------------------
 
 
-// Position Hold and GPS Rescue produce Angle V2 rate targets even when
-// the dedicated Angle switch is off. Their attitude-control authority must
-// reach the rate controller; if the attitude estimator is unavailable,
-// request zero rates instead of silently reverting to pilot Acro inputs.
-const bool attitudeControlRequested =
-    _model.isModeActive(MODE_ANGLE) ||
-    landingV2Requested ||
-    _model.state.posHold.requested ||
-    _model.state.gpsRescue.active;
-
-if (attitudeControlRequested)
+if (_model.isModeActive(MODE_ANGLE) ||
+    landingV2Requested)
 {
   const auto& angleV2 =
       _model.state.angleV2;
@@ -654,9 +622,6 @@ auto& verticalPid =
 
 if (altHoldV2OutputActive)
 {
-#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
-  _manualThrustHandoverActive = false;
-#endif
   if (!_altHoldV2OutputWasActive)
   {
     // --------------------------------------------------
@@ -842,9 +807,6 @@ if (altHoldV2OutputActive)
 }
 else if (legacyAltHoldActive)
 {
-#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
-  _manualThrustHandoverActive = false;
-#endif
   output.ch[AXIS_THRUST] =
       verticalPid.update(
           setpoint.rate[AXIS_THRUST],
@@ -873,9 +835,6 @@ else if (
 
   _altHoldV2OutputWasActive =
       false;
-#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
-  _manualThrustHandoverActive = false;
-#endif
 }
 else
 {
@@ -887,50 +846,17 @@ else
       0.0f,
       altitude.vario);
 
-  const float manualThrust =
-      std::clamp(setpoint.rate[AXIS_THRUST], -1.0f, 1.0f);
-
-#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
-  const auto& input = _model.state.input;
-  const bool pilotCommandHealthy =
-      input.channelsValid && !input.rxLoss && !input.rxFailSafe;
-
-  if (_model.isModeActive(MODE_ARMED) && pilotCommandHealthy &&
-      (_altHoldV2OutputWasActive || _manualThrustHandoverActive))
-  {
-    // Normalized throttle spans [-1, 1]. A bounded slew prevents an
-    // abrupt motor step after an AltHold switch-off/estimator rejection.
-    // Upward pilot authority is deliberately faster than downward decay.
-    constexpr float THRUST_UP_SLEW_PER_S = 6.0f;
-    constexpr float THRUST_DOWN_SLEW_PER_S = 3.0f;
-    const float maxDelta =
-        (manualThrust >= output.ch[AXIS_THRUST]
-             ? THRUST_UP_SLEW_PER_S
-             : THRUST_DOWN_SLEW_PER_S) *
-        std::max(verticalPid.dt, 0.0001f);
-
-    output.ch[AXIS_THRUST] +=
-        std::clamp(manualThrust - output.ch[AXIS_THRUST],
-                   -maxDelta, maxDelta);
-    _manualThrustHandoverActive =
-        std::fabs(manualThrust - output.ch[AXIS_THRUST]) > 0.0001f;
-  }
-  else
-  {
-    // Do not prolong a motor command after disarm or use a stale RX
-    // command as a handover target. Existing failsafe owns RX loss.
-    output.ch[AXIS_THRUST] = manualThrust;
-    _manualThrustHandoverActive = false;
-  }
-#else
-  output.ch[AXIS_THRUST] = manualThrust;
-#endif
-
-  // Preserve a consistent vertical-PID integral reference to the thrust
-  // actually being issued during manual takeover, not the un-slewed stick.
   verticalPid.iTerm =
-      std::clamp(output.ch[AXIS_THRUST] - _hoverThrust,
-                 verticalPid.iLimitLow, verticalPid.iLimitHigh);
+      std::clamp(
+          _model.state.input.ch[
+              AXIS_THRUST] -
+          _hoverThrust,
+          verticalPid.iLimitLow,
+          verticalPid.iLimitHigh);
+
+  output.ch[AXIS_THRUST] =
+      setpoint.rate[
+          AXIS_THRUST];
 
   _altHoldV2OutputWasActive =
       false;
@@ -1202,9 +1128,10 @@ void Controller::updateAntiGravity()
   }
 
   const float loopRate =
-      1.0f / std::max(
-          _model.state.innerPid[AXIS_ROLL].dt,
-          0.000001f);
+      static_cast<float>(
+          std::max<int>(
+              _model.state.loopTimer.rate,
+              1));
 
   const float throttleInv =
       1.0f -
@@ -1250,11 +1177,8 @@ void Controller::updateAntiGravity()
   // Betaflight constants define the Anti-Gravity gain demand. When
   // ESPFC_ANTI_GRAVITY_ACTIVE is compiled, innerLoop() applies the demand to
   // roll/pitch while this remains the single detector/calculation path.
-  // Betaflight's 0.34 applies to deg/s rates and its PID mixer scale.
-  // This controller uses rad/s rates and normalized [-1, 1] output:
-  // BF -> ESP-FC coefficient = 0.34 * (180/pi) / 1000.
   constexpr float ANTIGRAVITY_KI =
-      0.34f * Utils::toDeg(1.0f) * 0.001f;
+      0.34f;
 
   constexpr float ANTIGRAVITY_KP =
       0.0034f;

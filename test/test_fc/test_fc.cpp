@@ -12,7 +12,6 @@
 #include "Sensor/VoltageSensor.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
-#include "Output/Mixers.h"
 #include "Utils/Timer.h"
 #include "msp/msp_protocol.h"
 
@@ -2121,14 +2120,6 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
       model.state.antiGravity.iMultiplier >=
       1.0f);
 
-  const float expectedAdditiveI =
-      model.state.antiGravity.scaledDerivative *
-      (0.34f * Utils::toDeg(1.0f) * 0.001f);
-  TEST_ASSERT_FLOAT_WITHIN(
-      0.00001f,
-      expectedAdditiveI,
-      model.state.antiGravity.iAccelerator);
-
   TEST_ASSERT_TRUE(
       model.state.antiGravity.pMultiplier >=
       1.0f);
@@ -2146,127 +2137,6 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
 #endif
 }
 
-
-
-void test_pid_integral_recovers_while_mixer_saturated()
-{
-  Control::Pid pid;
-  pid.rate = 100.0f;
-  pid.Kp = 0.0f;
-  pid.Ki = 1.0f;
-  pid.iScale = 1.0f;
-  pid.Kd = 0.0f;
-  pid.Kf = 0.0f;
-  pid.iTerm = 0.2f;
-  pid.iLimitLow = -1.0f;
-  pid.iLimitHigh = 1.0f;
-  pid.oLimitLow = -1.0f;
-  pid.oLimitHigh = 1.0f;
-  pid.begin();
-  pid.outputSaturated = true;
-
-  pid.update(-1.0f, 0.0f);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.19f, pid.iTerm);
-  pid.update(1.0f, 0.0f);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.19f, pid.iTerm);
-}
-
-void test_pid_integral_does_not_wind_up_behind_local_output_clamp()
-{
-  Control::Pid pid;
-  pid.rate = 100.0f;
-  pid.Kp = 1.0f;
-  pid.Ki = 1.0f;
-  pid.pScale = 1.0f;
-  pid.iScale = 1.0f;
-  pid.Kd = 0.0f;
-  pid.Kf = 0.0f;
-  pid.iLimitLow = -1.0f;
-  pid.iLimitHigh = 1.0f;
-  pid.oLimitLow = -0.1f;
-  pid.oLimitHigh = 0.1f;
-  pid.begin();
-  for (int i = 0; i < 100; ++i)
-    pid.update(1.0f, 0.0f);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, pid.iTerm);
-}
-
-void test_mixer_airmode_respects_asymmetric_quad_x_motor_limits()
-{
-  Model model;
-  model.updateModes(uint32_t{1} << MODE_AIRMODE);
-  model.config.output.motorLimit = 100;
-  model.state.output.ch[AXIS_ROLL] = 0.3f;
-  model.state.output.ch[AXIS_PITCH] = 0.3f;
-  model.state.output.ch[AXIS_YAW] = -0.3f;
-  model.state.output.ch[AXIS_THRUST] = 0.4f;
-  Output::Mixer mixer(model);
-  const MixerConfig config = Output::Mixers::getMixer(
-      FC_MIXER_QUADX, model.state.customMixer);
-  float motors[OUTPUT_CHANNELS] = {};
-  mixer.updateMixer(config, motors);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, motors[0]);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, motors[1]);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, motors[2]);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, motors[3]);
-}
-
-void test_mixer_airmode_desaturates_infeasible_attitude_mix()
-{
-  Model model;
-  model.updateModes(uint32_t{1} << MODE_AIRMODE);
-  model.config.output.motorLimit = 100;
-  model.state.output.ch[AXIS_ROLL] = 0.8f;
-  model.state.output.ch[AXIS_PITCH] = 0.8f;
-  model.state.output.ch[AXIS_YAW] = -0.8f;
-  model.state.output.ch[AXIS_THRUST] = 0.0f;
-  Output::Mixer mixer(model);
-  const MixerConfig config = Output::Mixers::getMixer(
-      FC_MIXER_QUADX, model.state.customMixer);
-  float motors[OUTPUT_CHANNELS] = {};
-  mixer.updateMixer(config, motors);
-  for (size_t i = 0; i < 4; ++i)
-  {
-    TEST_ASSERT_TRUE(motors[i] <= 1.0001f);
-    TEST_ASSERT_TRUE(motors[i] >= -1.0001f);
-  }
-  TEST_ASSERT_TRUE(model.state.output.saturated);
-}
-
-
-void test_controller_poshold_routes_angle_targets_without_angle_switch()
-{
-  Model model;
-  model.state.posHold.requested = true;
-  model.state.angleV2.active = true;
-  model.state.angleV2.rateTarget[AXIS_ROLL] = 0.25f;
-  model.state.angleV2.rateTarget[AXIS_PITCH] = -0.35f;
-  model.state.input.ch[AXIS_ROLL] = -0.8f;
-  model.state.input.ch[AXIS_PITCH] = 0.6f;
-  Controller controller(model);
-  controller.outerLoop();
-
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.25f,
-                           model.state.setpoint.rate[AXIS_ROLL]);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, -0.35f,
-                           model.state.setpoint.rate[AXIS_PITCH]);
-}
-
-void test_controller_rescue_stale_angle_never_reverts_to_acro()
-{
-  Model model;
-  model.state.gpsRescue.active = true;
-  model.state.angleV2.active = false;
-  model.state.input.ch[AXIS_ROLL] = 0.8f;
-  model.state.input.ch[AXIS_PITCH] = -0.6f;
-  Controller controller(model);
-  controller.outerLoop();
-
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
-                           model.state.setpoint.rate[AXIS_ROLL]);
-  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
-                           model.state.setpoint.rate[AXIS_PITCH]);
-}
 
 void test_pid_antigravity_gain_inputs_scale_p_and_add_i()
 {
@@ -2914,53 +2784,6 @@ void test_controller_althold_v2_inactive_build_does_not_drive_thrust()
 }
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
-
-
-void test_controller_althold_v2_manual_exit_limits_throttle_step()
-{
-  ArduinoFakeReset();
-  constexpr uint32_t NOW_US = 1000000;
-  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
-
-  Model model;
-  model.state.gyro.clock = 1000;
-  model.config.gyro.dlpf = GYRO_DLPF_256;
-  model.config.loopSync = 1;
-  model.config.mixerSync = 1;
-  model.config.mixer.type = FC_MIXER_QUADX;
-  model.begin();
-
-  Controller controller(model);
-  controller.begin();
-  setHealthyAssistedEstimatorState(model, NOW_US);
-  model.state.altitude.height = 2.0f;
-  model.state.altitude.vario = 0.0f;
-  model.state.altitude.healthy = true;
-  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
-  model.state.input.ch[AXIS_THRUST] = -1.0f;
-  model.state.input.rxLoss = false;
-  model.state.input.rxFailSafe = false;
-  model.state.output.ch[AXIS_THRUST] = 0.25f;
-
-  model.updateModes((uint32_t{1} << MODE_ARMED) |
-                    (uint32_t{1} << MODE_ALTHOLD));
-  controller.update();
-  const float beforeExit = model.state.output.ch[AXIS_THRUST];
-  TEST_ASSERT_FLOAT_WITHIN(0.005f, 0.25f, beforeExit);
-
-  model.updateModes(uint32_t{1} << MODE_ARMED);
-  controller.update();
-  const float firstManual = model.state.output.ch[AXIS_THRUST];
-  TEST_ASSERT_TRUE(firstManual < beforeExit);
-  TEST_ASSERT_TRUE(firstManual > beforeExit - 0.01f);
-
-  // The controlled takeover must finish, not freeze at its first step.
-  for (int cycle = 0; cycle < 600; ++cycle)
-    controller.update();
-
-  TEST_ASSERT_FLOAT_WITHIN(0.002f, -1.0f,
-                           model.state.output.ch[AXIS_THRUST]);
-}
 
 void test_controller_althold_v2_active_path_is_bumpless_and_corrective()
 {
@@ -8388,8 +8211,6 @@ RUN_TEST(
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
 RUN_TEST(
-    test_controller_althold_v2_manual_exit_limits_throttle_step);
-RUN_TEST(
     test_controller_althold_v2_active_path_is_bumpless_and_corrective);
 
 RUN_TEST(
@@ -8575,13 +8396,7 @@ RUN_TEST(
 RUN_TEST(
     test_actuator_arming_failsafe);
   RUN_TEST(test_actuator_arming_throttle);
-  RUN_TEST(test_controller_poshold_routes_angle_targets_without_angle_switch);
-   RUN_TEST(test_controller_rescue_stale_angle_never_reverts_to_acro);
-   RUN_TEST(test_pid_integral_recovers_while_mixer_saturated);
-   RUN_TEST(test_pid_integral_does_not_wind_up_behind_local_output_clamp);
-   RUN_TEST(test_mixer_airmode_respects_asymmetric_quad_x_motor_limits);
-   RUN_TEST(test_mixer_airmode_desaturates_infeasible_attitude_mix);
-   RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
+  RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
   RUN_TEST(test_mixer_invalid_output_count_fails_closed);
   RUN_TEST(test_mixer_throttle_limit_none);
   RUN_TEST(test_mixer_throttle_limit_scale);

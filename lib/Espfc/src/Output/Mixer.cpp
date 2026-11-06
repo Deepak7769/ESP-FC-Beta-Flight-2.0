@@ -2,7 +2,6 @@
 #include "Mixer.h"
 #include "Output/Mixers.h"
 #include <algorithm>
-#include <cmath>
 #include <platform.h>
 
 namespace Espfc::Output {
@@ -258,86 +257,30 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
     }
   }
 
-  // Airmode must use the actual per-motor correction and collective
-  // coefficients. The half-range approximation clips asymmetric mixes.
-  float thrust = limitThrust(
-      sources[MIXER_SOURCE_THRUST],
-      (ThrottleLimitType)_model.config.output.throttleLimitType,
-      _model.config.output.throttleLimitPercent);
-
-  bool attitudeDesaturated = false;
-  if (_model.isAirModeActive() && mixer.mixes)
+  // airmode logic
+  float thrust = limitThrust(sources[MIXER_SOURCE_THRUST], (ThrottleLimitType)_model.config.output.throttleLimitType,
+                             _model.config.output.throttleLimitPercent);
+  if (_model.isAirModeActive())
   {
-    float collectiveGain[OUTPUT_CHANNELS] = {};
-    for (size_t rule = 0; rule < MIXER_RULE_MAX; ++rule)
+    float min = 0.f, max = 0.f;
+    for (size_t i = 0; i < mixerCount; i++)
     {
-      const auto& entry = mixer.mixes[rule];
-      if (entry.src == MIXER_SOURCE_NULL) break;
-      if (entry.src == MIXER_SOURCE_THRUST &&
-          entry.dst >= 0 &&
-          static_cast<size_t>(entry.dst) < mixerCount)
-        collectiveGain[static_cast<size_t>(entry.dst)] +=
-            entry.rate * 0.01f;
+      max = std::max(max, outputs[i]);
+      min = std::min(min, outputs[i]);
     }
-
-    const int motorLimit = _model.config.output.motorLimit;
-    const float motorHigh =
-        motorLimit >= 1 && motorLimit < 100
-            ? motorLimit * 0.02f - 1.0f
-            : 1.0f;
-
-    const auto feasibleBounds = [&](float correctionScale,
-                                    float& low,
-                                    float& high) {
-      low = -1.0f;
-      high = 1.0f;
-      for (size_t i = 0; i < mixerCount; ++i)
-      {
-        if (_model.config.output.channel[i].servo) continue;
-        const float gain = collectiveGain[i];
-        const float correction = outputs[i] * correctionScale;
-        if (std::fabs(gain) < 0.0001f)
-        {
-          if (correction < -1.0f || correction > motorHigh)
-            return false;
-          continue;
-        }
-        const float lower = (-1.0f - correction) / gain;
-        const float upper = (motorHigh - correction) / gain;
-        low = std::max(low, std::min(lower, upper));
-        high = std::min(high, std::max(lower, upper));
-      }
-      return low <= high;
-    };
-
-    float low = -1.0f;
-    float high = 1.0f;
-    if (!feasibleBounds(1.0f, low, high))
+    float range = (max - min) * 0.5f;
+    if (range > 1.f)
     {
-      // Infeasible demands are scaled proportionally, not independently
-      // clipped. The bounded search runs only on saturation events.
-      float valid = 0.0f;
-      float invalid = 1.0f;
-      for (int iteration = 0; iteration < 16; ++iteration)
+      for (size_t i = 0; i < mixerCount; i++)
       {
-        const float candidate = 0.5f * (valid + invalid);
-        float candidateLow = -1.0f;
-        float candidateHigh = 1.0f;
-        if (feasibleBounds(candidate, candidateLow, candidateHigh))
-          valid = candidate;
-        else
-          invalid = candidate;
+        outputs[i] /= range;
       }
-      for (size_t i = 0; i < mixerCount; ++i)
-      {
-        if (!_model.config.output.channel[i].servo)
-          outputs[i] *= valid;
-      }
-      feasibleBounds(1.0f, low, high);
-      attitudeDesaturated = true;
+      thrust = 0.f; // limitThrust(0.f);
     }
-
-    thrust = std::clamp(thrust, low, high);
+    else
+    {
+      thrust = std::clamp(thrust, -1.f + range, 1.f - range);
+    }
   }
 
   // Apply thrust and raw-RC sources.
@@ -392,7 +335,7 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
     }
   }
 
-  bool saturated = attitudeDesaturated;
+  bool saturated = false;
   bool verticalSaturationHigh = false;
   bool verticalSaturationLow = false;
 

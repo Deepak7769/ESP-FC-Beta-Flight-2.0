@@ -2,7 +2,6 @@
 #include "Utils/Math.hpp"
 #include "Utils/MemoryHelper.h"
 #include <algorithm>
-#include <cmath>
 
 namespace Espfc::Control {
 
@@ -17,7 +16,7 @@ Pid::Pid()
 
 void Pid::begin()
 {
-  dt = 1.f / std::max(rate, 1.0f);
+  dt = 1.f / rate;
 }
 
 void Pid::resetIterm()
@@ -33,15 +32,6 @@ float FAST_CODE_ATTR Pid::update(
     float pMultiplier,
     float iGainAdd)
 {
-  // The scheduled PID rate is the filter design rate. The elapsed sample
-  // interval may differ after a missed deadline; use a finite bounded dt
-  // for I, measurement D and derivative feed-forward.
-  const float sampleDt =
-      dt > 0.0f && std::isfinite(dt)
-          ? dt
-          : 1.0f / std::max(rate, 1.0f);
-  const float sampleRate = 1.0f / sampleDt;
-
   error = setpoint - measurement;
    const float tpa =
     std::clamp(tpaFactor, 0.0f, 1.0f);
@@ -59,15 +49,42 @@ float FAST_CODE_ATTR Pid::update(
   // Optional P boost used by the guarded Anti-Gravity bench path.
   pTerm *= std::max(pMultiplier, 0.0f);
 
-  // D and feed-forward must be calculated before local output anti-windup.
+  // I-term
   iTermError = error;
-  const float effectiveIGain = Ki * iScale + std::max(iGainAdd, 0.0f);
+
+  // Anti-Gravity uses an additive I coefficient, matching the
+  // (Ki + itermAccelerator) structure used by Betaflight.
+  const float effectiveIGain =
+      Ki * iScale +
+      std::max(iGainAdd, 0.0f);
+
+  if (effectiveIGain > 0.f)
+  {
+    if (!outputSaturated)
+    {
+      // I-term relax
+      if (itermRelax)
+      {
+        const bool increasing = (iTerm > 0 && iTermError > 0) || (iTerm < 0 && iTermError < 0);
+        const bool incrementOnly = itermRelax == ITERM_RELAX_RP_INC || itermRelax == ITERM_RELAX_RPY_INC;
+        itermRelaxBase = setpoint - itermRelaxFilter.update(setpoint);
+        itermRelaxFactor = std::max(0.0f, 1.0f - std::abs(Utils::toDeg(itermRelaxBase)) * 0.025f);
+        if (!incrementOnly || increasing) iTermError *= itermRelaxFactor;
+      }
+      iTerm += effectiveIGain * iTermError * dt;
+      iTerm = std::clamp(iTerm, iLimitLow, iLimitHigh);
+    }
+  }
+  else
+  {
+    iTerm = 0; // zero integral
+  }
 
   // D-term
   if (Kd > 0.f && dScale > 0.f)
   {
     // dTerm = (Kd * dScale * (((error - prevError) * dGamma) + (prevMeasurement - measure) * (1.f - dGamma)) / dt);
-    dTerm = Kd * dScale * ((prevMeasurement - measurement) * sampleRate);
+    dTerm = Kd * dScale * ((prevMeasurement - measurement) * rate);
     dTerm = dtermNotchFilter.update(dTerm);
     dTerm = dtermFilter.update(dTerm);
     dTerm = dtermFilter2.update(dTerm);
@@ -83,7 +100,7 @@ float FAST_CODE_ATTR Pid::update(
   {
     if (ftermDerivative)
     {
-      fTerm = Kf * fScale * (setpoint - prevSetpoint) * sampleRate;
+      fTerm = Kf * fScale * (setpoint - prevSetpoint) * rate;
     }
     else
     {
@@ -94,41 +111,6 @@ float FAST_CODE_ATTR Pid::update(
   else
   {
     fTerm = 0;
-  }
-
-  // Saturation is directional: an I-term may unwind, but it must not
-  // accumulate farther behind either the mixer or the PID output clamp.
-  if (effectiveIGain > 0.0f)
-  {
-    if (itermRelax)
-    {
-      const bool increasing = (iTerm > 0 && iTermError > 0) || (iTerm < 0 && iTermError < 0);
-      const bool incrementOnly = itermRelax == ITERM_RELAX_RP_INC || itermRelax == ITERM_RELAX_RPY_INC;
-      itermRelaxBase = setpoint - itermRelaxFilter.update(setpoint);
-      itermRelaxFactor = std::max(0.0f, 1.0f - std::abs(Utils::toDeg(itermRelaxBase)) * 0.025f);
-      if (!incrementOnly || increasing) iTermError *= itermRelaxFactor;
-    }
-
-    const float deltaI = effectiveIGain * iTermError * sampleDt;
-    const float preIntegralOutput = pTerm + iTerm + dTerm + fTerm;
-    const bool unwindsExistingIntegral =
-        (iTerm > 0.0f && deltaI < 0.0f) ||
-        (iTerm < 0.0f && deltaI > 0.0f);
-    const bool mixerAllowsIntegration =
-        !outputSaturated || unwindsExistingIntegral;
-    const bool pushesAboveOutputLimit =
-        preIntegralOutput >= oLimitHigh && deltaI > 0.0f;
-    const bool pushesBelowOutputLimit =
-        preIntegralOutput <= oLimitLow && deltaI < 0.0f;
-
-    if (mixerAllowsIntegration &&
-        !pushesAboveOutputLimit &&
-        !pushesBelowOutputLimit)
-      iTerm = std::clamp(iTerm + deltaI, iLimitLow, iLimitHigh);
-  }
-  else
-  {
-    iTerm = 0.0f;
   }
 
   prevMeasurement = measurement;
