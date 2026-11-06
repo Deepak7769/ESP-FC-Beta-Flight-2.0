@@ -987,7 +987,9 @@ void test_pid_update_sum_limit()
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, pid.error);
 
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, pid.pTerm);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.3f, pid.iTerm);
+  // P + feed-forward already reaches the actuator bound. Additional
+  // integral accumulation here would wind up behind the PID output clamp.
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, pid.iTerm);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, pid.dTerm);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, pid.fTerm);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, result);
