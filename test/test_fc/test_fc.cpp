@@ -2121,6 +2121,14 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
       model.state.antiGravity.iMultiplier >=
       1.0f);
 
+  const float expectedAdditiveI =
+      model.state.antiGravity.scaledDerivative *
+      (0.34f * Utils::toDeg(1.0f) * 0.001f);
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.00001f,
+      expectedAdditiveI,
+      model.state.antiGravity.iAccelerator);
+
   TEST_ASSERT_TRUE(
       model.state.antiGravity.pMultiplier >=
       1.0f);
