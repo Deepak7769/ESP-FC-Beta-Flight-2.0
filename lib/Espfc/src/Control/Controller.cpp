@@ -323,8 +323,17 @@ void FAST_CODE_ATTR Controller::outerLoop()
   // -----------------------------------------------------
 
 
-if (_model.isModeActive(MODE_ANGLE) ||
-    landingV2Requested)
+// Position Hold and GPS Rescue produce Angle V2 rate targets even when
+// the dedicated Angle switch is off. Their attitude-control authority must
+// reach the rate controller; if the attitude estimator is unavailable,
+// request zero rates instead of silently reverting to pilot Acro inputs.
+const bool attitudeControlRequested =
+    _model.isModeActive(MODE_ANGLE) ||
+    landingV2Requested ||
+    _model.state.posHold.requested ||
+    _model.state.gpsRescue.active;
+
+if (attitudeControlRequested)
 {
   const auto& angleV2 =
       _model.state.angleV2;

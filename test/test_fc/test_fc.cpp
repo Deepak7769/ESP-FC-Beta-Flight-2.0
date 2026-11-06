@@ -2225,6 +2225,41 @@ void test_mixer_airmode_desaturates_infeasible_attitude_mix()
   TEST_ASSERT_TRUE(model.state.output.saturated);
 }
 
+
+void test_controller_poshold_routes_angle_targets_without_angle_switch()
+{
+  Model model;
+  model.state.posHold.requested = true;
+  model.state.angleV2.active = true;
+  model.state.angleV2.rateTarget[AXIS_ROLL] = 0.25f;
+  model.state.angleV2.rateTarget[AXIS_PITCH] = -0.35f;
+  model.state.input.ch[AXIS_ROLL] = -0.8f;
+  model.state.input.ch[AXIS_PITCH] = 0.6f;
+  Controller controller(model);
+  controller.outerLoop();
+
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.25f,
+                           model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, -0.35f,
+                           model.state.setpoint.rate[AXIS_PITCH]);
+}
+
+void test_controller_rescue_stale_angle_never_reverts_to_acro()
+{
+  Model model;
+  model.state.gpsRescue.active = true;
+  model.state.angleV2.active = false;
+  model.state.input.ch[AXIS_ROLL] = 0.8f;
+  model.state.input.ch[AXIS_PITCH] = -0.6f;
+  Controller controller(model);
+  controller.outerLoop();
+
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
+                           model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
+                           model.state.setpoint.rate[AXIS_PITCH]);
+}
+
 void test_pid_antigravity_gain_inputs_scale_p_and_add_i()
 {
   Espfc::Control::Pid pid;
@@ -8483,7 +8518,9 @@ RUN_TEST(
 RUN_TEST(
     test_actuator_arming_failsafe);
   RUN_TEST(test_actuator_arming_throttle);
-  RUN_TEST(test_pid_integral_recovers_while_mixer_saturated);
+  RUN_TEST(test_controller_poshold_routes_angle_targets_without_angle_switch);
+   RUN_TEST(test_controller_rescue_stale_angle_never_reverts_to_acro);
+   RUN_TEST(test_pid_integral_recovers_while_mixer_saturated);
    RUN_TEST(test_pid_integral_does_not_wind_up_behind_local_output_clamp);
    RUN_TEST(test_mixer_airmode_respects_asymmetric_quad_x_motor_limits);
    RUN_TEST(test_mixer_airmode_desaturates_infeasible_attitude_mix);
