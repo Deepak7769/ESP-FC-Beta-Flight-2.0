@@ -12,6 +12,7 @@
 #include "Sensor/VoltageSensor.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
+#include "Output/Mixers.h"
 #include "Utils/Timer.h"
 #include "msp/msp_protocol.h"
 
@@ -2137,6 +2138,92 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
 #endif
 }
 
+
+
+void test_pid_integral_recovers_while_mixer_saturated()
+{
+  Control::Pid pid;
+  pid.rate = 100.0f;
+  pid.Kp = 0.0f;
+  pid.Ki = 1.0f;
+  pid.iScale = 1.0f;
+  pid.Kd = 0.0f;
+  pid.Kf = 0.0f;
+  pid.iTerm = 0.2f;
+  pid.iLimitLow = -1.0f;
+  pid.iLimitHigh = 1.0f;
+  pid.oLimitLow = -1.0f;
+  pid.oLimitHigh = 1.0f;
+  pid.begin();
+  pid.outputSaturated = true;
+
+  pid.update(-1.0f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.19f, pid.iTerm);
+  pid.update(1.0f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.19f, pid.iTerm);
+}
+
+void test_pid_integral_does_not_wind_up_behind_local_output_clamp()
+{
+  Control::Pid pid;
+  pid.rate = 100.0f;
+  pid.Kp = 1.0f;
+  pid.Ki = 1.0f;
+  pid.pScale = 1.0f;
+  pid.iScale = 1.0f;
+  pid.Kd = 0.0f;
+  pid.Kf = 0.0f;
+  pid.iLimitLow = -1.0f;
+  pid.iLimitHigh = 1.0f;
+  pid.oLimitLow = -0.1f;
+  pid.oLimitHigh = 0.1f;
+  pid.begin();
+  for (int i = 0; i < 100; ++i)
+    pid.update(1.0f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, pid.iTerm);
+}
+
+void test_mixer_airmode_respects_asymmetric_quad_x_motor_limits()
+{
+  Model model;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+  model.config.output.motorLimit = 100;
+  model.state.output.ch[AXIS_ROLL] = 0.3f;
+  model.state.output.ch[AXIS_PITCH] = 0.3f;
+  model.state.output.ch[AXIS_YAW] = -0.3f;
+  model.state.output.ch[AXIS_THRUST] = 0.4f;
+  Output::Mixer mixer(model);
+  const MixerConfig config = Output::Mixers::getMixer(
+      FC_MIXER_QUADX, model.state.customMixer);
+  float motors[OUTPUT_CHANNELS] = {};
+  mixer.updateMixer(config, motors);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, motors[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, motors[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, motors[2]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, motors[3]);
+}
+
+void test_mixer_airmode_desaturates_infeasible_attitude_mix()
+{
+  Model model;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+  model.config.output.motorLimit = 100;
+  model.state.output.ch[AXIS_ROLL] = 0.8f;
+  model.state.output.ch[AXIS_PITCH] = 0.8f;
+  model.state.output.ch[AXIS_YAW] = -0.8f;
+  model.state.output.ch[AXIS_THRUST] = 0.0f;
+  Output::Mixer mixer(model);
+  const MixerConfig config = Output::Mixers::getMixer(
+      FC_MIXER_QUADX, model.state.customMixer);
+  float motors[OUTPUT_CHANNELS] = {};
+  mixer.updateMixer(config, motors);
+  for (size_t i = 0; i < 4; ++i)
+  {
+    TEST_ASSERT_TRUE(motors[i] <= 1.0001f);
+    TEST_ASSERT_TRUE(motors[i] >= -1.0001f);
+  }
+  TEST_ASSERT_TRUE(model.state.output.saturated);
+}
 
 void test_pid_antigravity_gain_inputs_scale_p_and_add_i()
 {
@@ -8396,7 +8483,11 @@ RUN_TEST(
 RUN_TEST(
     test_actuator_arming_failsafe);
   RUN_TEST(test_actuator_arming_throttle);
-  RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
+  RUN_TEST(test_pid_integral_recovers_while_mixer_saturated);
+   RUN_TEST(test_pid_integral_does_not_wind_up_behind_local_output_clamp);
+   RUN_TEST(test_mixer_airmode_respects_asymmetric_quad_x_motor_limits);
+   RUN_TEST(test_mixer_airmode_desaturates_infeasible_attitude_mix);
+   RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
   RUN_TEST(test_mixer_invalid_output_count_fails_closed);
   RUN_TEST(test_mixer_throttle_limit_none);
   RUN_TEST(test_mixer_throttle_limit_scale);
