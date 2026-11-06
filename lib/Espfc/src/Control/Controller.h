@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Control/AssistedModeV2.h"
 #include "Control/GpsRescue.h"
 #include "Control/PositionHold.h"
 #include "Control/Rates.h"
@@ -56,6 +57,12 @@ private:
   // Tracks ownership of thrust output so AltHold V2
   // can enter without a thrust discontinuity.
   bool _altHoldV2OutputWasActive = false;
+
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  // Continue the bounded pilot-throttle handover after AltHold releases
+  // authority; the previous-cycle flag alone lasts only one iteration.
+  bool _manualThrustHandoverActive = false;
+#endif
 
   float _altHoldAltitudeTarget = 0.0f;
   float _altHoldVerticalRateTarget = 0.0f;

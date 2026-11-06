@@ -92,6 +92,11 @@ _altHoldWasActive =
 _altHoldV2OutputWasActive =
     false;
 
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+_manualThrustHandoverActive =
+    false;
+#endif
+
 _altHoldAltitudeTarget =
     0.0f;
 
@@ -649,6 +654,9 @@ auto& verticalPid =
 
 if (altHoldV2OutputActive)
 {
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  _manualThrustHandoverActive = false;
+#endif
   if (!_altHoldV2OutputWasActive)
   {
     // --------------------------------------------------
@@ -834,6 +842,9 @@ if (altHoldV2OutputActive)
 }
 else if (legacyAltHoldActive)
 {
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  _manualThrustHandoverActive = false;
+#endif
   output.ch[AXIS_THRUST] =
       verticalPid.update(
           setpoint.rate[AXIS_THRUST],
@@ -862,6 +873,9 @@ else if (
 
   _altHoldV2OutputWasActive =
       false;
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  _manualThrustHandoverActive = false;
+#endif
 }
 else
 {
@@ -873,17 +887,50 @@ else
       0.0f,
       altitude.vario);
 
-  verticalPid.iTerm =
-      std::clamp(
-          _model.state.input.ch[
-              AXIS_THRUST] -
-          _hoverThrust,
-          verticalPid.iLimitLow,
-          verticalPid.iLimitHigh);
+  const float manualThrust =
+      std::clamp(setpoint.rate[AXIS_THRUST], -1.0f, 1.0f);
 
-  output.ch[AXIS_THRUST] =
-      setpoint.rate[
-          AXIS_THRUST];
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  const auto& input = _model.state.input;
+  const bool pilotCommandHealthy =
+      input.channelsValid && !input.rxLoss && !input.rxFailSafe;
+
+  if (_model.isModeActive(MODE_ARMED) && pilotCommandHealthy &&
+      (_altHoldV2OutputWasActive || _manualThrustHandoverActive))
+  {
+    // Normalized throttle spans [-1, 1]. A bounded slew prevents an
+    // abrupt motor step after an AltHold switch-off/estimator rejection.
+    // Upward pilot authority is deliberately faster than downward decay.
+    constexpr float THRUST_UP_SLEW_PER_S = 6.0f;
+    constexpr float THRUST_DOWN_SLEW_PER_S = 3.0f;
+    const float maxDelta =
+        (manualThrust >= output.ch[AXIS_THRUST]
+             ? THRUST_UP_SLEW_PER_S
+             : THRUST_DOWN_SLEW_PER_S) *
+        std::max(verticalPid.dt, 0.0001f);
+
+    output.ch[AXIS_THRUST] +=
+        std::clamp(manualThrust - output.ch[AXIS_THRUST],
+                   -maxDelta, maxDelta);
+    _manualThrustHandoverActive =
+        std::fabs(manualThrust - output.ch[AXIS_THRUST]) > 0.0001f;
+  }
+  else
+  {
+    // Do not prolong a motor command after disarm or use a stale RX
+    // command as a handover target. Existing failsafe owns RX loss.
+    output.ch[AXIS_THRUST] = manualThrust;
+    _manualThrustHandoverActive = false;
+  }
+#else
+  output.ch[AXIS_THRUST] = manualThrust;
+#endif
+
+  // Preserve a consistent vertical-PID integral reference to the thrust
+  // actually being issued during manual takeover, not the un-slewed stick.
+  verticalPid.iTerm =
+      std::clamp(output.ch[AXIS_THRUST] - _hoverThrust,
+                 verticalPid.iLimitLow, verticalPid.iLimitHigh);
 
   _altHoldV2OutputWasActive =
       false;

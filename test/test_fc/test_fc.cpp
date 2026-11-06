@@ -2915,6 +2915,53 @@ void test_controller_althold_v2_inactive_build_does_not_drive_thrust()
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
 
+
+void test_controller_althold_v2_manual_exit_limits_throttle_step()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 1000000;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.healthy = true;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+  model.state.input.ch[AXIS_THRUST] = -1.0f;
+  model.state.input.rxLoss = false;
+  model.state.input.rxFailSafe = false;
+  model.state.output.ch[AXIS_THRUST] = 0.25f;
+
+  model.updateModes((uint32_t{1} << MODE_ARMED) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+  controller.update();
+  const float beforeExit = model.state.output.ch[AXIS_THRUST];
+  TEST_ASSERT_FLOAT_WITHIN(0.005f, 0.25f, beforeExit);
+
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  controller.update();
+  const float firstManual = model.state.output.ch[AXIS_THRUST];
+  TEST_ASSERT_TRUE(firstManual < beforeExit);
+  TEST_ASSERT_TRUE(firstManual > beforeExit - 0.01f);
+
+  // The controlled takeover must finish, not freeze at its first step.
+  for (int cycle = 0; cycle < 600; ++cycle)
+    controller.update();
+
+  TEST_ASSERT_FLOAT_WITHIN(0.002f, -1.0f,
+                           model.state.output.ch[AXIS_THRUST]);
+}
+
 void test_controller_althold_v2_active_path_is_bumpless_and_corrective()
 {
   ArduinoFakeReset();
@@ -8340,6 +8387,8 @@ RUN_TEST(
 #endif
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+RUN_TEST(
+    test_controller_althold_v2_manual_exit_limits_throttle_step);
 RUN_TEST(
     test_controller_althold_v2_active_path_is_bumpless_and_corrective);
 
