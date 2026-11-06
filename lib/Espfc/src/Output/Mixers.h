@@ -65,8 +65,8 @@ constexpr size_t MIXER_RULE_MAX = 64;
 class MixerEntry
 {
 public:
-  MixerEntry(): src(MIXER_SOURCE_NULL), dst(0), rate(0) {}
-  MixerEntry(int8_t s, int8_t d, int16_t r): src(s), dst(d), rate(r) {}
+  constexpr MixerEntry(): src(MIXER_SOURCE_NULL), dst(0), rate(0) {}
+  constexpr MixerEntry(int8_t s, int8_t d, int16_t r): src(s), dst(d), rate(r) {}
   int8_t src;
   int8_t dst;
   int16_t rate;
@@ -77,10 +77,10 @@ class MixerConfig
 public:
   MixerConfig(): count(0), mixes(NULL) {}
   MixerConfig(const MixerConfig& c): count(c.count), mixes(c.mixes) {}
-  MixerConfig(uint8_t c, MixerEntry* m): count(c), mixes(m) {}
+  MixerConfig(uint8_t c, const MixerEntry* m): count(c), mixes(m) {}
 
   uint8_t count;
-  MixerEntry* mixes;
+  const MixerEntry* mixes;
 };
 
 namespace Output {
@@ -92,12 +92,12 @@ public:
   {
     // clang-format off
     // default empty mixer
-    static MixerEntry mixesEmpty[] = {
+    static constexpr MixerEntry mixesEmpty[] = {
       MixerEntry() // terminator
     };
 
     // quadX mixer
-    static MixerEntry mixesQuadX[] = {
+    static constexpr MixerEntry mixesQuadX[] = {
       // RR                                     FR                                        RL                                        FL
       MixerEntry(MIXER_SOURCE_ROLL,   0, -100), MixerEntry(MIXER_SOURCE_ROLL,   1, -100), MixerEntry(MIXER_SOURCE_ROLL,   2,  100), MixerEntry(MIXER_SOURCE_ROLL,   3,  100),
       MixerEntry(MIXER_SOURCE_PITCH,  0,  100), MixerEntry(MIXER_SOURCE_PITCH,  1, -100), MixerEntry(MIXER_SOURCE_PITCH,  2,  100), MixerEntry(MIXER_SOURCE_PITCH,  3, -100),
@@ -107,7 +107,7 @@ public:
     };
 
     // quadX mixer
-    static MixerEntry mixesQuadX1234[] = {
+    static constexpr MixerEntry mixesQuadX1234[] = {
       // FL                                     FR                                        RR                                        RL
       MixerEntry(MIXER_SOURCE_ROLL,   0,  100), MixerEntry(MIXER_SOURCE_ROLL,   1, -100), MixerEntry(MIXER_SOURCE_ROLL,   2, -100), MixerEntry(MIXER_SOURCE_ROLL,   3,  100),
       MixerEntry(MIXER_SOURCE_PITCH,  0, -100), MixerEntry(MIXER_SOURCE_PITCH,  1, -100), MixerEntry(MIXER_SOURCE_PITCH,  2,  100), MixerEntry(MIXER_SOURCE_PITCH,  3,  100),
@@ -117,7 +117,7 @@ public:
     };
 
     // tricopter mixer
-    static MixerEntry mixesTricopter[] = {
+    static constexpr MixerEntry mixesTricopter[] = {
       // FL                                     FR                                        RMotor                                    RServo
       MixerEntry(MIXER_SOURCE_ROLL,   0,    0), MixerEntry(MIXER_SOURCE_ROLL,   1, -100), MixerEntry(MIXER_SOURCE_ROLL,   2,  100), MixerEntry(MIXER_SOURCE_ROLL,   3,    0),
       MixerEntry(MIXER_SOURCE_PITCH,  0,  133), MixerEntry(MIXER_SOURCE_PITCH,  1,  -67), MixerEntry(MIXER_SOURCE_PITCH,  2,  -67), MixerEntry(MIXER_SOURCE_PITCH,  3,    0),
@@ -127,7 +127,7 @@ public:
     };
 
     // tricopter mixer
-    static MixerEntry mixesGimbal[] = {
+    static constexpr MixerEntry mixesGimbal[] = {
       // L                                      R
       MixerEntry(MIXER_SOURCE_PITCH,  0,  100), MixerEntry(MIXER_SOURCE_PITCH,  1,   100),
       MixerEntry(MIXER_SOURCE_YAW,    0,  100), MixerEntry(MIXER_SOURCE_YAW,    1,  -100),
