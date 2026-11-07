@@ -3888,6 +3888,76 @@ void test_actuator_althold_v2_rejects_invalid_raw_pilot_channel()
 
 #if defined(ESPFC_LAND_V2_ACTIVE)
 
+#if defined(ESPFC_LAND_V2_ACTIVE)
+void test_land_v2_level_airframe_produces_balanced_quad_motor_commands()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 2300000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.pid[FC_PID_LEVEL].P = 45;
+  model.config.pid[AXIS_ROLL].P = 50;
+  model.config.pid[AXIS_PITCH].P = 50;
+  model.begin();
+
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.gyro.adc = VectorFloat(0.0f, 0.0f, 0.0f);
+  model.state.output.ch[AXIS_THRUST] = 0.30f;
+
+  // Stale receiver sticks must not create roll/pitch torque in LAND.
+  model.state.input.ch[AXIS_ROLL] = 0.65f;
+  model.state.input.ch[AXIS_PITCH] = -0.75f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingActive = true;
+  model.state.failsafe.landingOutputBlocked = false;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.setpoint.rate[AXIS_PITCH]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.output.ch[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.output.ch[AXIS_PITCH]);
+
+  Output::Mixer mixer(model);
+  float motors[OUTPUT_CHANNELS] = {};
+  const MixerConfig mix =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  mixer.updateMixer(mix, motors);
+  for (size_t i = 1; i < 4; ++i)
+  {
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, motors[0], motors[i]);
+  }
+
+  // Genuine pitch angle error must still cause corrective differential.
+  model.state.attitude.euler.set(AXIS_PITCH, Utils::toRad(8.0f));
+  controller.update();
+  mixer.updateMixer(mix, motors);
+  float low = motors[0];
+  float high = motors[0];
+  for (size_t i = 1; i < 4; ++i)
+  {
+    low = std::min(low, motors[i]);
+    high = std::max(high, motors[i]);
+  }
+  TEST_ASSERT_TRUE(high - low > 0.0001f);
+}
+#endif
+
 void test_controller_land_v2_levels_and_requests_descent()
 {
   ArduinoFakeReset();
@@ -8679,6 +8749,8 @@ RUN_TEST(
 #if defined(ESPFC_LAND_V2_ACTIVE)
 RUN_TEST(
     test_controller_land_v2_levels_and_requests_descent);
+
+RUN_TEST(test_land_v2_level_airframe_produces_balanced_quad_motor_commands);
 
 RUN_TEST(
     test_controller_land_v2_requires_supervisor_authorization);
