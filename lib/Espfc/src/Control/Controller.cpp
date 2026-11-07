@@ -1473,8 +1473,20 @@ constexpr uint32_t
     BARO_STALE_US =
         350000;
 
+// The actuator's arming/LAND health gate already rejects invalid attitude
+// quaternions; Angle/AltHold must not trust the same estimator otherwise.
+const auto& q = attitude.quaternion;
+const float quaternionNormSq =
+    q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z;
+const bool quaternionValid =
+    std::isfinite(q.w) && std::isfinite(q.x) &&
+    std::isfinite(q.y) && std::isfinite(q.z) &&
+    std::isfinite(quaternionNormSq) &&
+    quaternionNormSq > 0.5f && quaternionNormSq < 1.5f;
+
 const bool attitudeFresh =
     attitude.healthy &&
+    quaternionValid &&
     std::isfinite(attitude.euler[AXIS_ROLL]) &&
     std::isfinite(attitude.euler[AXIS_PITCH]) &&
     std::isfinite(attitude.euler[AXIS_YAW]) &&

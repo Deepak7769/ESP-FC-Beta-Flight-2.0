@@ -118,3 +118,7 @@ The first CPU-LAND recovery regression failed because `ResourceManager.cpp` did 
 ### Native test isolation after actuator health regression
 
 The new actuator estimator-health test passed, but the following `test_timer_check_micros` aborted due to ArduinoFake call-history/stub contamination from the earlier `micros()` AlwaysReturn setup. The test now explicitly resets ArduinoFake at exit so exact-call-count timer tests can run independently. Do not interpret this test-harness failure as a passing whole workflow; recheck all native environments and six targets.
+
+### Assisted attitude quaternion health matches actuator supervisor
+
+The actuator already required finite quaternion components and squared quaternion norm strictly between 0.5 and 1.5, but `Controller::updateAssistedModes()` did not. Its Angle/AltHold/GPS gates now enforce the same bound as the supervisor. A zero quaternion injected while estimator health flags are set must withdraw assisted authority; restoring an identity quaternion permits valid attitude control again. Reference: [PX4 multicopter AttitudeControl](https://github.com/PX4/PX4-Autopilot/blob/main/src/modules/mc_att_control/AttitudeControl/AttitudeControl.cpp), which rejects non-normalizable attitude targets before control.

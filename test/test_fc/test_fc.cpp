@@ -602,6 +602,12 @@ void test_controller_assisted_modes_reject_nonfinite_sensor_state()
   TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
 
   model.state.attitude.cosTheta = 1.0f;
+  model.state.attitude.quaternion = Quaternion(0.0f, 0.0f, 0.0f, 0.0f);
+  controller.update();
+  TEST_ASSERT_FALSE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.attitude.quaternion = Quaternion(1.0f, 0.0f, 0.0f, 0.0f);
   model.state.altitude.height = nan;
   controller.update();
   TEST_ASSERT_TRUE(model.state.angleV2.active);
