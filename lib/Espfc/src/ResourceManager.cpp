@@ -1,4 +1,9 @@
 #include "ResourceManager.h"
+#include "Control/AssistedModeV2.h"
+
+// The LAND V2 feature gate is derived in AssistedModeV2.h. This translation
+// unit must include it; otherwise enterCpuLand() is silently compiled as a
+// no-op even in Assisted V2 motor-driving builds.
 #if !defined(ESP32S2)
 #include "Hal/Time.hpp"
 
