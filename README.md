@@ -51,8 +51,8 @@ The current Assisted V2 implementation is treated as **software-validated** in t
 
 * **ANGLE V2** — implemented and covered by native/controller regression tests.
 * **ALTHOLD V2** — implemented, including centered-stick handling, estimator health gates, bumpless controller entry, and vertical PID ownership tests.
-* **Failsafe LAND V2** — implemented, including supervisor authorization, estimator-fault fallback, touchdown dwell/hysteresis, timeout termination, and receiver-recovery behavior tests.
-* **Anti-Gravity** — feature/mode/MSP/configuration path and transient detector are implemented and regression-tested; rate-PID authority is limited to `ESPFC_SAFE_BENCH_BUILD` validation firmware, while the standard motor-driving firmware remains diagnostic-only.
+* **Failsafe LAND V2** — implemented with supervisor authorization, estimator-fault handling, touchdown dwell/hysteresis, advisory timeout reporting (not motor cutoff on time alone), and receiver-recovery regression tests.
+* **Anti-Gravity** — feature/mode/MSP/configuration path, transient detector, and rate-PID P/I application are implemented and regression-tested. The standard motor-driving `esp32` target compiles with `ESPFC_ANTI_GRAVITY_ACTIVE`, so Anti-Gravity **can affect motors** when its runtime feature or mode is enabled. SAFE_BENCH targets are available for non-actuating validation.
 * **MSP current meter / INA219 companion path** — implemented with freshness timeout, source sanitization, one-way companion push, and regression coverage.
 
 The corresponding native tests and ESP32 Assisted V2 validation targets are part of the automated test/build workflow.

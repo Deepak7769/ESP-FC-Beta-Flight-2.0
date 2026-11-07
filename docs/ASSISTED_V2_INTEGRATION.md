@@ -55,12 +55,15 @@ or rate-shaped throttle value.
 
 Once Stage-2 AUTO_LAND begins, LAND remains authoritative for that armed flight.
 A recovered receiver is still qualified, but pilot throttle is not handed back
-during the descent. LAND ends only through estimator failure fallback,
-touchdown confirmation, or the bounded LAND timeout, all of which disarm.
+during the descent. Verified touchdown with dwell is an automatic disarm
+condition. A prolonged landing timeout is **diagnostic only** and must not
+cut motors by elapsed time alone. Estimator loss has a separate fault policy:
+ordinary non-GPS failsafe LAND may DROP/disarm; GPS-origin no-drop and
+CPU-emergency-origin paths block LAND authority without forcibly disarming.
+None of these behaviors establishes safe flight if sensors are lost.
 
-This avoids a thrust discontinuity when the custom transmitter's manual
-throttle channel contains an accumulated value unrelated to the current
-spring-stick position.
+This avoids an uncontrolled thrust handoff when the transmitter's manual
+throttle contains an accumulated value unrelated to the centered vertical stick.
 
 ## Build policy
 
@@ -168,13 +171,21 @@ applied downward by the controller. The project production default is currently
 ESPFC_LAND_V2_DESCENT_RATE_MS = 0.10f
 ```
 
-Touchdown confirmation uses near-ground altitude, low vertical speed, descent
-evidence, reduced commanded thrust, and a dwell period. The independent timeout
-uses the same selected descent-rate constant:
+Touchdown confirmation uses ground-clearance evidence, low vertical speed,
+descent evidence, reduced commanded thrust, and a dwell period. A fresh,
+valid generic rangefinder reading takes precedence when that sensor is present;
+otherwise the current implementation still falls back to launch-relative
+barometric height, a known limitation on uneven/elevated terrain.
+
+The landing-progress fault timeout uses the selected descent-rate constant:
 
 ```
-timeout = clamp(entry_height / selected_descent_rate + 10 s, 15 s, 60 s)
+timeout = clamp(entry_height / selected_descent_rate + 10 s, 15 s, 900 s)
 ```
 
-If the estimator becomes invalid or the timeout expires, LAND disarms through
-the failsafe path rather than remaining armed indefinitely.
+**Timeout expiration sets a landing fault; it does not automatically disarm.**
+Healthy LAND continues controlled descent until touchdown is independently
+confirmed. If altitude/attitude estimation becomes invalid, the source-specific
+failsafe policy determines whether propulsion is blocked/preserved or disarmed.
+This is not a general-purpose safe landing guarantee and requires sensor and
+motor-off bench fault injection before flight.
