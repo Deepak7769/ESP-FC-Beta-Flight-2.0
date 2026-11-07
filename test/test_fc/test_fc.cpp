@@ -5649,6 +5649,36 @@ void test_mixer_invalid_output_count_fails_closed()
   }
 }
 
+void test_mixer_quad_yaw_reversal_preserves_directional_saturation_feedback()
+{
+  Model model;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.mixer.yawReverse = false;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+
+  // Reversed yaw sign makes -0.3 PID yaw output map to +0.3 motor
+  // source: one Quad X motor is at maximum after Airmode shifting.
+  model.state.output.ch[AXIS_ROLL] = 0.3f;
+  model.state.output.ch[AXIS_PITCH] = 0.3f;
+  model.state.output.ch[AXIS_YAW] = -0.3f;
+  model.state.output.ch[AXIS_THRUST] = 0.4f;
+  model.state.innerPid[AXIS_YAW].error = -0.3f;
+
+  Output::Mixer mixer(model);
+  float out[OUTPUT_CHANNELS] = {};
+  const MixerConfig config =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  mixer.updateMixer(config, out);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f, out[2]);
+  TEST_ASSERT_TRUE(model.state.innerPid[AXIS_YAW].outputSaturated);
+
+  // Opposite yaw error commands that high motor down instead of up:
+  // I-term unwind is physically possible and must not be blocked.
+  model.state.innerPid[AXIS_YAW].error = 0.3f;
+  mixer.updateMixer(config, out);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_YAW].outputSaturated);
+}
+
 void test_mixer_rate_saturation_feedback_is_axis_and_direction_specific()
 {
   Model model;
@@ -9175,7 +9205,8 @@ RUN_TEST(
   RUN_TEST(test_actuator_arming_throttle);
   RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
   RUN_TEST(test_mixer_invalid_output_count_fails_closed);
-  RUN_TEST(test_mixer_rate_saturation_feedback_is_axis_and_direction_specific);
+  RUN_TEST(test_mixer_quad_yaw_reversal_preserves_directional_saturation_feedback);
+RUN_TEST(test_mixer_rate_saturation_feedback_is_axis_and_direction_specific);
 RUN_TEST(test_mixer_airmode_preserves_asymmetric_motor_differential);
   RUN_TEST(test_mixer_airmode_scales_excess_differential);
   RUN_TEST(test_mixer_airmode_excludes_servo_from_motor_headroom);
