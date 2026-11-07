@@ -2149,6 +2149,40 @@ void test_model_sanitize_preserves_valid_antigravity_gain()
 }
 
 
+void test_controller_antigravity_uses_valid_gyro_sample_interval()
+{
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(2200000u);
+
+  Model model;
+  model.config.featureMask |= FEATURE_ANTI_GRAVITY;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+
+  model.state.input.channelsValid = true;
+  model.state.input.rxLoss = false;
+  model.state.input.rxFailSafe = false;
+  model.state.input.ch[AXIS_THRUST] = -1.0f;
+  model.state.gyro.lastUpdateUs = 1000000u;
+  controller.update();  // Prime Anti-Gravity and valid sample timing.
+
+  model.state.input.ch[AXIS_THRUST] = 0.0f;
+  model.state.gyro.lastUpdateUs = 1004000u;
+  controller.update();  // Four milliseconds since last successful gyro.
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.000001f, 0.004f, model.state.innerPid[AXIS_ROLL].dt);
+  // Rising throttle 0 -> 0.5: 0.5 * 250Hz * (1-0.5)^2 *
+  // (1-0.5) * 0.5 = 7.8125. Nominal 1kHz would yield 31.25.
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.0001f, 7.8125f, model.state.antiGravity.derivative);
+}
+
 void test_controller_anti_gravity_tracks_manual_throttle_transient()
 {
   ArduinoFakeReset();
@@ -8732,7 +8766,8 @@ RUN_TEST(
   RUN_TEST(test_model_sanitize_scrubs_legacy_antigravity_mode_rows);
   RUN_TEST(test_model_sanitize_preserves_new_antigravity_mode_rows);
   RUN_TEST(test_model_sanitize_preserves_valid_antigravity_gain);
-  RUN_TEST(test_controller_anti_gravity_tracks_manual_throttle_transient);
+  RUN_TEST(test_controller_antigravity_uses_valid_gyro_sample_interval);
+RUN_TEST(test_controller_anti_gravity_tracks_manual_throttle_transient);
   RUN_TEST(test_pid_antigravity_gain_inputs_scale_p_and_add_i);
   RUN_TEST(test_controller_anti_gravity_can_be_enabled_by_mode);
   RUN_TEST(test_msp_current_meter_reply_is_ignored_when_source_is_not_msp);

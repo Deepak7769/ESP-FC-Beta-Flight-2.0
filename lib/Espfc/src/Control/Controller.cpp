@@ -1200,11 +1200,12 @@ void Controller::updateAntiGravity()
     return;
   }
 
-  const float loopRate =
-      static_cast<float>(
-          std::max<int>(
-              _model.state.loopTimer.rate,
-              1));
+  // The rate PID already bounds dt from successive valid gyro samples.
+  // Use that identical dt for the throttle derivative, rather than a
+  // nominal scheduler frequency that overstates demand after skipped loops.
+  const float observedDt =
+      std::max(_model.state.innerPid[AXIS_ROLL].dt, 0.000001f);
+  const float loopRate = 1.0f / observedDt;
 
   const float throttleInv =
       1.0f -

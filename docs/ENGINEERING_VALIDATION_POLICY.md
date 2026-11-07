@@ -78,3 +78,9 @@ External HC-SR04 is out of scope. Avoid changing unrelated sensor handling as an
 ### CPU-LAND feature selection compilation fix
 
 The first CPU-LAND recovery regression failed because `ResourceManager.cpp` did not include `Control/AssistedModeV2.h`, where `ESPFC_LAND_V2_ACTIVE` is derived from `ESPFC_ASSISTED_V2_ACTIVE` or `ESPFC_LAND_V2_ACTIVE_TEST`. Consequently the `#if defined(ESPFC_LAND_V2_ACTIVE)` inside `enterCpuLand()` compiled out, while the test TU saw LAND active. The module now includes the authoritative feature-policy header. CI validates that emergency LAND can activate under sustained CPU overload and release resources after disarm. **Caution:** this enables previously inert CPU-LAND behavior and must undergo armed/gyro-health/estimator fault-injection bench validation before physical flight.
+
+## Anti-Gravity derivative uses successful gyro-sample timing
+
+- **Defect:** Anti-Gravity used nominal `loopTimer.rate` for its throttle derivative, even though the rate PID already bounded `dt` from the elapsed time between successful gyro samples. A missed 1kHz cycle could overstate throttle-change rate, I acceleration and P boost.
+- **Reference:** [Betaflight Anti-Gravity throttle derivative](https://github.com/betaflight/betaflight/blob/master/src/main/flight/pid.c) uses the actual PID update frequency for its throttle derivative. ESP-FC's measured bounded rate-PID `dt` is the appropriate equivalent when scheduler intervals are irregular.
+- **Change:** derive Anti-Gravity throttle derivative frequency from the same measured/bounded `innerPid[AXIS_ROLL].dt` used by the rate loop. Native test verifies a 4ms valid-gyro gap reduces a fixed 0.5 throttle-step derivative from the nominal 31.25 to 7.8125. Filter cutoff remains nominal and requires separate jitter/bench characterization.
