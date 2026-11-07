@@ -69,6 +69,9 @@ public:
   bool cpuLandActive() const;
 
 private:
+  // Native tests exercise the overload/disarm lifecycle without waiting
+  // for a real-time scheduler; this friend creates no production code.
+  friend class ResourceManagerTestAccess;
   void applyPolicy(float cpu, uint32_t now);
   void enterCpuLand(uint32_t now);
   ResourceState classify(float cpu) const;

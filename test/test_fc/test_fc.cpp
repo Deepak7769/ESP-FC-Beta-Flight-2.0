@@ -1,6 +1,7 @@
 #include "Control/Actuator.h"
 #include "Control/AssistedModeV2.h"
 #include "Control/Controller.h"
+#include "ResourceManager.h"
 #include "Control/Altitude.hpp"
 #include "Connect/MspProcessor.hpp"
 #include "Input.h"
@@ -8470,6 +8471,51 @@ void test_altitude_v2_acceleration_bias_observer_learns_residual()
       model.state.altitude.accelerationBias);
 }
 
+#if defined(ESPFC_LAND_V2_ACTIVE) && !defined(ESP32S2)
+namespace Espfc {
+class ResourceManagerTestAccess
+{
+public:
+  static void apply(ResourceManager& manager, float load, uint32_t now)
+  {
+    manager.applyPolicy(load, now);
+  }
+};
+}
+
+void test_resource_manager_cpu_land_recovers_services_after_disarm()
+{
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(1000000u);
+  Model model;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  ResourceManager manager(model);
+  manager.begin();
+
+  Espfc::ResourceManagerTestAccess::apply(manager, 96.0f, 1000000u);
+  Espfc::ResourceManagerTestAccess::apply(manager, 96.0f, 1100001u);
+
+  TEST_ASSERT_TRUE(manager.cpuLandActive());
+  TEST_ASSERT_FALSE(manager.mspAllowed());
+  TEST_ASSERT_FALSE(manager.telemetryAllowed());
+  TEST_ASSERT_FALSE(manager.navigationAllowed());
+
+  // Disarming ends the armed-flight CPU emergency; it must not require
+  // rebooting the flight controller to regain diagnostic services.
+  model.updateModes(0);
+  Espfc::ResourceManagerTestAccess::apply(manager, 30.0f, 1200000u);
+  TEST_ASSERT_FALSE(manager.cpuLandActive());
+  TEST_ASSERT_TRUE(manager.mspAllowed());
+  TEST_ASSERT_TRUE(manager.telemetryAllowed());
+  TEST_ASSERT_TRUE(manager.navigationAllowed());
+  TEST_ASSERT_EQUAL(ResourceState::NORMAL, manager.state());
+
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Espfc::ResourceManagerTestAccess::apply(manager, 30.0f, 1300000u);
+  TEST_ASSERT_FALSE(manager.cpuLandActive());
+}
+#endif
+
 void test_mixer_vertical_saturation_feedback_is_directional()
 {
   Model model;
@@ -8528,6 +8574,9 @@ RUN_TEST(test_althold_v2_rangefinder_config_is_sanitized);
 RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
 RUN_TEST(test_altitude_v2_acceleration_bias_observer_learns_residual);
 RUN_TEST(test_mixer_vertical_saturation_feedback_is_directional);
+#if defined(ESPFC_LAND_V2_ACTIVE) && !defined(ESP32S2)
+RUN_TEST(test_resource_manager_cpu_land_recovers_services_after_disarm);
+#endif
 RUN_TEST(test_altitude_v2_rangefinder_is_fused_near_ground);
 RUN_TEST(test_controller_althold_v2_hover_feedforward_and_tilt_compensation);
 RUN_TEST(test_controller_althold_v2_transition_stress_preserves_target_contract);

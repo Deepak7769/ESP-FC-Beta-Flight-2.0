@@ -124,6 +124,19 @@ void ResourceManager::applyPolicy(float cpu, uint32_t now)
 {
   _cpuLoad = std::clamp(cpu, 0.0f, 100.0f);
 
+  // CPU emergency is terminal for the *armed flight*, not for this boot.
+  // After disarm, release all LAND load-shedding latches so MSP/telemetry
+  // can recover and an ordinary future arming starts a clean policy state.
+  if (_cpuLandActive && !_model.isModeActive(MODE_ARMED))
+  {
+    _cpuLandActive = false;
+    _state = ResourceState::NORMAL;
+    _highLoadSinceUs = 0;
+    _cpuPeak = _cpuLoad;
+    _peakWindowStartUs = now;
+    _deadlineStressUntilUs = 0;
+  }
+
   const uint32_t deadlineMisses = _flightDeadlineMisses;
   const uint32_t newDeadlineMisses = deadlineMisses - _lastDeadlineMisses;
   _lastDeadlineMisses = deadlineMisses;
