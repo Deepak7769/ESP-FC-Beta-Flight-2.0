@@ -5427,6 +5427,50 @@ void test_mixer_invalid_output_count_fails_closed()
   }
 }
 
+void test_mixer_rate_saturation_feedback_is_axis_and_direction_specific()
+{
+  Model model;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.mixer.yawReverse = true;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+
+  // The corrections have one motor at +1.0 and three at -0.2 after
+  // Airmode collective shift: upward torque demand at that motor
+  // saturates, downward demand there still has actuator headroom.
+  model.state.output.ch[AXIS_ROLL] = 0.3f;
+  model.state.output.ch[AXIS_PITCH] = 0.3f;
+  model.state.output.ch[AXIS_YAW] = 0.3f;
+  model.state.output.ch[AXIS_THRUST] = 0.4f;
+  model.state.innerPid[AXIS_ROLL].error = 0.3f;
+  model.state.innerPid[AXIS_PITCH].error = -0.3f;
+  model.state.innerPid[AXIS_YAW].error = -0.3f;
+
+  Output::Mixer mixer(model);
+  float out[OUTPUT_CHANNELS] = {};
+  const MixerConfig config =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  mixer.updateMixer(config, out);
+
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f, out[2]);
+  TEST_ASSERT_TRUE(model.state.output.saturated);
+  TEST_ASSERT_TRUE(model.state.innerPid[AXIS_ROLL].outputSaturated);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_PITCH].outputSaturated);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_YAW].outputSaturated);
+
+  // Same motor state, opposite torque requirements.
+  model.state.innerPid[AXIS_ROLL].error = -0.3f;
+  model.state.innerPid[AXIS_PITCH].error = 0.3f;
+  mixer.updateMixer(config, out);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_ROLL].outputSaturated);
+  TEST_ASSERT_TRUE(model.state.innerPid[AXIS_PITCH].outputSaturated);
+
+  // With no error, the rate I-term cannot wind up even if a motor
+  // is limited by another axis. Do not declare false axis saturation.
+  model.state.innerPid[AXIS_PITCH].error = 0.f;
+  mixer.updateMixer(config, out);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_PITCH].outputSaturated);
+}
+
 void test_mixer_airmode_preserves_asymmetric_motor_differential()
 {
   Model model;
@@ -8904,7 +8948,8 @@ RUN_TEST(
   RUN_TEST(test_actuator_arming_throttle);
   RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
   RUN_TEST(test_mixer_invalid_output_count_fails_closed);
-  RUN_TEST(test_mixer_airmode_preserves_asymmetric_motor_differential);
+  RUN_TEST(test_mixer_rate_saturation_feedback_is_axis_and_direction_specific);
+RUN_TEST(test_mixer_airmode_preserves_asymmetric_motor_differential);
   RUN_TEST(test_mixer_airmode_scales_excess_differential);
   RUN_TEST(test_mixer_airmode_excludes_servo_from_motor_headroom);
   RUN_TEST(test_mixer_throttle_limit_none);

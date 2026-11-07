@@ -470,6 +470,61 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
   _model.setOutputSaturation(
       saturated,
       verticalSaturated);
+
+  // In Quad X each rate axis can run out of motor authority in a
+  // different direction. Feeding one global flag to all R/P/Y PIDs
+  // needlessly freezes integrators whose corrections still fit.
+  // Only claim saturation when a motor commanded further in the
+  // axis-error direction is at its corresponding output limit.
+  // Other mixer layouts retain the conservative global fallback.
+  if (mixer.mixes &&
+      (mixerType == FC_MIXER_QUADX ||
+       mixerType == FC_MIXER_QUADX_1234))
+  {
+    for (size_t axis = 0; axis < AXIS_COUNT_RPY; ++axis)
+    {
+      const float rawError = _model.state.innerPid[axis].error;
+      const float requestedError =
+          axis == AXIS_YAW && !_model.config.mixer.yawReverse
+              ? -rawError : rawError;
+      bool blocked = false;
+
+      if (std::isfinite(requestedError) &&
+          std::fabs(requestedError) > 0.001f)
+      {
+        for (size_t rule = 0; rule < MIXER_RULE_MAX; ++rule)
+        {
+          const auto& entry = mixer.mixes[rule];
+          if (entry.src == MIXER_SOURCE_NULL) break;
+          if (entry.src != static_cast<int>(MIXER_SOURCE_ROLL) +
+                               static_cast<int>(axis) ||
+              entry.dst < 0 ||
+              static_cast<size_t>(entry.dst) >= mixerCount ||
+              entry.rate == 0)
+          {
+            continue;
+          }
+
+          const size_t motor = static_cast<size_t>(entry.dst);
+          if (_model.config.output.channel[motor].servo) continue;
+
+          const float requestedMotorChange =
+              requestedError * static_cast<float>(entry.rate);
+          const float actualMotor = outputs[motor];
+          if ((requestedMotorChange > 0.f &&
+               actualMotor >= motorUpperLimit - 0.02f) ||
+              (requestedMotorChange < 0.f &&
+               actualMotor <= -0.98f))
+          {
+            blocked = true;
+            break;
+          }
+        }
+      }
+
+      _model.state.innerPid[axis].outputSaturated = blocked;
+    }
+  }
 }
 
 float FAST_CODE_ATTR Mixer::limitThrust(float thrust, ThrottleLimitType type, int8_t limit)
