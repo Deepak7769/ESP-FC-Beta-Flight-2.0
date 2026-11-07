@@ -1,0 +1,41 @@
+# ESP32-S2 is not developed on main while its DRAM linker margin is unresolved.
+# This workflow deliberately checks out the immutable last-green source commit.
+# It must not build the triggering main branch or silently inherit new repairs.
+name: esp32s2-frozen
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frozen_esp32s2:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout last verified green ESP32-S2 revision
+        uses: actions/checkout@v6
+        with:
+          ref: d95f2c9941968929545c5a2743974adb45361a21
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install reproducible PlatformIO version
+        run: python -m pip install --upgrade "platformio==6.2.0"
+      - name: Compile frozen ESP32-S2 only
+        run: |
+          platformio run -e esp32s2
+          test -s .pio/build/esp32s2/firmware.bin
+          test -s .pio/build/esp32s2/firmware_0x00.bin
+        env:
+          PLATFORMIO_BUILD_FLAGS: -DESPFC_REVISION=d95f2c9 -DESPFC_VERSION=0.0.0
+      - name: Publish frozen ESP32-S2 binaries
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp32s2_frozen_d95f2c9
+          path: |
+            .pio/build/esp32s2/firmware.bin
+            .pio/build/esp32s2/firmware_0x00.bin
+          if-no-files-found: error

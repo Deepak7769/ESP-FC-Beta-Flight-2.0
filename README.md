@@ -38,6 +38,13 @@ In this repository you can find firmware code that allows you to build your own 
 
 Join our **[Discord Channel](https://discord.gg/jhyPPM5UEH)** to get help
 
+# Development target policy
+
+The required development CI builds **ESP32, ESP32-S3, ESP32-C3, ESP8266, RP2040, and RP2350**.
+ESP32-S2 is **frozen**, not supported as a current-`main` development target. The last verified green ESP32-S2 source is [`d95f2c9`](https://github.com/Deepak7769/ESP-FC-Beta-Flight-2.0/commit/d95f2c9941968929545c5a2743974adb45361a21); use the manual [ESP32-S2 frozen workflow](.github/workflows/esp32s2-frozen.yml) to rebuild *that exact commit*. Never flash an S2 image built from current `main` without a separately reviewed and passing S2 repair.
+
+All new or repaired control paths must be compared with real flight-controller code and tested under the [engineering validation policy](docs/ENGINEERING_VALIDATION_POLICY.md). Green CI validates software/build checks only, **not flightworthiness**.
+
 # Current software validation status
 
 The current Assisted V2 implementation is treated as **software-validated** in this repository:

@@ -100,7 +100,8 @@ jobs:
       matrix:
         target:
           - { name: 'esp32',   merge: true }
-          - { name: 'esp32s2', merge: true }
+          # ESP32-S2 is frozen at d95f2c9; see esp32s2-frozen.yml.
+          # It is intentionally NOT built from main.
           - { name: 'esp32s3', merge: true }
           - { name: 'esp32c3', merge: true }
           - { name: 'esp8266', merge: false }

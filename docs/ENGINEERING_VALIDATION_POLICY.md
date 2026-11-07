@@ -1,0 +1,37 @@
+# Engineering validation and upstream-reference policy
+
+## Active and frozen hardware targets
+
+- **Required development targets on `main`:** `esp32`, `esp32s3`, `esp32c3`, `esp8266`, `rp2040`, and `rp2350`. A repair is *not green* until the native test job, both safe-bench validation artifact jobs, and all six active hardware builds succeed.
+- **Frozen ESP32-S2:** revision `d95f2c9941968929545c5a2743974adb45361a21` only (successful Actions run [42269919345](https://github.com/Deepak7769/ESP-FC-Beta-Flight-2.0/actions/runs/42269919345)). Rebuild only through `esp32s2-frozen.yml` with `workflow_dispatch`. The manual workflow explicitly checks out that commit, never current `main`.
+- **Not an S2 repair:** leaving S2 out of the normal build matrix does not fix current-main S2 DRAM allocation or imply that later PID, Airmode, Angle, Anti-Gravity, AltHold, or Land repairs reach S2.
+- Do not call any firmware flight-safe merely because its unit tests and compiler pass. The motor-driving builds require independent bench interlocks, motor-order/direction checks, real sensor/ESC timing validation, failsafe-injection tests, and progressively constrained flight testing.
+
+## Authoritative practical implementation references
+
+Use current upstream **source code as the primary behavioral reference**, with official documentation to establish operator-facing behavior. Differences in units, mixers, hardware resources, scheduling, and estimator health must be analyzed; do not copy constants or algorithms blindly.
+
+| Repair domain | Practical upstream source or official design reference | Comparison required |
+| --- | --- | --- |
+| FPV PID, I-term relax, Anti-Gravity | [Betaflight PID implementation](https://github.com/betaflight/betaflight/blob/master/src/main/flight/pid.c), [PID definitions](https://github.com/betaflight/betaflight/blob/master/src/main/flight/pid.h) | Loop time and rate units; numerical PID gains; filtering phase, anti-windup, I-term relax, throttle transients |
+| Multirotor rate control and allocation | [PX4 multicopter controller architecture](https://docs.px4.io/main/en/flight_stack/controller_diagrams) | Position/attitude/rate ownership, saturation propagation, integrator bounds, actuator authority |
+| AltHold and vertical control | [ArduPilot Copter Altitude Hold](https://ardupilot.org/copter/docs/altholdmode.html) | Altitude→velocity→acceleration cascade, stick deadband, estimator validity, climb/descent acceleration caps |
+| LAND and ground detection | [ArduPilot Copter LAND](https://ardupilot.org/copter/docs/land-mode.html) | Controlled descent, landed detection using multiple independent cues, timed disarming only upon grounded confirmation, estimator-fault behavior |
+
+These links are **behavioral reference material**, not a certification of any code here. Record upstream revision/commit when comparing exact implementation constants. If a reference is unsuitable for ESP-FC, document why and what alternative was chosen.
+
+## Required workflow for each control repair
+
+1. Define the specific defect from current ESP-FC source, including a reproducible input/state trace. Capture baseline output.
+2. Consult at least one real relevant upstream flight-controller implementation (Betaflight for FPV dynamics; PX4/ArduPilot for navigation, altitude and landing). Record reference path and behavioral assumptions.
+3. Verify state ownership, input freshness, coordinate frames, units, sign conventions, control periods, saturation constraints, motor authority, arming/failsafe gates, and mode transitions.
+4. Make one narrow, reviewable implementation change; avoid new dynamic allocation or unexpected RTOS work in the flight loop.
+5. Add native regression tests for normal operation, boundary conditions, invalid data, mode exit/entry, and output saturation. For output-control changes include actuator-disabled bench tests.
+6. Commit to `main`, then inspect the **entire** GitHub Actions run, including all six targets, not just native tests. If red, stop subsequent feature work and remediate. Never describe a failed commit as green because a later combined commit succeeds.
+7. Record known limitations and require real-hardware validation before motor-driving firmware is considered a flight candidate.
+
+## Current priorities
+
+Baseline → timing/PID/mixer validation → Angle V2 → Anti-Gravity → AltHold V2 → Land V2.
+Treat GPS Rescue/Position Hold interfaces as dependencies requiring checks when Angle/Altitude mode ownership changes.
+External HC-SR04 is out of scope. Avoid changing unrelated sensor handling as an implied prerequisite.
