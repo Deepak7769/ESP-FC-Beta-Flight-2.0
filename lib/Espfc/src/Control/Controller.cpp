@@ -1508,8 +1508,13 @@ const bool assistedBaroFresh =
 
 // A healthy flag alone cannot authorize an assisted control path if
 // a stale or corrupted estimator value has become non-finite.
+// Use the same estimator-age limit as the actuator LAND supervisor.
+// A fresh barometer alone is not proof the fused height/vario state has
+// been updated, and GPS Rescue must never inherit stale vertical authority.
 const bool altitudeValid =
     altitude.healthy &&
+    static_cast<uint32_t>(now - altitude.lastUpdateUs) < 100000u &&
+    assistedBaroFresh &&
     std::isfinite(altitude.height) &&
     std::isfinite(altitude.vario) &&
     std::isfinite(altitude.acceleration);

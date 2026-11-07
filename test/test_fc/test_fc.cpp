@@ -562,6 +562,47 @@ void test_controller_navigation_angle_owns_rate_targets_without_angle_switch()
       model.state.setpoint.rate[AXIS_PITCH]);
 }
 
+void test_controller_assisted_rejects_stale_estimator_independently_of_baro()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 2800000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+  model.updateModes((uint32_t{1} << MODE_ANGLE) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+
+  model.state.altitude.lastUpdateUs = NOW_US - 100001u;
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.baro.lastUpdateUs = NOW_US - 350001u;
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.baro.lastUpdateUs = NOW_US;
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+  TEST_ASSERT_TRUE(model.state.assistedMode.altitudeActive);
+  ArduinoFakeReset();
+}
+
 void test_controller_assisted_modes_reject_nonfinite_sensor_state()
 {
   ArduinoFakeReset();
@@ -8889,6 +8930,7 @@ RUN_TEST(test_controller_angle_mode_does_not_latch_fterm_scale);
 
 // Angle V2 controller regression tests
 RUN_TEST(test_controller_navigation_angle_owns_rate_targets_without_angle_switch);
+RUN_TEST(test_controller_assisted_rejects_stale_estimator_independently_of_baro);
 RUN_TEST(test_controller_assisted_modes_reject_nonfinite_sensor_state);
 RUN_TEST(
     test_controller_angle_v2_activates_and_slews);
