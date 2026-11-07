@@ -4465,7 +4465,7 @@ void test_failsafe_land_v2_near_ground_hover_does_not_disarm()
           .landingTouchdownCandidate);
 }
 
-void test_failsafe_land_v2_timeout_disarms()
+void test_failsafe_land_v2_timeout_preserves_airborne_propulsion()
 {
   ArduinoFakeReset();
 
@@ -4481,8 +4481,8 @@ void test_failsafe_land_v2_timeout_disarms()
   constexpr float TIMEOUT_S =
       RAW_TIMEOUT_S < 15.0f
           ? 15.0f
-          : (RAW_TIMEOUT_S > 60.0f
-                 ? 60.0f
+          : (RAW_TIMEOUT_S > 900.0f
+                 ? 900.0f
                  : RAW_TIMEOUT_S);
 
   constexpr uint32_t TIMEOUT_US =
@@ -4545,11 +4545,12 @@ void test_failsafe_land_v2_timeout_disarms()
 
   actuator.updateFailsafeLand();
 
-  TEST_ASSERT_FALSE(
+  // A healthy but still descending vehicle cannot disarm on elapsed time.
+  TEST_ASSERT_TRUE(
       model.isModeActive(
           MODE_ARMED));
 
-  TEST_ASSERT_FALSE(
+  TEST_ASSERT_TRUE(
       model.state.failsafe
           .landingRequested);
 
@@ -4557,16 +4558,65 @@ void test_failsafe_land_v2_timeout_disarms()
       model.state.failsafe
           .landingFault);
 
-  TEST_ASSERT_TRUE(
+  TEST_ASSERT_FALSE(
       model.state.failsafe
           .landingOutputBlocked);
 
+  TEST_ASSERT_TRUE(
+      model.state.failsafe
+          .landingActive);
+
+  TEST_ASSERT_TRUE(
+      model.state.failsafe
+          .landingDescentRequested);
+
   TEST_ASSERT_EQUAL(
-      FC_FAILSAFE_LANDED,
+      FC_FAILSAFE_LANDING,
       model.state.failsafe.phase);
 }
 
 
+
+void test_failsafe_land_v2_high_altitude_timeout_requires_ground_contact()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 320000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+
+  Model model;
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.altitude.height = 14.0f;
+  model.state.altitude.vario = -0.20f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 220000000u;
+  model.state.failsafe.landingEntryHeight = 20.0f;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+
+  // At 0.1m/s, a descent from 20m cannot complete within 60 seconds.
+  // Even after the proportional timeout, no verified touchdown means
+  // no automatic motor disarm.
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingFault);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingOutputBlocked);
+
+  // Confirmed touchdown after a timeout may still disarm normally.
+  model.state.altitude.height = 0.10f;
+  model.state.altitude.vario = 0.02f;
+  model.state.output.ch[AXIS_THRUST] = -0.20f;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 1000000u;
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
+}
 
 void test_failsafe_land_v2_rx_recovery_stays_committed_to_land()
 {
@@ -8566,7 +8616,9 @@ RUN_TEST(
     test_failsafe_land_v2_near_ground_hover_does_not_disarm);
 
 RUN_TEST(
-    test_failsafe_land_v2_timeout_disarms);
+    test_failsafe_land_v2_timeout_preserves_airborne_propulsion);
+
+RUN_TEST(test_failsafe_land_v2_high_altitude_timeout_requires_ground_contact);
 
 
 

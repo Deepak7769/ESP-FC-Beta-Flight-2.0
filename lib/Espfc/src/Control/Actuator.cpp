@@ -1152,13 +1152,12 @@ void Actuator::updateFailsafeLand()
                 failsafe.landingRequestedUs);
 
         // -------------------------------------------------
-        // LAND TERMINATION TIMEOUT
+        // LAND PROGRESS TIMEOUT (ADVISORY, NOT MOTOR CUTOFF)
         //
-        // Touchdown is primarily confirmed from near-ground height + low
-        // vertical speed. A bounded timeout prevents a failed/noisy ground
-        // detector from leaving the aircraft in LAND forever after RX loss.
-        // The timeout scales with the entry height at the selected LAND V2
-        // descent rate, then adds a generous ten-second margin.
+        // The timeout identifies delayed/unconfirmed touchdown and logs
+        // a landing fault. It cannot disarm a potentially airborne craft.
+        // The limit scales with entry height and commanded descent speed
+        // rather than imposing a 60-second airborne cutoff.
         // -------------------------------------------------
 
         constexpr float
@@ -1176,7 +1175,7 @@ void Actuator::updateFailsafeLand()
 
         constexpr float
             LAND_TIMEOUT_MAX_S =
-                60.0f;
+                900.0f;
 
         const float nonNegativeEntryHeight =
             std::max(
@@ -1319,53 +1318,17 @@ void Actuator::updateFailsafeLand()
                 touchdownReferenceThrust -
                     TOUCHDOWN_HOLD_THRUST_MARGIN;
 
-        if (landingTimedOut &&
-            failsafe.gpsRescueLandNoDrop &&
-            _model.isModeActive(MODE_ARMED))
+        // The timeout diagnoses a failure to confirm touchdown; it is
+        // NOT permission to cut propulsion. With a healthy estimator,
+        // maintain controlled descent until independent touchdown evidence
+        // satisfies the dwell detector. This matches ArduPilot's LAND policy:
+        // elapsed time alone cannot establish a landed state.
+        if (landingTimedOut)
         {
-          // GPS-origin LAND timeout: keep the aircraft armed and preserve
-          // propulsion rather than ever issuing an airborne DROP.
           failsafe.landingFault = true;
-          failsafe.landingActive = false;
-          failsafe.landingLevelRequested = false;
-          failsafe.landingDescentRequested = false;
-          failsafe.landingOutputBlocked = true;
-          failsafe.landingTouchdownCandidate = false;
-          failsafe.landingTouchdownStartedUs = 0;
         }
-        else if (landingTimedOut)
-        {
-          failsafe.landingFault =
-              true;
 
-          failsafe.landingRequested =
-              false;
-
-          failsafe.landingActive =
-              false;
-
-          failsafe.landingLevelRequested =
-              false;
-
-          failsafe.landingDescentRequested =
-              false;
-
-          failsafe.landingOutputBlocked =
-              true;
-
-          failsafe.landingTouchdownCandidate =
-              false;
-
-          failsafe.landingTouchdownStartedUs =
-              0;
-
-          failsafe.phase =
-              FC_FAILSAFE_LANDED;
-
-          _model.disarm(
-              DISARM_REASON_FAILSAFE);
-        }
-        else if (!failsafe.landingTouchdownCandidate)
+        if (!failsafe.landingTouchdownCandidate)
         {
           if (touchdownEvidence)
           {
