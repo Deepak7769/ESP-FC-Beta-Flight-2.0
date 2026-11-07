@@ -189,6 +189,9 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
                 mixer.count)
           : 0u;
 
+  // Per-motor collective gain. Custom mixers may not use unit thrust.
+  float motorThrustGain[OUTPUT_CHANNELS] = {};
+
   float sources[MIXER_SOURCE_MAX];
   sources[MIXER_SOURCE_NULL] = 0;
 
@@ -242,6 +245,13 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
               entry.dst) <
               mixerCount;
 
+      if (destinationValid &&
+          entry.src == MIXER_SOURCE_THRUST)
+      {
+        motorThrustGain[static_cast<size_t>(entry.dst)] +=
+            entry.rate * 0.01f;
+      }
+
       if (sourceValid &&
           destinationValid &&
           entry.rate != 0)
@@ -257,29 +267,81 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
     }
   }
 
-  // airmode logic
-  float thrust = limitThrust(sources[MIXER_SOURCE_THRUST], (ThrottleLimitType)_model.config.output.throttleLimitType,
-                             _model.config.output.throttleLimitPercent);
+  // Use real motor extrema, not a symmetric half-range. For an unequal
+  // correction such as [-0.3, -0.3, +0.9, -0.3], the allowed collective
+  // is [-0.7, +0.1], so a +0.4 throttle request must shift to +0.1.
+  float thrust = limitThrust(
+      sources[MIXER_SOURCE_THRUST],
+      (ThrottleLimitType)_model.config.output.throttleLimitType,
+      _model.config.output.throttleLimitPercent);
+
+  const int motorLimit = _model.config.output.motorLimit;
+  const float motorUpperLimit =
+      (motorLimit < 1 || motorLimit >= 100)
+          ? 1.0f
+          : motorLimit * 0.02f - 1.0f;
+
   if (_model.isAirModeActive())
   {
-    float min = 0.f, max = 0.f;
-    for (size_t i = 0; i < mixerCount; i++)
+    bool anyMotor = false;
+    bool commonThrustGain = true;
+    float thrustGain = 0.0f;
+    float minCorrection = 0.0f;
+    float maxCorrection = 0.0f;
+
+    for (size_t i = 0; i < mixerCount; ++i)
     {
-      max = std::max(max, outputs[i]);
-      min = std::min(min, outputs[i]);
-    }
-    float range = (max - min) * 0.5f;
-    if (range > 1.f)
-    {
-      for (size_t i = 0; i < mixerCount; i++)
+      // Servo-only differential must not reduce motor headroom.
+      if (_model.config.output.channel[i].servo) continue;
+
+      if (!anyMotor)
       {
-        outputs[i] /= range;
+        minCorrection = maxCorrection = outputs[i];
+        thrustGain = motorThrustGain[i];
+        anyMotor = true;
       }
-      thrust = 0.f; // limitThrust(0.f);
+      else
+      {
+        minCorrection = std::min(minCorrection, outputs[i]);
+        maxCorrection = std::max(maxCorrection, outputs[i]);
+        if (std::fabs(motorThrustGain[i] - thrustGain) > 0.0001f)
+        {
+          commonThrustGain = false;
+        }
+      }
     }
-    else
+
+    // The collective shift is exact for the supported built-in motor
+    // mixers (and custom mixers with a common positive thrust gain).
+    // Never assume identical thrust authority for an unusual custom mix.
+    if (anyMotor && commonThrustGain && thrustGain > 0.0001f)
     {
-      thrust = std::clamp(thrust, -1.f + range, 1.f - range);
+      const float availableSpan = motorUpperLimit + 1.0f;
+      const float correctionSpan = maxCorrection - minCorrection;
+
+      if (correctionSpan > availableSpan)
+      {
+        // Only scale motor stabilization; preserve servo correction.
+        const float scale = availableSpan / correctionSpan;
+        for (size_t i = 0; i < mixerCount; ++i)
+        {
+          if (!_model.config.output.channel[i].servo) outputs[i] *= scale;
+        }
+        minCorrection *= scale;
+        maxCorrection *= scale;
+      }
+
+      const float minThrust =
+          std::max(-1.0f, (-1.0f - minCorrection) / thrustGain);
+      const float maxThrust =
+          std::min(1.0f, (motorUpperLimit - maxCorrection) / thrustGain);
+
+      // When there is no feasible collective (e.g. extreme custom
+      // correction), choose the bounded midpoint instead of invoking
+      // std::clamp with reversed limits.
+      thrust = minThrust <= maxThrust
+          ? std::clamp(thrust, minThrust, maxThrust)
+          : std::clamp((minThrust + maxThrust) * 0.5f, -1.0f, 1.0f);
     }
   }
 
@@ -339,10 +401,7 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
   bool verticalSaturationHigh = false;
   bool verticalSaturationLow = false;
 
-  const float motorUpperLimit =
-      _model.config.output.motorLimit >= 100
-          ? 1.0f
-          : (_model.config.output.motorLimit * 0.02f) - 1.0f;
+  // Share the same effective limit used by Airmode above.
 
   float verticalHeadroomHigh = 1.0f;
   float verticalHeadroomLow = 1.0f;

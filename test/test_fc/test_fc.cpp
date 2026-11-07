@@ -5063,6 +5063,90 @@ void test_mixer_invalid_output_count_fails_closed()
   }
 }
 
+void test_mixer_airmode_preserves_asymmetric_motor_differential()
+{
+  Model model;
+  model.config.mixer.yawReverse = true;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+  model.state.output.ch[AXIS_ROLL] = 0.3f;
+  model.state.output.ch[AXIS_PITCH] = 0.3f;
+  model.state.output.ch[AXIS_YAW] = 0.3f;
+  model.state.output.ch[AXIS_THRUST] = 0.4f;
+
+  Output::Mixer mixer(model);
+  float outputs[OUTPUT_CHANNELS] = {};
+  const MixerConfig config =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+
+  // Corrections are [-0.3, -0.3, +0.9, -0.3].
+  // Shift collective to +0.1: all motors stay in range while
+  // preserving the full 1.2-point stabilization differential.
+  mixer.updateMixer(config, outputs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, outputs[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, outputs[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,  1.0f, outputs[2]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.2f, outputs[3]);
+
+  // At low throttle, shift up rather than clipping the three lows.
+  model.state.output.ch[AXIS_THRUST] = -0.9f;
+  mixer.updateMixer(config, outputs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, outputs[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, outputs[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,  0.2f, outputs[2]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, outputs[3]);
+
+  // Respect a configured 80% motor limit (upper normalized +0.6).
+  model.config.output.motorLimit = 80;
+  model.state.output.ch[AXIS_THRUST] = 0.4f;
+  mixer.updateMixer(config, outputs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.6f, outputs[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.6f, outputs[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,  0.6f, outputs[2]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -0.6f, outputs[3]);
+}
+
+void test_mixer_airmode_scales_excess_differential()
+{
+  Model model;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+  model.state.output.ch[AXIS_ROLL] = 1.5f;
+  model.state.output.ch[AXIS_THRUST] = 0.4f;
+
+  Output::Mixer mixer(model);
+  float outputs[OUTPUT_CHANNELS] = {};
+  const MixerConfig config =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  mixer.updateMixer(config, outputs);
+
+  // +/-1.5 correction does not fit a 2-point motor range.
+  // Keep the relative roll demand while scaling to +/-1.
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, outputs[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, outputs[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,  1.0f, outputs[2]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f,  1.0f, outputs[3]);
+}
+
+void test_mixer_airmode_excludes_servo_from_motor_headroom()
+{
+  Model model;
+  model.config.output.channel[3].servo = true;
+  model.config.mixer.yawReverse = true;
+  model.updateModes(uint32_t{1} << MODE_AIRMODE);
+  model.state.output.ch[AXIS_YAW] = 1.5f;
+  model.state.output.ch[AXIS_THRUST] = 0.8f;
+
+  Output::Mixer mixer(model);
+  float outputs[OUTPUT_CHANNELS] = {};
+  const MixerConfig config =
+      Output::Mixers::getMixer(FC_MIXER_TRI, model.state.customMixer);
+  mixer.updateMixer(config, outputs);
+
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.8f, outputs[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.8f, outputs[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.8f, outputs[2]);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.5f, outputs[3]);
+}
+
 void test_mixer_throttle_limit_none()
 {
   Model model;
@@ -8398,6 +8482,9 @@ RUN_TEST(
   RUN_TEST(test_actuator_arming_throttle);
   RUN_TEST(test_mixer_invalid_custom_entries_are_ignored);
   RUN_TEST(test_mixer_invalid_output_count_fails_closed);
+  RUN_TEST(test_mixer_airmode_preserves_asymmetric_motor_differential);
+  RUN_TEST(test_mixer_airmode_scales_excess_differential);
+  RUN_TEST(test_mixer_airmode_excludes_servo_from_motor_headroom);
   RUN_TEST(test_mixer_throttle_limit_none);
   RUN_TEST(test_mixer_throttle_limit_scale);
   RUN_TEST(test_mixer_throttle_limit_clip);
