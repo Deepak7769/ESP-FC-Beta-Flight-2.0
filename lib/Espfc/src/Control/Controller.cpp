@@ -1209,8 +1209,12 @@ void Controller::updateAntiGravity()
   // Betaflight constants define the Anti-Gravity gain demand. When
   // ESPFC_ANTI_GRAVITY_ACTIVE is compiled, innerLoop() applies the demand to
   // roll/pitch while this remains the single detector/calculation path.
+  // Betaflight's 0.34 is in deg/s PID units; ESP-FC PID inputs
+  // are radians/s, with normalized outputs (1/1000). Convert the
+  // additive Ki with the same deg->rad normalization as ITERM_SCALE.
+  // Without this conversion the injected I gain is ~17.5x too high.
   constexpr float ANTIGRAVITY_KI =
-      0.34f;
+      0.34f * Utils::toDeg(1.0f) * 0.001f;
 
   constexpr float ANTIGRAVITY_KP =
       0.0034f;

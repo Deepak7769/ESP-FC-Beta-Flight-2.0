@@ -2233,6 +2233,16 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
       model.state.antiGravity.pMultiplier >=
       1.0f);
 
+  // Betaflight Ki and the ESP-FC roll/pitch I-term must be expressed
+  // in the same normalized rad/s rate-controller units.
+  const float expectedNormalizedKi =
+      0.34f * Utils::toDeg(1.0f) * 0.001f;
+  TEST_ASSERT_TRUE(model.state.antiGravity.scaledDerivative > 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.0001f,
+      model.state.antiGravity.scaledDerivative * expectedNormalizedKi,
+      model.state.antiGravity.iAccelerator);
+
 #if defined(ESPFC_ANTI_GRAVITY_ACTIVE)
   TEST_ASSERT_TRUE(
       model.state.antiGravity.ratePidApplied);
