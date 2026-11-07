@@ -121,6 +121,45 @@ static void setHealthyAssistedEstimatorState(
 // // clean stuff up here
 // }
 
+void test_actuator_land_health_rejects_nonfinite_estimator_components()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 2700000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  Actuator actuator(model);
+
+  TEST_ASSERT_TRUE(actuator.attitudeEstimateHealthy());
+  TEST_ASSERT_TRUE(actuator.altitudeEstimateHealthy());
+
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  model.state.attitude.euler.set(AXIS_YAW, nan);
+  TEST_ASSERT_FALSE(actuator.attitudeEstimateHealthy());
+  TEST_ASSERT_FALSE(actuator.altitudeEstimateHealthy());
+
+  model.state.attitude.euler.set(AXIS_YAW, 0.0f);
+  model.state.attitude.cosTheta = nan;
+  TEST_ASSERT_FALSE(actuator.attitudeEstimateHealthy());
+  TEST_ASSERT_FALSE(actuator.altitudeEstimateHealthy());
+
+  model.state.attitude.cosTheta = 1.0f;
+  model.state.altitude.acceleration = nan;
+  TEST_ASSERT_TRUE(actuator.attitudeEstimateHealthy());
+  TEST_ASSERT_FALSE(actuator.altitudeEstimateHealthy());
+
+  model.state.altitude.acceleration = 0.0f;
+  TEST_ASSERT_TRUE(actuator.altitudeEstimateHealthy());
+}
+
 void test_timer_rate_100hz()
 {
   Timer timer;
@@ -8824,6 +8863,7 @@ void test_mixer_vertical_saturation_feedback_is_directional()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);
   RUN_TEST(test_timer_rate_100hz_div2);
   RUN_TEST(test_timer_interval_10ms);

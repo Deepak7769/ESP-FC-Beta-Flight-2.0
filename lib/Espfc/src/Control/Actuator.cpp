@@ -885,6 +885,10 @@ bool Actuator::attitudeEstimateHealthy() const
           attitude.euler[AXIS_ROLL]) &&
       std::isfinite(
           attitude.euler[AXIS_PITCH]) &&
+      std::isfinite(
+          attitude.euler[AXIS_YAW]) &&
+      std::isfinite(
+          attitude.cosTheta) &&
       std::isfinite(q.w) &&
       std::isfinite(q.x) &&
       std::isfinite(q.y) &&
@@ -959,7 +963,9 @@ bool Actuator::altitudeEstimateHealthy() const
       std::isfinite(
           altitude.height) &&
       std::isfinite(
-          altitude.vario);
+          altitude.vario) &&
+      std::isfinite(
+          altitude.acceleration);
 }
 
 void Actuator::updateFailsafeLand()
