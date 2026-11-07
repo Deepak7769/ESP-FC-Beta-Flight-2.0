@@ -1475,6 +1475,10 @@ constexpr uint32_t
 
 const bool attitudeFresh =
     attitude.healthy &&
+    std::isfinite(attitude.euler[AXIS_ROLL]) &&
+    std::isfinite(attitude.euler[AXIS_PITCH]) &&
+    std::isfinite(attitude.euler[AXIS_YAW]) &&
+    std::isfinite(attitude.cosTheta) &&
     static_cast<uint32_t>(
         now -
         attitude.lastUpdateUs) <
@@ -1489,6 +1493,14 @@ const bool assistedBaroFresh =
         now -
         baro.lastUpdateUs) <
         BARO_STALE_US;
+
+// A healthy flag alone cannot authorize an assisted control path if
+// a stale or corrupted estimator value has become non-finite.
+const bool altitudeValid =
+    altitude.healthy &&
+    std::isfinite(altitude.height) &&
+    std::isfinite(altitude.vario) &&
+    std::isfinite(altitude.acceleration);
 
 float dt =
     nominalDt;
@@ -1724,7 +1736,7 @@ navigationIn.gpsValid =
     gps.fix &&
     gps.fixType >= 3;
 navigationIn.attitudeValid = attitudeFresh;
-navigationIn.altitudeValid = altitude.healthy;
+navigationIn.altitudeValid = altitudeValid;
 navigationIn.gpsAgeUs =
     gps.lastMsgTs == 0
         ? UINT32_MAX
@@ -1844,7 +1856,7 @@ rescueIn.armed =
 rescueIn.homeValid = navigation.homeValid;
 rescueIn.gpsValid = navigationIn.gpsValid;
 rescueIn.attitudeHealthy = attitudeFresh;
-rescueIn.altitudeHealthy = altitude.healthy;
+rescueIn.altitudeHealthy = altitudeValid;
 rescueIn.positionValid = navigation.positionValid;
 rescueIn.velocityValid = navigation.velocityValid;
 rescueIn.sats = gps.numSats;
@@ -2163,7 +2175,7 @@ const bool altActive =
     (_model.isModeActive(MODE_ALTHOLD) ||
      landingV2Requested ||
      gpsRescueState.active) &&
-    altitude.healthy &&
+    altitudeValid &&
     attitudeFresh &&
     assistedBaroFresh;
 

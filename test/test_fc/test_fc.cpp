@@ -519,6 +519,67 @@ void test_controller_navigation_angle_owns_rate_targets_without_angle_switch()
       model.state.setpoint.rate[AXIS_PITCH]);
 }
 
+void test_controller_assisted_modes_reject_nonfinite_sensor_state()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 2600000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+  model.updateModes((uint32_t{1} << MODE_ANGLE) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  model.state.attitude.euler.set(AXIS_ROLL, nan);
+  controller.update();
+  TEST_ASSERT_FALSE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.setpoint.rate[AXIS_ROLL]);
+
+  model.state.attitude.euler.set(AXIS_ROLL, 0.0f);
+  model.state.attitude.cosTheta = nan;
+  controller.update();
+  TEST_ASSERT_FALSE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.attitude.cosTheta = 1.0f;
+  model.state.altitude.height = nan;
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = nan;
+  controller.update();
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = nan;
+  controller.update();
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+
+  model.state.altitude.acceleration = 0.0f;
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.assistedMode.altitudeActive);
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+}
+
 void test_controller_angle_v2_activates_and_slews()
 {
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
@@ -8778,6 +8839,7 @@ RUN_TEST(test_controller_angle_mode_does_not_latch_fterm_scale);
 
 // Angle V2 controller regression tests
 RUN_TEST(test_controller_navigation_angle_owns_rate_targets_without_angle_switch);
+RUN_TEST(test_controller_assisted_modes_reject_nonfinite_sensor_state);
 RUN_TEST(
     test_controller_angle_v2_activates_and_slews);
 
