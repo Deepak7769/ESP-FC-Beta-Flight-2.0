@@ -939,6 +939,45 @@ void test_pid_update_i_relax()
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.00f, pid.fTerm);
 }
 
+void test_pid_measured_delta_updates_i_d_and_feedforward()
+{
+  Pid iPid;
+  iPid.rate = 100.f;
+  iPid.Kp = 0.f;
+  iPid.Ki = 1.f;
+  iPid.begin();
+  iPid.dt = 0.02f;
+  iPid.update(1.f, 0.f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.02f, iPid.iTerm);
+  iPid.dt = 0.005f;
+  iPid.update(1.f, 0.f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.025f, iPid.iTerm);
+
+  Pid dPid;
+  dPid.rate = 100.f;
+  dPid.Kp = 0.f;
+  dPid.Kd = 0.1f;
+  dPid.begin();
+  dPid.dt = 0.02f;
+  dPid.update(0.f, 0.1f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.5f, dPid.dTerm);
+
+  Pid fPid;
+  fPid.rate = 100.f;
+  fPid.Kp = 0.f;
+  fPid.Kf = 0.01f;
+  fPid.begin();
+  fPid.dt = 0.02f;
+  fPid.update(0.5f, 0.f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.25f, fPid.fTerm);
+
+  // Non-finite timing falls back to the configured nominal interval.
+  iPid.iTerm = 0.f;
+  iPid.dt = std::numeric_limits<float>::infinity();
+  iPid.update(1.f, 0.f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.01f, iPid.iTerm);
+}
+
 void test_pid_update_d()
 {
   Pid pid;
@@ -1400,6 +1439,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_pid_saturation_unwinds_without_reversing_iterm);
   RUN_TEST(test_pid_update_i_relax);
   RUN_TEST(test_pid_update_d);
+  RUN_TEST(test_pid_measured_delta_updates_i_d_and_feedforward);
   RUN_TEST(test_pid_update_f);
   RUN_TEST(test_pid_update_sum);
   RUN_TEST(test_pid_update_sum_limit);

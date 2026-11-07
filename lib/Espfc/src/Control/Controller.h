@@ -66,6 +66,10 @@ private:
   bool _hoverThrustInitialized = false;
 
   uint32_t _assistedLastUpdateUs = 0;
+
+  // Timestamp of the last valid gyro sample processed by the rate PID.
+  // Unlike the scheduler divider, this does not advance on failed reads.
+  uint32_t _lastRateSampleUs = 0;
 // Position hold (MODE_POSHOLD) controller and transition state.
 PositionHold _posHold;
 bool _posHoldWasReady = false;

@@ -2,6 +2,7 @@
 #include "Utils/Math.hpp"
 #include "Utils/MemoryHelper.h"
 #include <algorithm>
+#include <cmath>
 
 namespace Espfc::Control {
 
@@ -16,7 +17,7 @@ Pid::Pid()
 
 void Pid::begin()
 {
-  dt = 1.f / rate;
+  dt = 1.f / std::max(rate, 1.f);
 }
 
 void Pid::resetIterm()
@@ -32,6 +33,12 @@ float FAST_CODE_ATTR Pid::update(
     float pMultiplier,
     float iGainAdd)
 {
+  // The scheduler supplies bounded measured sample time through dt.
+  // Keep rate unchanged: filter coefficients are configured at nominal Hz.
+  const float sampleDt = (std::isfinite(dt) && dt > 0.f)
+      ? dt : 1.f / std::max(rate, 1.f);
+  const float derivativeRate = 1.f / sampleDt;
+
   error = setpoint - measurement;
    const float tpa =
     std::clamp(tpaFactor, 0.0f, 1.0f);
@@ -70,7 +77,7 @@ float FAST_CODE_ATTR Pid::update(
       if (!incrementOnly || increasing) iTermError *= itermRelaxFactor;
     }
 
-    const float proposedIterm = iTerm + effectiveIGain * iTermError * dt;
+    const float proposedIterm = iTerm + effectiveIGain * iTermError * sampleDt;
     // Actuator saturation blocks further windup, but never blocks unwinding.
     // Clamping to [min(old I, 0), max(old I, 0)] also prevents crossing zero.
     iTerm = outputSaturated
@@ -87,7 +94,7 @@ float FAST_CODE_ATTR Pid::update(
   if (Kd > 0.f && dScale > 0.f)
   {
     // dTerm = (Kd * dScale * (((error - prevError) * dGamma) + (prevMeasurement - measure) * (1.f - dGamma)) / dt);
-    dTerm = Kd * dScale * ((prevMeasurement - measurement) * rate);
+    dTerm = Kd * dScale * ((prevMeasurement - measurement) * derivativeRate);
     dTerm = dtermNotchFilter.update(dTerm);
     dTerm = dtermFilter.update(dTerm);
     dTerm = dtermFilter2.update(dTerm);
@@ -103,7 +110,7 @@ float FAST_CODE_ATTR Pid::update(
   {
     if (ftermDerivative)
     {
-      fTerm = Kf * fScale * (setpoint - prevSetpoint) * rate;
+      fTerm = Kf * fScale * (setpoint - prevSetpoint) * derivativeRate;
     }
     else
     {

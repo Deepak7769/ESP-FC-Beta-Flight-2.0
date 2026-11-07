@@ -104,6 +104,9 @@ _altHoldVerticalAccelerationTarget =
 _assistedLastUpdateUs =
     0;
 
+_lastRateSampleUs =
+    0;
+
 _antiGravityPrimed =
     false;
 
@@ -166,6 +169,30 @@ int Controller::reload(ModelChangeEvent event)
 
 int FAST_CODE_ATTR Controller::update()
 {
+  // Compute PID integration/derivative time from *valid* gyro samples.
+  // The loopTimer scheduler advances across a failed transaction, and
+  // its delta would therefore hide a skipped control update.
+  const uint32_t sampleUs = _model.state.gyro.lastUpdateUs;
+  uint32_t elapsedUs = 0;
+  if (sampleUs != 0 && _lastRateSampleUs != 0 &&
+      sampleUs != _lastRateSampleUs)
+  {
+    elapsedUs = sampleUs - _lastRateSampleUs;  // uint32 wrap-safe
+  }
+  if (sampleUs != 0) _lastRateSampleUs = sampleUs;
+
+  for (size_t axis = 0; axis < AXIS_COUNT_RPYT; ++axis)
+  {
+    auto& pid = _model.state.innerPid[axis];
+    const float nominalDt = 1.f / std::max(pid.rate, 1.f);
+    // Bound outlier intervals: preserve missed-cycle response without
+    // integrating a long stall or dividing derivatives by near-zero dt.
+    const float observedDt = elapsedUs
+        ? static_cast<float>(elapsedUs) * 0.000001f
+        : nominalDt;
+    pid.dt = std::clamp(observedDt, nominalDt * 0.5f, nominalDt * 4.f);
+  }
+
   uint32_t startTime = 0;
   if (_model.config.debug.mode == DEBUG_PIDLOOP)
   {

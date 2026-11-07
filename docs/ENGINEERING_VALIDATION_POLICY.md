@@ -35,3 +35,10 @@ These links are **behavioral reference material**, not a certification of any co
 Baseline → timing/PID/mixer validation → Angle V2 → Anti-Gravity → AltHold V2 → Land V2.
 Treat GPS Rescue/Position Hold interfaces as dependencies requiring checks when Angle/Altitude mode ownership changes.
 External HC-SR04 is out of scope. Avoid changing unrelated sensor handling as an implied prerequisite.
+
+## Measured gyro sample interval review (timing/PID repair)
+
+- **Reference:** [PX4 MulticopterRateControl.cpp](https://github.com/PX4/PX4-Autopilot/blob/main/src/modules/mc_rate_control/MulticopterRateControl.cpp) uses gyro `timestamp_sample` for a measured, bounded `dt`; [PX4 rate_control.cpp](https://github.com/PX4/PX4-Autopilot/blob/main/src/lib/rate_control/rate_control.cpp) uses that `dt` for integrator updates. [ArduPilot AC_PID.cpp](https://github.com/ArduPilot/ardupilot/blob/master/libraries/AC_PID/AC_PID.cpp) also explicitly takes `dt`.
+- **Our adaptation:** `GyroSensor::read` timestamps successful gyro samples; `Controller` subtracts successive successful timestamps, not the timer divider that also advances after failed reads. Initialize to nominal interval, and constrain accepted elapsed intervals to 0.5–4.0 times the configured PID period. This bound is intentionally specific to our configured control period, rather than copying PX4's absolute 0.125–20ms limits.
+- **PID math:** I uses elapsed seconds; D and derivative feedforward use its inverse; P does not depend on elapsed time. Filter coefficients remain configured at nominal sample rate until a separate, measured-frequency filter review.
+- **Tests:** integration and derivative/feedforward scaling, missing gyro-cycle interval, nominal recovery, long-stall clamp, repeated timestamp, non-finite time fallback. Hardware CPU latency, actual gyro scheduler jitter, and motor/ESC waveforms still require instrumentation before flight.

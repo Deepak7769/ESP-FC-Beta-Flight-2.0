@@ -369,6 +369,56 @@ void test_controller_rates_limit()
   TEST_ASSERT_FLOAT_WITHIN(0.01f, -6.98f, controller.calculateSetpointRate(AXIS_YAW, 1.0f));
 }
 
+void test_controller_pid_dt_tracks_successful_gyro_samples()
+{
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+
+  Controller controller(model);
+  controller.begin();
+
+  const float nominalDt = model.state.innerPid[AXIS_ROLL].dt;
+  const uint32_t nominalUs = model.state.loopTimer.interval;
+
+  model.state.gyro.lastUpdateUs = 100000u;
+  controller.update();  // First valid sample: nominal fallback.
+  TEST_ASSERT_FLOAT_WITHIN(0.000001f, nominalDt,
+                           model.state.innerPid[AXIS_ROLL].dt);
+
+  // A skipped update must be integrated over two real sample periods.
+  model.state.gyro.lastUpdateUs += nominalUs * 2u;
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.000005f, 2.f * nominalDt,
+                           model.state.innerPid[AXIS_ROLL].dt);
+  TEST_ASSERT_FLOAT_WITHIN(0.000005f, 2.f * nominalDt,
+                           model.state.innerPid[AXIS_THRUST].dt);
+
+  // Ordinary cadence restores nominal PID timing.
+  model.state.gyro.lastUpdateUs += nominalUs;
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.000005f, nominalDt,
+                           model.state.innerPid[AXIS_ROLL].dt);
+
+  // Large stalls must not yield unbounded I / tiny D.
+  model.state.gyro.lastUpdateUs += nominalUs * 200u;
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.000005f, 4.f * nominalDt,
+                           model.state.innerPid[AXIS_ROLL].dt);
+
+  // A repeated timestamp is not a zero-second derivative interval.
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.000005f, nominalDt,
+                           model.state.innerPid[AXIS_ROLL].dt);
+}
+
 void test_controller_angle_mode_does_not_latch_fterm_scale()
 {
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
@@ -8249,6 +8299,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_model_inner_pid_init);
   RUN_TEST(test_controller_rates);
 RUN_TEST(test_controller_rates_limit);
+RUN_TEST(test_controller_pid_dt_tracks_successful_gyro_samples);
 RUN_TEST(test_controller_angle_mode_does_not_latch_fterm_scale);
 
 // Angle V2 controller regression tests
