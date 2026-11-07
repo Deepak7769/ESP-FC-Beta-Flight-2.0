@@ -158,6 +158,10 @@ void test_actuator_land_health_rejects_nonfinite_estimator_components()
 
   model.state.altitude.acceleration = 0.0f;
   TEST_ASSERT_TRUE(actuator.altitudeEstimateHealthy());
+
+  // The next tests verify exact micros() call counts. Clear FakeIt call
+  // history and the AlwaysReturn stub; otherwise those timer tests abort.
+  ArduinoFakeReset();
 }
 
 void test_timer_rate_100hz()
