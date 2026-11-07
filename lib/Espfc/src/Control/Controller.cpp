@@ -92,6 +92,9 @@ _altHoldWasActive =
 _altHoldV2OutputWasActive =
     false;
 
+_manualThrottleHandoffActive =
+    false;
+
 _altHoldAltitudeTarget =
     0.0f;
 
@@ -654,6 +657,7 @@ auto& verticalPid =
 
 if (altHoldV2OutputActive)
 {
+  _manualThrottleHandoffActive = false;
   if (!_altHoldV2OutputWasActive)
   {
     // --------------------------------------------------
@@ -839,6 +843,7 @@ if (altHoldV2OutputActive)
 }
 else if (legacyAltHoldActive)
 {
+  _manualThrottleHandoffActive = false;
   output.ch[AXIS_THRUST] =
       verticalPid.update(
           setpoint.rate[AXIS_THRUST],
@@ -855,6 +860,7 @@ else if (
 {
   // GPS Rescue has strict no-drop semantics. During fault evaluation and
   // the GPS-origin LAND handoff, preserve the last thrust command.
+  _manualThrottleHandoffActive = false;
   verticalPid.update(
       0.0f,
       altitude.vario);
@@ -886,9 +892,44 @@ else
           verticalPid.iLimitLow,
           verticalPid.iLimitHigh);
 
-  output.ch[AXIS_THRUST] =
-      setpoint.rate[
-          AXIS_THRUST];
+  const float pilotThrust =
+      std::clamp(setpoint.rate[AXIS_THRUST], -1.0f, 1.0f);
+
+  // Never delay failsafe/disarm or an invalid receiver. Only a healthy
+  // switch from authoritative AltHold to manual throttle can slew.
+  const bool canHandoff =
+      _model.isModeActive(MODE_ARMED) &&
+      _model.state.input.channelsValid &&
+      !_model.state.input.rxLoss &&
+      !_model.state.input.rxFailSafe &&
+      !_model.state.failsafe.landingRequested;
+
+  if (_altHoldV2OutputWasActive && canHandoff)
+  {
+    _manualThrottleHandoffActive = true;
+  }
+
+  if (_manualThrottleHandoffActive && canHandoff)
+  {
+    // Normalized [-1,+1] throttle, maximum 4 units/s: even a full
+    // 2-unit mismatch settles within 0.5s at nominal 1kHz.
+    // Use bounded measured PID dt so a delayed loop cannot jump.
+    const float maxStep = 4.0f *
+        std::clamp(verticalPid.dt, 0.00025f, 0.02f);
+    const float step = std::clamp(
+        pilotThrust - output.ch[AXIS_THRUST], -maxStep, maxStep);
+    output.ch[AXIS_THRUST] =
+        std::clamp(output.ch[AXIS_THRUST] + step, -1.0f, 1.0f);
+    if (std::fabs(output.ch[AXIS_THRUST] - pilotThrust) < 0.0001f)
+    {
+      _manualThrottleHandoffActive = false;
+    }
+  }
+  else
+  {
+    _manualThrottleHandoffActive = false;
+    output.ch[AXIS_THRUST] = pilotThrust;
+  }
 
   _altHoldV2OutputWasActive =
       false;

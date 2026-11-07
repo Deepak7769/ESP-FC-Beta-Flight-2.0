@@ -56,6 +56,9 @@ private:
   // Tracks ownership of thrust output so AltHold V2
   // can enter without a thrust discontinuity.
   bool _altHoldV2OutputWasActive = false;
+  // Valid armed AltHold -> manual handoff: transition only until the
+  // pilot's real throttle is reached; reset on disarm/failsafe/re-entry.
+  bool _manualThrottleHandoffActive = false;
 
   float _altHoldAltitudeTarget = 0.0f;
   float _altHoldVerticalRateTarget = 0.0f;

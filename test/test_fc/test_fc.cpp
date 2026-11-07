@@ -2904,6 +2904,96 @@ void test_controller_althold_v2_inactive_build_does_not_drive_thrust()
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
 
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+void test_controller_althold_exit_limits_manual_throttle_step_and_releases()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 1000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, NOW);
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+  model.state.output.ch[AXIS_THRUST] = 0.25f;
+
+  model.updateModes((uint32_t{1} << MODE_ARMED) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+  controller.update();
+  const float assistedOutput = model.state.output.ch[AXIS_THRUST];
+  TEST_ASSERT_FLOAT_WITHIN(0.002f, 0.25f, assistedOutput);
+
+  // Pilot input is substantially below assisted hover output.
+  // Leaving AltHold must not cause a full motor-thrust discontinuity.
+  model.state.input.ch[AXIS_THRUST] = -0.8f;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  controller.update();
+  TEST_ASSERT_TRUE(model.state.output.ch[AXIS_THRUST] < assistedOutput);
+  TEST_ASSERT_TRUE(model.state.output.ch[AXIS_THRUST] > assistedOutput - 0.01f);
+
+  // The transition must eventually release direct throttle control.
+  for (int i = 0; i < 500; ++i) controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.8f, model.state.output.ch[AXIS_THRUST]);
+  model.state.input.ch[AXIS_THRUST] = -0.5f;
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.5f, model.state.output.ch[AXIS_THRUST]);
+}
+
+void test_controller_althold_exit_disarm_bypasses_throttle_handoff()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 1000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, NOW);
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW;
+  model.state.input.ch[ALTHOLD_PILOT_CHANNEL] = 0.0f;
+  model.state.output.ch[AXIS_THRUST] = 0.25f;
+
+  model.updateModes((uint32_t{1} << MODE_ARMED) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+  controller.update();
+  model.state.input.ch[AXIS_THRUST] = -1.0f;
+  model.updateModes(0);
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -1.0f, model.state.output.ch[AXIS_THRUST]);
+
+  // A lost/invalid receiver also cannot leave a hidden throttle ramp
+  // running after the pilot has left assisted control.
+  model.updateModes((uint32_t{1} << MODE_ARMED) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+  model.state.input.ch[AXIS_THRUST] = 0.25f;
+  controller.update();
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  model.state.input.ch[AXIS_THRUST] = -0.9f;
+  model.state.input.rxLoss = true;
+  controller.update();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.9f, model.state.output.ch[AXIS_THRUST]);
+}
+#endif
+
 void test_controller_althold_v2_active_path_is_bumpless_and_corrective()
 {
   ArduinoFakeReset();
@@ -8416,6 +8506,8 @@ RUN_TEST(
 #endif
 
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+RUN_TEST(test_controller_althold_exit_limits_manual_throttle_step_and_releases);
+RUN_TEST(test_controller_althold_exit_disarm_bypasses_throttle_handoff);
 RUN_TEST(
     test_controller_althold_v2_active_path_is_bumpless_and_corrective);
 
