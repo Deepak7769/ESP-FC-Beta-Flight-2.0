@@ -5129,6 +5129,7 @@ void test_mixer_airmode_scales_excess_differential()
 void test_mixer_airmode_excludes_servo_from_motor_headroom()
 {
   Model model;
+  model.config.mixer.type = FC_MIXER_TRI;
   model.config.output.channel[3].servo = true;
   model.config.mixer.yawReverse = true;
   model.updateModes(uint32_t{1} << MODE_AIRMODE);
