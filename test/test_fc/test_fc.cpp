@@ -459,6 +459,65 @@ void test_controller_angle_mode_does_not_latch_fterm_scale()
 // V2 ASSISTED MODE CONTROLLER TESTS
 // =========================================================
 
+void test_controller_navigation_angle_owns_rate_targets_without_angle_switch()
+{
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
+
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+
+  // Roll/pitch sticks intentionally request rates different from Angle V2.
+  model.state.input.ch[AXIS_ROLL] = 0.7f;
+  model.state.input.ch[AXIS_PITCH] = -0.7f;
+  model.updateModes(0);
+  model.state.posHold.requested = true;
+  model.state.angleV2.active = true;
+  model.state.angleV2.rateTarget[AXIS_ROLL] = 0.24f;
+  model.state.angleV2.rateTarget[AXIS_PITCH] = -0.19f;
+
+  controller.outerLoop();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.24f, model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.19f, model.state.setpoint.rate[AXIS_PITCH]);
+
+  // A requested mode with unhealthy attitude must not reuse a stale rate.
+  model.state.angleV2.active = false;
+  model.state.setpoint.rate[AXIS_ROLL] = 0.5f;
+  model.state.setpoint.rate[AXIS_PITCH] = -0.5f;
+  controller.outerLoop();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, model.state.setpoint.rate[AXIS_PITCH]);
+
+  // GPS Rescue also owns Angle rate targets without the ANGLE AUX switch.
+  model.state.posHold.requested = false;
+  model.state.gpsRescue.active = true;
+  model.state.gpsRescue.controlling = true;
+  model.state.angleV2.active = true;
+  model.state.angleV2.rateTarget[AXIS_ROLL] = -0.16f;
+  model.state.angleV2.rateTarget[AXIS_PITCH] = 0.12f;
+  controller.outerLoop();
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.16f, model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.12f, model.state.setpoint.rate[AXIS_PITCH]);
+
+  // Leaving navigation returns the roll/pitch rates to manual stick mapping.
+  model.state.gpsRescue.active = false;
+  model.state.angleV2.active = false;
+  controller.outerLoop();
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.0001f, controller.calculateSetpointRate(AXIS_ROLL, 0.7f),
+      model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(
+      0.0001f, controller.calculateSetpointRate(AXIS_PITCH, -0.7f),
+      model.state.setpoint.rate[AXIS_PITCH]);
+}
+
 void test_controller_angle_v2_activates_and_slews()
 {
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
@@ -8303,6 +8362,7 @@ RUN_TEST(test_controller_pid_dt_tracks_successful_gyro_samples);
 RUN_TEST(test_controller_angle_mode_does_not_latch_fterm_scale);
 
 // Angle V2 controller regression tests
+RUN_TEST(test_controller_navigation_angle_owns_rate_targets_without_angle_switch);
 RUN_TEST(
     test_controller_angle_v2_activates_and_slews);
 

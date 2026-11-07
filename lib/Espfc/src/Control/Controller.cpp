@@ -332,8 +332,13 @@ void FAST_CODE_ATTR Controller::outerLoop()
   // -----------------------------------------------------
 
 
+// Navigation-generated attitude targets must pass through the same
+// Angle V2 rate loop, even when the pilot's ANGLE switch is off.
+// requested POSHOLD has a pilot-angle fallback when not controlling.
 if (_model.isModeActive(MODE_ANGLE) ||
-    landingV2Requested)
+    landingV2Requested ||
+    _model.state.posHold.requested ||
+    _model.state.gpsRescue.active)
 {
   const auto& angleV2 =
       _model.state.angleV2;
@@ -352,7 +357,7 @@ if (_model.isModeActive(MODE_ANGLE) ||
   }
   else
   {
-    // Angle/LAND was requested, but Angle V2 cannot
+    // Assisted attitude control was requested, but Angle V2 cannot
     // provide a valid target. Do not reuse stale data.
     _model.state.setpoint.rate[
         AXIS_ROLL] =
