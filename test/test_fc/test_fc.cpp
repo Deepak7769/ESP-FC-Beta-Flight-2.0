@@ -4245,6 +4245,77 @@ void test_failsafe_land_v2_bad_estimator_falls_back_to_disarm()
           .landingOutputBlocked);
 }
 
+void test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 5000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.altitude.height = 0.10f;  // Launch-relative, not AGL!
+  model.state.altitude.vario = 0.02f;
+  model.state.output.ch[AXIS_THRUST] = -0.20f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = NOW_US;
+  model.state.rangefinder.distance = 1.50f;  // Definitely airborne
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 3000000u;
+  model.state.failsafe.landingEntryHeight = 2.0f;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 1000000u;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+
+  // A stale sensor must never silently promote takeoff-relative baro
+  // height back into trusted current-ground clearance.
+  model.state.rangefinder.lastUpdateUs = NOW_US - 100001u;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 1000000u;
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+}
+
+void test_failsafe_land_rangefinder_confirms_ground_above_takeoff_elevation()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 5500000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.lastUpdateUs = NOW_US;
+  model.state.altitude.height = 5.0f; // Elevated terrain above takeoff.
+  model.state.altitude.vario = 0.02f;
+  model.state.output.ch[AXIS_THRUST] = -0.20f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = NOW_US;
+  model.state.rangefinder.distance = 0.10f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 3000000u;
+  model.state.failsafe.landingEntryHeight = 6.0f;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 1000000u;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
+}
+
 void test_failsafe_land_v2_touchdown_dwell_disarms()
 {
   ArduinoFakeReset();
@@ -8804,6 +8875,8 @@ RUN_TEST(
 
 RUN_TEST(
     test_failsafe_land_v2_touchdown_dwell_disarms);
+RUN_TEST(test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown);
+RUN_TEST(test_failsafe_land_rangefinder_confirms_ground_above_takeoff_elevation);
 
 RUN_TEST(
     test_failsafe_land_v2_touchdown_candidate_has_hysteresis);

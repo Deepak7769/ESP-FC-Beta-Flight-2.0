@@ -1214,9 +1214,31 @@ void Actuator::updateFailsafeLand()
             failsafe.landingEntryHeight <=
                 LOW_ENTRY_HEIGHT_M;
 
+        // A barometric height is relative to the takeoff reference,
+        // not a measurement of clearance above sloped or raised terrain.
+        // A present rangefinder owns the ground-clearance check. If its
+        // reading is stale or invalid, do not fall through to misleading
+        // launch-relative barometric height for automatic motor disarm.
+        const auto& groundSensor = _model.state.rangefinder;
+        const bool groundSensorFresh =
+            groundSensor.present &&
+            groundSensor.sampleValid &&
+            groundSensor.lastUpdateUs != 0u &&
+            static_cast<uint32_t>(now - groundSensor.lastUpdateUs) <
+                100000u &&
+            std::isfinite(groundSensor.distance) &&
+            groundSensor.distance >= 0.0f;
+
+        const bool groundReferenceUsable =
+            !groundSensor.present || groundSensorFresh;
+        const float groundClearance =
+            groundSensor.present
+                ? groundSensor.distance
+                : altitude.height;
+
         const bool nearGround =
-            altitude.height <=
-            TOUCHDOWN_HEIGHT_M;
+            groundReferenceUsable &&
+            groundClearance <= TOUCHDOWN_HEIGHT_M;
 
         // Mature multicopter landing detectors do not declare touchdown from
         // low vertical speed alone: they also require evidence that thrust has
@@ -1309,7 +1331,8 @@ void Actuator::updateFailsafeLand()
             std::fabs(
                 altitude.vario) <=
                 TOUCHDOWN_HOLD_VARIO_MS &&
-            altitude.height <=
+            groundReferenceUsable &&
+            groundClearance <=
                 TOUCHDOWN_HOLD_HEIGHT_M &&
             descentEvidence &&
             std::isfinite(
