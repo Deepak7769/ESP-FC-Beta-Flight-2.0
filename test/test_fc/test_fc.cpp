@@ -658,6 +658,7 @@ void test_controller_assisted_modes_reject_nonfinite_sensor_state()
   model.state.altitude.vario = nan;
   controller.update();
   TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+  TEST_ASSERT_TRUE(std::isfinite(model.state.output.ch[AXIS_THRUST]));
 
   model.state.altitude.vario = 0.0f;
   model.state.altitude.acceleration = nan;
@@ -668,6 +669,52 @@ void test_controller_assisted_modes_reject_nonfinite_sensor_state()
   controller.update();
   TEST_ASSERT_TRUE(model.state.assistedMode.altitudeActive);
   TEST_ASSERT_TRUE(model.state.angleV2.active);
+  // Mode eligibility alone is not enough: after NaN has passed through the
+  // inactive path, actual actuator thrust must recover and remain finite.
+  TEST_ASSERT_TRUE(std::isfinite(model.state.output.ch[AXIS_THRUST]));
+  for (int i = 0; i < 10; ++i)
+  {
+    controller.update();
+    TEST_ASSERT_TRUE(std::isfinite(model.state.output.ch[AXIS_THRUST]));
+  }
+}
+
+
+void test_pid_nonfinite_measurement_resets_recursive_derivative_state()
+{
+  Control::Pid pid;
+  pid.rate = 1000.0f;
+  pid.begin();
+  pid.Kp = 0.12f;
+  pid.Ki = 0.6f;
+  pid.Kd = 0.2f;
+  pid.iLimitLow = -1.0f;
+  pid.iLimitHigh = 1.0f;
+  pid.dtermFilter.begin(FilterConfig(FILTER_PT1, 10), 1000);
+
+  for (int i = 0; i < 50; ++i)
+  {
+    TEST_ASSERT_TRUE(std::isfinite(pid.update(0.1f, 0.15f)));
+  }
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, pid.update(0.1f, nan));
+  TEST_ASSERT_TRUE(std::isfinite(pid.iTerm));
+  TEST_ASSERT_TRUE(std::isfinite(pid.dTerm));
+
+  // First healthy sample must not inject a derivative kick; recursive
+  // history must stay finite through a sustained recovery.
+  TEST_ASSERT_TRUE(std::isfinite(pid.update(0.1f, 0.15f)));
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, pid.dTerm);
+  for (int i = 0; i < 1000; ++i)
+  {
+    TEST_ASSERT_TRUE(std::isfinite(pid.update(0.1f, 0.15f)));
+    TEST_ASSERT_TRUE(std::isfinite(pid.dTerm));
+  }
+
+  // A previously poisoned filter must also be detectable and recoverable.
+  pid.dtermFilter._state.pt1.v = nan;
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, pid.update(0.1f, 0.15f));
+  TEST_ASSERT_TRUE(std::isfinite(pid.update(0.1f, 0.15f)));
 }
 
 void test_controller_angle_v2_activates_and_slews()
@@ -8962,6 +9009,7 @@ RUN_TEST(test_controller_angle_mode_does_not_latch_fterm_scale);
 RUN_TEST(test_controller_navigation_angle_owns_rate_targets_without_angle_switch);
 RUN_TEST(test_controller_assisted_rejects_stale_estimator_independently_of_baro);
 RUN_TEST(test_controller_assisted_modes_reject_nonfinite_sensor_state);
+RUN_TEST(test_pid_nonfinite_measurement_resets_recursive_derivative_state);
 RUN_TEST(
     test_controller_angle_v2_activates_and_slews);
 

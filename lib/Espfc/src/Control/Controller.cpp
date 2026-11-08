@@ -861,39 +861,50 @@ else if (
   // GPS Rescue has strict no-drop semantics. During fault evaluation and
   // the GPS-origin LAND handoff, preserve the last thrust command.
   _manualThrottleHandoffActive = false;
-  verticalPid.update(
-      0.0f,
-      altitude.vario);
+  if (std::isfinite(altitude.vario))
+  {
+    verticalPid.update(0.0f, altitude.vario);
+  }
+  else
+  {
+    verticalPid.resetState();
+  }
 
   output.ch[AXIS_THRUST] =
-      std::clamp(
-          output.ch[AXIS_THRUST],
-          -1.0f,
-          1.0f);
+      std::isfinite(output.ch[AXIS_THRUST])
+          ? std::clamp(output.ch[AXIS_THRUST], -1.0f, 1.0f)
+          : std::clamp(_hoverThrust, -1.0f, 1.0f);
 
   _altHoldV2OutputWasActive =
       false;
 }
 else
 {
-  // Keep the vertical PID state synchronized while
-  // manual thrust owns the output. This also gives the
-  // V2 controller a current derivative history when it
-  // is engaged later.
-  verticalPid.update(
-      0.0f,
-      altitude.vario);
+  // Keep derivative history current only from finite samples. Poisoned
+  // barometer data must never reach the recursive D-term filter.
+  if (std::isfinite(altitude.vario))
+  {
+    verticalPid.update(0.0f, altitude.vario);
+  }
+  else
+  {
+    verticalPid.resetState();
+  }
 
+  const float manualThrust =
+      _model.state.input.ch[AXIS_THRUST];
   verticalPid.iTerm =
       std::clamp(
-          _model.state.input.ch[
-              AXIS_THRUST] -
-          _hoverThrust,
+          std::isfinite(manualThrust)
+              ? manualThrust - _hoverThrust
+              : 0.0f,
           verticalPid.iLimitLow,
           verticalPid.iLimitHigh);
 
   const float pilotThrust =
-      std::clamp(setpoint.rate[AXIS_THRUST], -1.0f, 1.0f);
+      std::isfinite(setpoint.rate[AXIS_THRUST])
+          ? std::clamp(setpoint.rate[AXIS_THRUST], -1.0f, 1.0f)
+          : -1.0f; // Invalid manual command must not reach the mixer.
 
   // Never delay failsafe/disarm or an invalid receiver. Only a healthy
   // switch from authoritative AltHold to manual throttle can slew.

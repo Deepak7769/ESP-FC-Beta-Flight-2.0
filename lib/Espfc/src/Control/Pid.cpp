@@ -10,7 +10,8 @@ Pid::Pid()
     : rate(1.0f), dt(1.0f), Kp(0.1), Ki(0.f), Kd(0.f), Kf(0.0f), iLimitLow(-0.3f), iLimitHigh(0.3f), iReset(0.0f),
       oLimitLow(-1.f), oLimitHigh(1.f), pScale(1.f), iScale(1.f), dScale(1.f), fScale(1.f), error(0.f), iTermError(0.f),
       pTerm(0.f), iTerm(0.f), dTerm(0.f), fTerm(0.f), prevMeasurement(0.f), prevError(0.f), prevSetpoint(0.f),
-      ftermDerivative(true), outputSaturated(false), itermRelax(ITERM_RELAX_OFF), itermRelaxFactor(1.0f),
+      ftermDerivative(true), outputSaturated(false), reinitializeAfterReset(false),
+      itermRelax(ITERM_RELAX_OFF), itermRelaxFactor(1.0f),
       itermRelaxBase(0.f)
 {
 }
@@ -23,6 +24,27 @@ void Pid::begin()
 void Pid::resetIterm()
 {
   iTerm = iReset;
+}
+
+// Reset every recursive state, not only prevMeasurement. A single NaN in
+// a D-term PT1/biquad can otherwise keep the output non-finite indefinitely.
+// Preserve configured filter coefficients, gains and saturation limits.
+void Pid::resetState()
+{
+  error = iTermError = 0.0f;
+  pTerm = dTerm = fTerm = 0.0f;
+  iTerm = std::isfinite(iReset) ? iReset : 0.0f;
+  prevMeasurement = prevError = prevSetpoint = 0.0f;
+  itermRelaxFactor = 1.0f;
+  itermRelaxBase = 0.0f;
+  outputSaturated = false;
+  reinitializeAfterReset = true;
+  ptermFilter.reset();
+  dtermNotchFilter.reset();
+  dtermFilter.reset();
+  dtermFilter2.reset();
+  ftermFilter.reset();
+  itermRelaxFilter.reset();
 }
 
 float FAST_CODE_ATTR Pid::update(
@@ -38,6 +60,31 @@ float FAST_CODE_ATTR Pid::update(
   const float sampleDt = (std::isfinite(dt) && dt > 0.f)
       ? dt : 1.f / std::max(rate, 1.f);
   const float derivativeRate = 1.f / sampleDt;
+
+  // Reject corrupt estimator/command values before a recursive filter sees
+  // them. Also recover if a previous revision already poisoned PID history.
+  if (!std::isfinite(setpoint) || !std::isfinite(measurement) ||
+      !std::isfinite(tpaFactor) || !std::isfinite(pMultiplier) ||
+      !std::isfinite(iGainAdd) || !std::isfinite(iTerm) ||
+      !std::isfinite(prevMeasurement) || !std::isfinite(prevSetpoint) ||
+      !std::isfinite(Kp) || !std::isfinite(Ki) ||
+      !std::isfinite(Kd) || !std::isfinite(Kf) ||
+      !std::isfinite(pScale) || !std::isfinite(iScale) ||
+      !std::isfinite(dScale) || !std::isfinite(fScale))
+  {
+    resetState();
+    return 0.0f;
+  }
+
+  // Reset derivative history to the first healthy measurement, avoiding a
+  // recovery kick from zero or from a stale pre-fault sample.
+  if (reinitializeAfterReset)
+  {
+    prevMeasurement = measurement;
+    prevSetpoint = setpoint;
+    prevError = setpoint - measurement;
+    reinitializeAfterReset = false;
+  }
 
   error = setpoint - measurement;
    const float tpa =
@@ -127,7 +174,15 @@ float FAST_CODE_ATTR Pid::update(
   prevError = error;
   prevSetpoint = setpoint;
 
-  return std::clamp(pTerm + iTerm + dTerm + fTerm, oLimitLow, oLimitHigh);
+  const float sum = pTerm + iTerm + dTerm + fTerm;
+  if (!std::isfinite(sum) || !std::isfinite(error) ||
+      !std::isfinite(oLimitLow) || !std::isfinite(oLimitHigh) ||
+      oLimitLow > oLimitHigh)
+  {
+    resetState();
+    return 0.0f;
+  }
+  return std::clamp(sum, oLimitLow, oLimitHigh);
 }
 
 } // namespace Espfc::Control
