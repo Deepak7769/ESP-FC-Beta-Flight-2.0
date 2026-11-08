@@ -258,7 +258,7 @@ void test_cli_independent_instances_bind_config_addresses()
 {
   Model first;
   Model second;
-  first.config.mixer.type = Espfc::FC_MIXER_NONE;
+  first.config.mixer.type = 0;
   second.config.mixer.type = Espfc::FC_MIXER_HEX6;
   Cli cliFirst{first};
   Cli cliSecond{second};
@@ -268,7 +268,7 @@ void test_cli_independent_instances_bind_config_addresses()
   // Simultaneously alive configurations must never share parameter storage.
   for (char c : std::string("set mixer_type QUADX\n"))
     cliSecond.process(c, secondCmd, printer);
-  TEST_ASSERT_EQUAL(Espfc::FC_MIXER_NONE, first.config.mixer.type);
+  TEST_ASSERT_EQUAL(0, first.config.mixer.type);
   TEST_ASSERT_EQUAL(Espfc::FC_MIXER_QUADX, second.config.mixer.type);
 
   for (char c : std::string("set mixer_type TRI\n"))
