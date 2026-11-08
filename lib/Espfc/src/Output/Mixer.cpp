@@ -260,10 +260,25 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
   // Built-in motor mixes use unit collective thrust on each motor.
   // Shift collective against actual correction extrema; never assume
   // symmetric motor corrections or include the tricopter yaw servo.
-  float thrust = limitThrust(
-      sources[MIXER_SOURCE_THRUST],
-      (ThrottleLimitType)_model.config.output.throttleLimitType,
-      _model.config.output.throttleLimitPercent);
+  const float requestedThrust = sources[MIXER_SOURCE_THRUST];
+  const auto throttleLimitType =
+      static_cast<ThrottleLimitType>(_model.config.output.throttleLimitType);
+  const int throttleLimitPercent = _model.config.output.throttleLimitPercent;
+  const float thrustBeforeAirmode = limitThrust(
+      requestedThrust, throttleLimitType, throttleLimitPercent);
+  float thrust = thrustBeforeAirmode;
+
+  // Throttle CLIP can remove collective authority while every motor remains
+  // well below its own limit. SCALE becomes authority-limited at full input.
+  // Both must feed vertical anti-windup, independently of motor headroom.
+  const bool throttleRestrictionActive =
+      throttleLimitPercent >= 1 && throttleLimitPercent < 100;
+  const bool collectiveHighRestricted =
+      throttleRestrictionActive &&
+      ((throttleLimitType == THROTTLE_LIMIT_TYPE_CLIP &&
+        requestedThrust > thrustBeforeAirmode + 0.0001f) ||
+       (throttleLimitType == THROTTLE_LIMIT_TYPE_SCALE &&
+        requestedThrust >= 0.98f));
   const int motorLimit = _model.config.output.motorLimit;
   const float motorUpperLimit =
       (motorLimit < 1 || motorLimit >= 100)
@@ -374,6 +389,7 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
 
   float verticalHeadroomHigh = 1.0f;
   float verticalHeadroomLow = 1.0f;
+  bool motorPresent = false;
 
   for (size_t i = 0; i < mixerCount; i++)
   {
@@ -386,6 +402,7 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
 
      if (!occ.servo)
      {
+        motorPresent = true;
         const bool upperSaturation = rawOutput >= 0.98f;
         const bool lowerSaturation = rawOutput <= -0.98f;
 
@@ -434,6 +451,13 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
 
       outputs[i] = limitedOutput;
     }
+
+  if (motorPresent && collectiveHighRestricted)
+  {
+    saturated = true;
+    verticalSaturationHigh = true;
+    verticalHeadroomHigh = 0.0f;
+  }
 
   const float verticalError =
       _model.state.innerPid[AXIS_THRUST].error;

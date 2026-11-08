@@ -1064,10 +1064,43 @@ void test_pid_update_sum_limit()
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, pid.error);
 
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, pid.pTerm);
-  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.3f, pid.iTerm);
+  // P+F already use the entire output range; local anti-windup
+  // must not accumulate the unavailable I-term behind the output clamp.
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, pid.iTerm);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, pid.dTerm);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f, pid.fTerm);
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f, result);
+}
+
+void test_pid_local_output_limit_prevents_windup_and_allows_unwind()
+{
+  Pid pid;
+  pid.rate = 100.0f;
+  pid.Kp = 0.0f;
+  pid.Ki = 1.0f;
+  pid.Kd = 0.0f;
+  pid.Kf = 0.0f;
+  pid.iLimitLow = -1.0f;
+  pid.iLimitHigh = 1.0f;
+  pid.oLimitLow = -0.1f;
+  pid.oLimitHigh = 0.1f;
+  pid.begin();
+
+  for (int n = 0; n < 100; ++n)
+  {
+    const float command = pid.update(1.0f, 0.0f);
+    TEST_ASSERT_TRUE(command <= 0.10001f);
+    TEST_ASSERT_TRUE(command >= 0.0f);
+  }
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.1f, pid.iTerm);
+  TEST_ASSERT_TRUE(pid.localOutputSaturated);
+  TEST_ASSERT_FALSE(pid.outputSaturated); // no mixer feedback in this test
+
+  const float saturatedIterm = pid.iTerm;
+  pid.update(-1.0f, 0.0f);
+  TEST_ASSERT_TRUE(pid.iTerm < saturatedIterm);
+  for (int n = 0; n < 100; ++n) pid.update(-1.0f, 0.0f);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.1f, pid.iTerm);
 }
 
 void test_queue_atomic()
@@ -1443,6 +1476,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_pid_update_f);
   RUN_TEST(test_pid_update_sum);
   RUN_TEST(test_pid_update_sum_limit);
+  RUN_TEST(test_pid_local_output_limit_prevents_windup_and_allows_unwind);
 
   RUN_TEST(test_queue_atomic);
   RUN_TEST(test_ring_buf);

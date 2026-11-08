@@ -93,6 +93,8 @@ public:
 
   bool ftermDerivative;
   bool outputSaturated;
+  // Controller-local output clipping; separate from actuator/mixer feedback.
+  bool localOutputSaturated;
   bool historyValid;
   int8_t itermRelax;
   float itermRelaxFactor;

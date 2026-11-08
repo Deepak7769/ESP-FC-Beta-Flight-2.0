@@ -8921,6 +8921,44 @@ void test_resource_manager_cpu_land_recovers_services_after_disarm()
 }
 #endif
 
+void test_mixer_collective_throttle_limit_reports_vertical_saturation()
+{
+  Model model;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.output.throttleLimitType = THROTTLE_LIMIT_TYPE_CLIP;
+  model.config.output.throttleLimitPercent = 50;
+  model.state.output.ch[AXIS_THRUST] = 0.5f;
+  model.state.innerPid[AXIS_THRUST].error = 0.5f;
+  Output::Mixer mixer(model);
+  float motors[OUTPUT_CHANNELS] = {};
+  const MixerConfig config =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  mixer.updateMixer(config, motors);
+  for (size_t i = 0; i < 4; ++i)
+  {
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, motors[i]);
+  }
+  TEST_ASSERT_TRUE(model.state.mixer.verticalSaturationHigh);
+  TEST_ASSERT_TRUE(model.state.innerPid[AXIS_THRUST].outputSaturated);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                           model.state.mixer.verticalHeadroomHigh);
+
+  // The opposite vertical error can unwind while the high cap remains.
+  model.state.innerPid[AXIS_THRUST].error = -0.5f;
+  mixer.updateMixer(config, motors);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_THRUST].outputSaturated);
+
+  // SCALE limits maximum authority at full input, not at mid-stick.
+  model.config.output.throttleLimitType = THROTTLE_LIMIT_TYPE_SCALE;
+  model.state.innerPid[AXIS_THRUST].error = 0.5f;
+  model.state.output.ch[AXIS_THRUST] = 0.5f;
+  mixer.updateMixer(config, motors);
+  TEST_ASSERT_FALSE(model.state.innerPid[AXIS_THRUST].outputSaturated);
+  model.state.output.ch[AXIS_THRUST] = 1.0f;
+  mixer.updateMixer(config, motors);
+  TEST_ASSERT_TRUE(model.state.innerPid[AXIS_THRUST].outputSaturated);
+}
+
 void test_mixer_vertical_saturation_feedback_is_directional()
 {
   Model model;
@@ -9020,6 +9058,7 @@ RUN_TEST(test_althold_v2_configurable_limits_are_persisted);
 RUN_TEST(test_althold_v2_rangefinder_config_is_sanitized);
 RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
 RUN_TEST(test_altitude_v2_acceleration_bias_observer_learns_residual);
+RUN_TEST(test_mixer_collective_throttle_limit_reports_vertical_saturation);
 RUN_TEST(test_mixer_vertical_saturation_feedback_is_directional);
 #if defined(ESPFC_LAND_V2_ACTIVE) && !defined(ESP32S2)
 RUN_TEST(test_resource_manager_cpu_land_recovers_services_after_disarm);
