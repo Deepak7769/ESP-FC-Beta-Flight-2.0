@@ -7597,9 +7597,12 @@ void test_failsafe_auto_land_v2_rejects_bad_estimator()
       model.state.failsafe
           .landingActive);
 
-  TEST_ASSERT_FALSE(
-      model.state.failsafe
-          .landingLevelRequested);
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  // Altitude failed but attitude remains valid: retain leveling only.
+  TEST_ASSERT_TRUE(model.state.failsafe.landingLevelRequested);
+#else
+  TEST_ASSERT_FALSE(model.state.failsafe.landingLevelRequested);
+#endif
 
   TEST_ASSERT_FALSE(
       model.state.failsafe
