@@ -28,6 +28,24 @@ bool landingV2OwnsControl(
       !failsafe.landingOutputBlocked;
 }
 
+bool landingV2FaultHoldsThrust(const Model& model)
+{
+  const auto& f = model.state.failsafe;
+  return f.landingRequested &&
+         f.phase == FC_FAILSAFE_LANDING &&
+         model.isModeActive(MODE_ARMED) &&
+         f.landingFault &&
+         !landingV2OwnsControl(model);
+}
+
+bool landingV2FaultLevels(const Model& model)
+{
+  const auto& f = model.state.failsafe;
+  return landingV2FaultHoldsThrust(model) &&
+         f.landingLevelRequested &&
+         !f.landingDescentRequested;
+}
+
 #endif
 
 bool assistedVerticalControlOwnsThrust(
@@ -318,11 +336,12 @@ void FAST_CODE_ATTR Controller::outerLoop()
 {
 #if defined(ESPFC_LAND_V2_ACTIVE)
   const bool landingV2Requested =
-      landingV2OwnsControl(
-          _model);
+      landingV2OwnsControl(_model);
+  const bool landingFaultHold =
+      landingV2FaultHoldsThrust(_model);
 #else
-  constexpr bool landingV2Requested =
-      false;
+  constexpr bool landingV2Requested = false;
+  constexpr bool landingFaultHold = false;
 #endif
 
   // -----------------------------------------------------
@@ -340,6 +359,7 @@ void FAST_CODE_ATTR Controller::outerLoop()
 // requested POSHOLD has a pilot-angle fallback when not controlling.
 if (_model.isModeActive(MODE_ANGLE) ||
     landingV2Requested ||
+    landingFaultHold ||
     _model.state.posHold.requested ||
     _model.state.gpsRescue.active)
 {
@@ -393,7 +413,7 @@ else
   // rate loop damp rotation.
   // -----------------------------------------------------
 
-  if (landingV2Requested)
+  if (landingV2Requested || landingFaultHold)
   {
     _model.state.setpoint.rate[
         AXIS_YAW] =
@@ -444,13 +464,10 @@ else
             .verticalRateTarget;
   }
 #if defined(ESPFC_LAND_V2_ACTIVE)
-  else if (landingV2Requested)
+  else if (landingV2Requested || landingFaultHold)
   {
-    // LAND was requested, but the estimator has not yet
-    // been accepted (or just failed). Preserve the last
-    // commanded thrust for this supervisor cycle. The
-    // Actuator LAND supervisor will either validate the
-    // estimator or perform the configured hard fallback.
+    // During a LAND estimator fault, hold existing collective thrust.
+    // This is NOT controlled altitude and must never imply touchdown.
     _model.state.setpoint.rate[
         AXIS_THRUST] =
         _model.state.output.ch[
@@ -490,6 +507,20 @@ else
 void FAST_CODE_ATTR Controller::innerLoop()
 {
   // Roll/Pitch/Yaw rates control
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  const bool landingFaultHold = landingV2FaultHoldsThrust(_model);
+  const uint32_t now = landingFaultHold ? micros() : 0u;
+  const auto& gyro = _model.state.gyro;
+  const bool gyroUsable = !landingFaultHold ||
+      (gyro.present && gyro.sampleValid &&
+       static_cast<uint32_t>(now - gyro.lastUpdateUs) < 100000u &&
+       std::isfinite(gyro.adc[AXIS_ROLL]) &&
+       std::isfinite(gyro.adc[AXIS_PITCH]) &&
+       std::isfinite(gyro.adc[AXIS_YAW]));
+#else
+  constexpr bool landingFaultHold = false;
+  constexpr bool gyroUsable = true;
+#endif
   const float tpaFactor = getTpaFactor();
   const bool tpaP =
     _model.config.controller.tpaMode == 0;
@@ -601,16 +632,25 @@ const bool assistedAttitudeRateOwned =
     pid.fScale = 0.f;
   }
 
-  output.ch[i] =
-    pid.update(
+  if (landingFaultHold && !gyroUsable)
+  {
+    // With a stale/invalid gyro there is no valid angular-rate feedback.
+    // Neutralize torque correction rather than integrate stale data.
+    pid.resetState();
+    output.ch[i] = 0.0f;
+  }
+  else
+  {
+    output.ch[i] =
+      pid.update(
         setpoint.rate[i],
         _model.state.gyro.adc[i],
         tpaFactor,
         tpaP,
         antiGravityPMultiplier,
         antiGravityIAccelerator);
+  }
 
-  
   pid.fScale =
       fScale;
 }
@@ -856,7 +896,8 @@ else if (
     _model.isModeActive(MODE_ARMED) &&
     (_model.state.gpsRescue.faultEvaluationPending ||
      _model.state.gpsRescue.requestLand ||
-     _model.state.failsafe.gpsRescueLandNoDrop))
+     _model.state.failsafe.gpsRescueLandNoDrop ||
+     landingFaultHoldsThrust(_model)))
 {
   // GPS Rescue has strict no-drop semantics. During fault evaluation and
   // the GPS-origin LAND handoff, preserve the last thrust command.
@@ -871,11 +912,13 @@ else if (
     verticalPid.resetState();
   }
 
-  output.ch[AXIS_THRUST] =
-      std::clamp(
-          output.ch[AXIS_THRUST],
-          -1.0f,
-          1.0f);
+  const float heldThrust = output.ch[AXIS_THRUST];
+  const float entryThrust = _model.state.failsafe.landingEntryThrust;
+  output.ch[AXIS_THRUST] = std::clamp(
+      std::isfinite(heldThrust)
+          ? heldThrust
+          : (std::isfinite(entryThrust) ? entryThrust : _hoverThrust),
+      -1.0f, 1.0f);
 
   _altHoldV2OutputWasActive =
       false;
@@ -1461,11 +1504,12 @@ auto& assisted =
       _model.state.failsafe;
 
   const bool landingV2Requested =
-      landingV2OwnsControl(
-          _model);
+      landingV2OwnsControl(_model);
+  const bool landingFaultLevel =
+      landingV2FaultLevels(_model);
 #else
-  constexpr bool landingV2Requested =
-      false;
+  constexpr bool landingV2Requested = false;
+  constexpr bool landingFaultLevel = false;
 #endif
 
 const float nominalDt =
@@ -2061,6 +2105,7 @@ const bool angleActive =
     (_model.isModeActive(
          MODE_ANGLE) ||
      landingV2Requested ||
+     landingFaultLevel ||
      posHoldState.requested ||
      gpsRescueState.active) &&
     attitudeFresh;
@@ -2127,7 +2172,7 @@ if (angleActive)
           input.ch[axis];
 
       const float requestedAngle =
-          landingV2Requested
+          (landingV2Requested || landingFaultLevel)
               ? 0.0f
               : gpsRescueState.active
                     ? (gpsRescueState.controlling

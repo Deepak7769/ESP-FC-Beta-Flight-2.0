@@ -4337,7 +4337,7 @@ void test_controller_land_v2_requires_supervisor_authorization()
       0.0001f);
 }
 
-void test_failsafe_land_v2_bad_estimator_falls_back_to_disarm()
+void test_failsafe_land_v2_bad_estimator_preserves_armed_with_level_fallback()
 {
   ArduinoFakeReset();
 
@@ -4384,21 +4384,107 @@ void test_failsafe_land_v2_bad_estimator_falls_back_to_disarm()
 
   actuator.updateFailsafeLand();
 
-  TEST_ASSERT_FALSE(
-      model.isModeActive(
-          MODE_ARMED));
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingFault);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingOutputBlocked);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingActive);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingLevelRequested);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingDescentRequested);
+}
 
-  TEST_ASSERT_EQUAL(
-      FC_FAILSAFE_LANDED,
-      model.state.failsafe.phase);
+void test_land_v2_attitude_fault_blocks_level_but_preserves_propulsion()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 3100000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = 2.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.attitude.quaternion = Quaternion(0.0f, 0.0f, 0.0f, 0.0f);
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.output.ch[AXIS_THRUST] = 0.24f;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingLevelRequested);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingDescentRequested);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingOutputBlocked);
 
-  TEST_ASSERT_TRUE(
-      model.state.failsafe
-          .landingFault);
+  Controller controller(model);
+  controller.begin();
+  controller.update();
+  TEST_ASSERT_FALSE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.24f,
+                           model.state.output.ch[AXIS_THRUST]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                           model.state.setpoint.rate[AXIS_ROLL]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                           model.state.setpoint.rate[AXIS_PITCH]);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                           model.state.setpoint.rate[AXIS_YAW]);
+  ArduinoFakeReset();
+}
 
-  TEST_ASSERT_TRUE(
-      model.state.failsafe
-          .landingOutputBlocked);
+void test_land_v2_altitude_fault_keeps_level_but_not_descent()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 3200000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = false;
+  model.state.altitude.vario = std::numeric_limits<float>::quiet_NaN();
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.output.ch[AXIS_THRUST] = 0.32f;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+  Controller controller(model);
+  controller.begin();
+  controller.update();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_TRUE(model.state.angleV2.active);
+  TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.32f,
+                           model.state.output.ch[AXIS_THRUST]);
+  TEST_ASSERT_TRUE(std::isfinite(model.state.output.ch[AXIS_THRUST]));
+  ArduinoFakeReset();
+}
+
+void test_land_v2_fault_bypasses_motor_stop_feature()
+{
+  Model model;
+  model.config.featureMask |= FEATURE_MOTOR_STOP;
+  model.state.input.ch[AXIS_THRUST] = -1.0f;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Output::Mixer mixer(model);
+  TEST_ASSERT_TRUE(mixer._stop());
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  TEST_ASSERT_FALSE(mixer._stop());
+  model.updateModes(0);
+  TEST_ASSERT_TRUE(mixer._stop());
 }
 
 void test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown()
@@ -7527,10 +7613,14 @@ void test_failsafe_auto_land_v2_rejects_bad_estimator()
       model.state.failsafe
           .landingOutputBlocked);
 
-  // Current dry-run fallback still disarms.
-  TEST_ASSERT_FALSE(
-      model.isModeActive(
-          MODE_ARMED));
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  // Active LAND must not call an airborne DROP on estimator loss.
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+#else
+  // Inactive/non-actuating builds retain their pre-existing DROP policy.
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+#endif
 }
 
 void test_failsafe_drop_does_not_request_land()
@@ -9138,7 +9228,10 @@ RUN_TEST(
     test_controller_land_v2_requires_supervisor_authorization);
 
 RUN_TEST(
-    test_failsafe_land_v2_bad_estimator_falls_back_to_disarm);
+    test_failsafe_land_v2_bad_estimator_preserves_armed_with_level_fallback);
+RUN_TEST(test_land_v2_altitude_fault_keeps_level_but_not_descent);
+RUN_TEST(test_land_v2_attitude_fault_blocks_level_but_preserves_propulsion);
+RUN_TEST(test_land_v2_fault_bypasses_motor_stop_feature);
 
 RUN_TEST(
     test_failsafe_land_v2_touchdown_dwell_disarms);

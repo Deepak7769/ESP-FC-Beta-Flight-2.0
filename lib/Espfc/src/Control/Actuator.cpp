@@ -1033,6 +1033,12 @@ void Actuator::updateFailsafeLand()
     // CONTINUOUS ESTIMATOR VALIDATION
     // ---------------------------------------------------
 
+    // A failed barometer removes vertical descent authority, but a healthy
+    // attitude solution can still level the aircraft. A failed attitude
+    // estimate removes leveling too; no sensor failure proves touchdown.
+    const bool attitudeHealthy =
+        attitudeEstimateHealthy();
+
     const bool estimatorHealthy =
         altitudeEstimateHealthy();
 
@@ -1066,49 +1072,18 @@ void Actuator::updateFailsafeLand()
     {
       if (!failsafe.landingEligible)
       {
-        // An automatic descent without a trustworthy
-        // attitude/altitude estimate is not allowed.
-        // GPS-origin LAND is never allowed to fall through to an airborne
-        // DROP/disarm decision.
-        if (failsafe.gpsRescueLandNoDrop &&
-            _model.isModeActive(MODE_ARMED))
-        {
-          failsafe.landingOutputBlocked = true;
-          failsafe.landingActive = false;
-          failsafe.landingLevelRequested = false;
-          failsafe.landingDescentRequested = false;
-          failsafe.landingTouchdownCandidate = false;
-          failsafe.landingTouchdownStartedUs = 0;
-          return;
-        }
-
-        // The active validation path falls back to DROP.
-        failsafe.landingOutputBlocked =
-            true;
-
-        failsafe.landingTouchdownCandidate =
-            false;
-
-        failsafe.landingTouchdownStartedUs =
-            0;
-
-        failsafe.landingRequested =
-            false;
-
-        failsafe.landingActive =
-            false;
-
-        failsafe.landingLevelRequested =
-            false;
-
-        failsafe.landingDescentRequested =
-            false;
-
-        failsafe.phase =
-            FC_FAILSAFE_LANDED;
-
-        _model.disarm(
-            DISARM_REASON_FAILSAFE);
+        // Do not turn an in-flight estimator fault into a false LANDED
+        // state or DROP. Suspend automatic descent for ALL LAND origins.
+        // With valid attitude, continue only angle leveling; if attitude
+        // is invalid too, even leveling is prohibited. The controller
+        // retains finite last collective thrust (NOT altitude hold).
+        failsafe.landingOutputBlocked = true;
+        failsafe.landingActive = false;
+        failsafe.landingLevelRequested = attitudeHealthy;
+        failsafe.landingDescentRequested = false;
+        failsafe.landingTouchdownCandidate = false;
+        failsafe.landingTouchdownStartedUs = 0;
+        return;
       }
       else
       {
@@ -1535,25 +1510,18 @@ void Actuator::startFailsafeLanding()
     failsafe.landingTouchdownStartedUs = 0;
   }
 
-  // If GPS Rescue handed us here while LAND's estimator is unavailable,
-  // stay armed and keep the request latched. Controller.cpp preserves the
-  // previous thrust until LAND V2 is healthy enough to take control.
+  // No failed altitude estimate authorizes an airborne DROP, whether
+  // LAND was entered from GPS Rescue or the ordinary failsafe procedure.
+  // Preserve the request and explicitly suspend descent. Attitude-only
+  // leveling remains available when the attitude estimator is healthy.
   if (!altitudeEstimateHealthy())
   {
-    if (failsafe.gpsRescueLandNoDrop)
-    {
-      failsafe.landingFault = true;
-      failsafe.landingActive = false;
-      failsafe.landingLevelRequested = false;
-      failsafe.landingDescentRequested = false;
-      failsafe.landingOutputBlocked = true;
-      failsafe.phase = FC_FAILSAFE_LANDING;
-      return;
-    }
-
-    failsafe.phase = FC_FAILSAFE_LANDED;
-    failsafe.landingRequested = false;
-    _model.disarm(DISARM_REASON_FAILSAFE);
+    failsafe.landingFault = true;
+    failsafe.landingActive = false;
+    failsafe.landingLevelRequested = attitudeEstimateHealthy();
+    failsafe.landingDescentRequested = false;
+    failsafe.landingOutputBlocked = true;
+    failsafe.phase = FC_FAILSAFE_LANDING;
     return;
   }
 

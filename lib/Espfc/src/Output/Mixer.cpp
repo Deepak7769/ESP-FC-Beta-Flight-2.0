@@ -803,6 +803,10 @@ float inline Mixer::erpmToRpm(float erpm)
 bool Mixer::_stop(void)
 {
   if (!_model.isModeActive(MODE_ARMED)) return true;
+  // During failsafe LAND a stale/lost receiver throttle must not activate
+  // MOTOR_STOP while the controller is maintaining propulsion.
+  if (_model.state.failsafe.landingRequested &&
+      _model.state.failsafe.phase == FC_FAILSAFE_LANDING) return false;
   if (_model.isFeatureActive(FEATURE_MOTOR_STOP) && _model.isThrottleLow()) return true;
   return false;
 }
