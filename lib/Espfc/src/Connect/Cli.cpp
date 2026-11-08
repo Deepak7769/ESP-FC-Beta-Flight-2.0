@@ -6,6 +6,7 @@
 #include "msp/msp_protocol.h"
 #include <algorithm>
 #include <charconv>
+#include <cstdint>
 #include <cstring>
 #include <iterator>
 #include <memory>
@@ -27,6 +28,14 @@
 #endif
 
 namespace {
+
+// A single immutable CLI table conserves RAM. The initially captured member
+// addresses serve only as numeric offsets, never as dereferenceable pointers.
+static std::uintptr_t staticParameterConfigOrigin(std::uintptr_t first = 0u)
+{
+  static const std::uintptr_t origin = first;
+  return origin;
+}
 
 static std::optional<int> toNumber(const char* str)
 {
@@ -405,6 +414,9 @@ failsafeProcedureChoices[] = {
     "DROP",
     nullptr
 };
+
+  // Record the base address corresponding to the one-time static table.
+  staticParameterConfigOrigin(reinterpret_cast<std::uintptr_t>(&c));
 
   size_t i = 0;
   static const Param params[] = {
@@ -885,6 +897,20 @@ Param(
   return params;
 }
 
+Cli::Param Cli::bindParam(const Param& param) const
+{
+  if (!param.addr) return param;
+  const std::uintptr_t origin = staticParameterConfigOrigin();
+  const std::uintptr_t address = reinterpret_cast<std::uintptr_t>(param.addr);
+  // Only ModelConfig members may be rebound; keep external pointers as-is.
+  if (address < origin || address - origin >= sizeof(ModelConfig)) return param;
+
+  const std::uintptr_t instance = reinterpret_cast<std::uintptr_t>(&_model.config);
+  return Param(param.name, param.type,
+               reinterpret_cast<char*>(instance + (address - origin)),
+               param.choices, param.maxLen);
+}
+
 bool Cli::process(const char c, CliCmd& cmd, Stream::Printer& stream)
 {
   // configurator handshake
@@ -1097,7 +1123,7 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
     {
       if (!cmd.args[1] || std::strstr(_params[i].name, cmd.args[1]) != nullptr)
       {
-        print(_params[i], s);
+        print(bindParam(_params[i]), s);
         found = true;
       }
     }
@@ -1121,8 +1147,9 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
     {
       if (std::strcmp(cmd.args[1], _params[i].name) == 0)
       {
-        _params[i].update(cmd.args);
-        print(_params[i], s);
+        const Param bound = bindParam(_params[i]);
+        bound.update(cmd.args);
+        print(bound, s);
         found = true;
         break;
       }
@@ -1138,7 +1165,7 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
     s.println("defaults");
     for (size_t i = 0; _params[i].name; ++i)
     {
-      print(_params[i], s);
+      print(bindParam(_params[i]), s);
     }
     s.println("save");
   }

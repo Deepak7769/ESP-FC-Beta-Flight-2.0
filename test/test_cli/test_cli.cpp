@@ -254,6 +254,39 @@ void test_cli_set_mixer_type()
   TEST_ASSERT_EQUAL(Espfc::FC_MIXER_QUADX, model.config.mixer.type);
 }
 
+void test_cli_independent_instances_bind_config_addresses()
+{
+  Model first;
+  Model second;
+  first.config.mixer.type = Espfc::FC_MIXER_NONE;
+  second.config.mixer.type = Espfc::FC_MIXER_HEX6;
+  Cli cliFirst{first};
+  Cli cliSecond{second};
+  CliCmd firstCmd{};
+  CliCmd secondCmd{};
+
+  // Simultaneously alive configurations must never share parameter storage.
+  for (char c : std::string("set mixer_type QUADX\n"))
+    cliSecond.process(c, secondCmd, printer);
+  TEST_ASSERT_EQUAL(Espfc::FC_MIXER_NONE, first.config.mixer.type);
+  TEST_ASSERT_EQUAL(Espfc::FC_MIXER_QUADX, second.config.mixer.type);
+
+  for (char c : std::string("set mixer_type TRI\n"))
+    cliFirst.process(c, firstCmd, printer);
+  TEST_ASSERT_EQUAL(Espfc::FC_MIXER_TRI, first.config.mixer.type);
+  TEST_ASSERT_EQUAL(Espfc::FC_MIXER_QUADX, second.config.mixer.type);
+
+  stream.flush();
+  for (char c : std::string("get mixer_type\n"))
+    cliFirst.process(c, firstCmd, printer);
+  TEST_ASSERT_TRUE(stream.str().find("set mixer_type TRI") != std::string::npos);
+
+  stream.flush();
+  for (char c : std::string("get mixer_type\n"))
+    cliSecond.process(c, secondCmd, printer);
+  TEST_ASSERT_TRUE(stream.str().find("set mixer_type QUADX") != std::string::npos);
+}
+
 void test_cli_bf_get_mag_calibration()
 {
   Model model;
@@ -302,6 +335,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_cli_process_help_non_interactive);
   RUN_TEST(test_cli_get_mixer_type);
   RUN_TEST(test_cli_set_mixer_type);
+  RUN_TEST(test_cli_independent_instances_bind_config_addresses);
   RUN_TEST(test_cli_bf_get_mag_calibration);
   RUN_TEST(test_cli_bf_sensor_hardware);
   return UNITY_END();

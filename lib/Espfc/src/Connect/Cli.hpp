@@ -30,7 +30,7 @@ public:
   {
   public:
     Param(): Param(nullptr, PARAM_NONE, nullptr, nullptr) {}
-    Param(const Param& p): Param(p.name, p.type, p.addr, p.choices) {}
+    Param(const Param& p): Param(p.name, p.type, p.addr, p.choices, p.maxLen) {}
 
     Param(const char* n, ParamType t, char* a, const char* const* c, size_t l = 16)
         : name(n), type(t), addr(a), choices(c), maxLen(l)
@@ -107,6 +107,8 @@ public:
 #if !defined(UNIT_TEST)
 private:
 #endif
+  // Rebind static parameter offsets to this instance before get/set/dump.
+  Param bindParam(const Param& param) const;
   void print(const Param& param, Stream::Printer& s) const;
   void printGpsStatus(Stream::Printer& s, bool full) const;
   void printVersion(Stream::Printer& s) const;
