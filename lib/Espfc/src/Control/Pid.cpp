@@ -10,7 +10,7 @@ Pid::Pid()
     : rate(1.0f), dt(1.0f), Kp(0.1), Ki(0.f), Kd(0.f), Kf(0.0f), iLimitLow(-0.3f), iLimitHigh(0.3f), iReset(0.0f),
       oLimitLow(-1.f), oLimitHigh(1.f), pScale(1.f), iScale(1.f), dScale(1.f), fScale(1.f), error(0.f), iTermError(0.f),
       pTerm(0.f), iTerm(0.f), dTerm(0.f), fTerm(0.f), prevMeasurement(0.f), prevError(0.f), prevSetpoint(0.f),
-      ftermDerivative(true), outputSaturated(false), itermRelax(ITERM_RELAX_OFF), itermRelaxFactor(1.0f),
+      ftermDerivative(true), outputSaturated(false), historyValid(false), itermRelax(ITERM_RELAX_OFF), itermRelaxFactor(1.0f),
       itermRelaxBase(0.f)
 {
 }
@@ -18,11 +18,33 @@ Pid::Pid()
 void Pid::begin()
 {
   dt = 1.f / std::max(rate, 1.f);
+  historyValid = false;
 }
 
 void Pid::resetIterm()
 {
   iTerm = iReset;
+}
+
+void Pid::resetState()
+{
+  // Non-finite samples can poison I-term and recursive biquad/PT filters.
+  // Reset both the exposed terms and ALL filter histories, rather than
+  // just prevMeasurement. Do not change filter coefficients.
+  error = iTermError = 0.0f;
+  pTerm = dTerm = fTerm = 0.0f;
+  iTerm = std::isfinite(iReset) ? iReset : 0.0f;
+  prevMeasurement = prevError = prevSetpoint = 0.0f;
+  itermRelaxFactor = 1.0f;
+  itermRelaxBase = 0.0f;
+  outputSaturated = false;
+  historyValid = false;
+  dtermNotchFilter.reset();
+  dtermFilter.reset();
+  dtermFilter2.reset();
+  ptermFilter.reset();
+  ftermFilter.reset();
+  itermRelaxFilter.reset();
 }
 
 float FAST_CODE_ATTR Pid::update(
@@ -33,6 +55,18 @@ float FAST_CODE_ATTR Pid::update(
     float pMultiplier,
     float iGainAdd)
 {
+  // Never send an invalid sample into recursive P/D/F/I-term filters.
+  // A corrupted integral or prior term is equally unsafe to reuse.
+  if (!std::isfinite(setpoint) || !std::isfinite(measurement) ||
+      !std::isfinite(tpaFactor) || !std::isfinite(pMultiplier) ||
+      !std::isfinite(iGainAdd) || !std::isfinite(iTerm) ||
+      !std::isfinite(pTerm) || !std::isfinite(dTerm) ||
+      !std::isfinite(fTerm))
+  {
+    resetState();
+    return 0.0f;
+  }
+
   // The scheduler supplies bounded measured sample time through dt.
   // Keep rate unchanged: filter coefficients are configured at nominal Hz.
   const float sampleDt = (std::isfinite(dt) && dt > 0.f)
@@ -40,6 +74,11 @@ float FAST_CODE_ATTR Pid::update(
   const float derivativeRate = 1.f / sampleDt;
 
   error = setpoint - measurement;
+  if (!std::isfinite(error))
+  {
+    resetState();
+    return 0.0f;
+  }
    const float tpa =
     std::clamp(tpaFactor, 0.0f, 1.0f);
     
@@ -94,7 +133,7 @@ float FAST_CODE_ATTR Pid::update(
   if (Kd > 0.f && dScale > 0.f)
   {
     // dTerm = (Kd * dScale * (((error - prevError) * dGamma) + (prevMeasurement - measure) * (1.f - dGamma)) / dt);
-    dTerm = Kd * dScale * ((prevMeasurement - measurement) * derivativeRate);
+    dTerm = Kd * dScale * ((historyValid ? prevMeasurement - measurement : 0.0f) * derivativeRate);
     dTerm = dtermNotchFilter.update(dTerm);
     dTerm = dtermFilter.update(dTerm);
     dTerm = dtermFilter2.update(dTerm);
@@ -110,7 +149,7 @@ float FAST_CODE_ATTR Pid::update(
   {
     if (ftermDerivative)
     {
-      fTerm = Kf * fScale * (setpoint - prevSetpoint) * derivativeRate;
+      fTerm = Kf * fScale * (historyValid ? setpoint - prevSetpoint : 0.0f) * derivativeRate;
     }
     else
     {
@@ -123,11 +162,23 @@ float FAST_CODE_ATTR Pid::update(
     fTerm = 0;
   }
 
+  // Output limits do not sanitize NaN. A filter can also become invalid
+  // from arithmetic overflow despite finite input values.
+  const float rawOutput = pTerm + iTerm + dTerm + fTerm;
+  if (!std::isfinite(rawOutput) || !std::isfinite(pTerm) ||
+      !std::isfinite(iTerm) || !std::isfinite(dTerm) ||
+      !std::isfinite(fTerm))
+  {
+    resetState();
+    return 0.0f;
+  }
+
   prevMeasurement = measurement;
   prevError = error;
   prevSetpoint = setpoint;
+  historyValid = true;
 
-  return std::clamp(pTerm + iTerm + dTerm + fTerm, oLimitLow, oLimitHigh);
+  return std::clamp(rawOutput, oLimitLow, oLimitHigh);
 }
 
 } // namespace Espfc::Control

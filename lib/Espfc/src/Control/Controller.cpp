@@ -861,9 +861,15 @@ else if (
   // GPS Rescue has strict no-drop semantics. During fault evaluation and
   // the GPS-origin LAND handoff, preserve the last thrust command.
   _manualThrottleHandoffActive = false;
-  verticalPid.update(
-      0.0f,
-      altitude.vario);
+  // An invalid estimator must not enter recursive vertical PID filters.
+  if (altitude.healthy && std::isfinite(altitude.vario))
+  {
+    verticalPid.update(0.0f, altitude.vario);
+  }
+  else
+  {
+    verticalPid.resetState();
+  }
 
   output.ch[AXIS_THRUST] =
       std::clamp(
@@ -880,9 +886,16 @@ else
   // manual thrust owns the output. This also gives the
   // V2 controller a current derivative history when it
   // is engaged later.
-  verticalPid.update(
-      0.0f,
-      altitude.vario);
+  // Manual thrust remains pilot-owned; invalid altitude must not
+  // contaminate the PID history before a later AltHold re-entry.
+  if (altitude.healthy && std::isfinite(altitude.vario))
+  {
+    verticalPid.update(0.0f, altitude.vario);
+  }
+  else
+  {
+    verticalPid.resetState();
+  }
 
   verticalPid.iTerm =
       std::clamp(

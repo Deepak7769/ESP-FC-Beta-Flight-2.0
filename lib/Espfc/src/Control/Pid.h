@@ -50,6 +50,8 @@ public:
     float pMultiplier = 1.0f,
     float iGainAdd = 0.0f);
   void resetIterm();
+  // Reset recursive filter and PID history after invalid input.
+  void resetState();
 
   float rate;
   float dt;
@@ -91,6 +93,7 @@ public:
 
   bool ftermDerivative;
   bool outputSaturated;
+  bool historyValid;
   int8_t itermRelax;
   float itermRelaxFactor;
   float itermRelaxBase;

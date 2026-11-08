@@ -658,6 +658,7 @@ void test_controller_assisted_modes_reject_nonfinite_sensor_state()
   model.state.altitude.vario = nan;
   controller.update();
   TEST_ASSERT_FALSE(model.state.assistedMode.altitudeActive);
+  TEST_ASSERT_TRUE(std::isfinite(model.state.innerPid[AXIS_THRUST].dTerm));
 
   model.state.altitude.vario = 0.0f;
   model.state.altitude.acceleration = nan;
@@ -668,6 +669,10 @@ void test_controller_assisted_modes_reject_nonfinite_sensor_state()
   controller.update();
   TEST_ASSERT_TRUE(model.state.assistedMode.altitudeActive);
   TEST_ASSERT_TRUE(model.state.angleV2.active);
+  // A restored estimator must produce FINITE thrust, not merely a mode flag.
+  TEST_ASSERT_TRUE(std::isfinite(model.state.output.ch[AXIS_THRUST]));
+  TEST_ASSERT_TRUE(std::isfinite(model.state.innerPid[AXIS_THRUST].dTerm));
+  ArduinoFakeReset();
 }
 
 void test_controller_angle_v2_activates_and_slews()
@@ -8941,9 +8946,48 @@ void test_mixer_vertical_saturation_feedback_is_directional()
       model.state.innerPid[AXIS_THRUST].outputSaturated);
 }
 
+void test_pid_nonfinite_inputs_reset_recursive_filter_history()
+{
+  Espfc::Control::Pid pid;
+  pid.rate = 1000.0f;
+  pid.Kp = 0.2f;
+  pid.Ki = 0.3f;
+  pid.Kd = 0.01f;
+  pid.iLimitLow = -1.0f;
+  pid.iLimitHigh = 1.0f;
+  pid.dtermNotchFilter.begin(FilterConfig(FILTER_NOTCH, 250, 200), 1000);
+  pid.dtermFilter.begin(FilterConfig(FILTER_BIQUAD, 60), 1000);
+  pid.dtermFilter2.begin(FilterConfig(FILTER_PT1, 45), 1000);
+  pid.ptermFilter.begin(FilterConfig(FILTER_PT1, 80), 1000);
+  pid.begin();
+
+  for (int n = 0; n < 30; ++n)
+  {
+    TEST_ASSERT_TRUE(std::isfinite(pid.update(0.0f, 0.05f)));
+  }
+
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  TEST_ASSERT_FLOAT_WITHIN(0.000001f, 0.0f, pid.update(0.0f, nan));
+  TEST_ASSERT_FALSE(pid.historyValid);
+  TEST_ASSERT_TRUE(std::isfinite(pid.iTerm));
+  TEST_ASSERT_TRUE(std::isfinite(pid.dTerm));
+  // Reinitialize derivative history on first valid sample; no impulse.
+  TEST_ASSERT_TRUE(std::isfinite(pid.update(0.0f, 0.05f)));
+  TEST_ASSERT_FLOAT_WITHIN(0.000001f, 0.0f, pid.dTerm);
+  for (int n = 0; n < 1000; ++n)
+  {
+    TEST_ASSERT_TRUE(std::isfinite(pid.update(0.0f, 0.05f)));
+  }
+
+  const float infinity = std::numeric_limits<float>::infinity();
+  TEST_ASSERT_FLOAT_WITHIN(0.000001f, 0.0f, pid.update(infinity, 0.0f));
+  TEST_ASSERT_TRUE(std::isfinite(pid.update(0.0f, 0.0f)));
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);
   RUN_TEST(test_timer_rate_100hz_div2);
