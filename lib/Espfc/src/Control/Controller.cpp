@@ -897,7 +897,7 @@ else if (
     (_model.state.gpsRescue.faultEvaluationPending ||
      _model.state.gpsRescue.requestLand ||
      _model.state.failsafe.gpsRescueLandNoDrop ||
-     landingFaultHoldsThrust(_model)))
+     landingFaultHold))
 {
   // GPS Rescue has strict no-drop semantics. During fault evaluation and
   // the GPS-origin LAND handoff, preserve the last thrust command.
