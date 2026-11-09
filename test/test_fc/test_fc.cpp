@@ -5563,9 +5563,9 @@ void test_failsafe_land_v2_rx_recovery_stays_committed_to_land()
       uint32_t{1} <<
       MODE_ARMED);
 
-  // Qualified input becomes visible to the ARM switch only. LAND keeps
-  // output authority until touchdown, explicit disarm, or fault abort.
-  TEST_ASSERT_FALSE(
+  // Qualified ARM-only input remains gated from normal throttle/rate
+  // filtering; true means the caller must NOT publish all pilot channels.
+  TEST_ASSERT_TRUE(
       input.failsafe(
           INPUT_RECEIVED));
 
