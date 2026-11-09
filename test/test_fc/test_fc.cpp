@@ -4622,6 +4622,183 @@ void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
   ArduinoFakeReset();
 }
 
+
+
+void test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 6100000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.config.conditions[0].id = MODE_ARMED;
+  model.config.conditions[0].ch = AXIS_AUX_1;
+  model.config.conditions[0].min = 1250;
+  model.config.conditions[0].max = 1750;
+  model.config.output.protocol = ESC_PROTOCOL_DSHOT150;
+  model.state.input.channelCount = AXIS_AUX_1 + 1;
+  model.state.input.us[AXIS_AUX_1] = 1500;
+  model.state.input.us[AXIS_THRUST] = 1000;
+  model.state.input.channelsValid = true;
+  model.state.input.rxLoss = true;
+  model.state.input.rxFailSafe = true;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.recoveryActive = true;
+  model.state.failsafe.recoveryStartedUs = NOW_US - 600000u;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingActive = true;
+  model.state.failsafe.landingOutputBlocked = false;
+  model.state.output.ch[AXIS_THRUST] = 0.25f;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+
+  TelemetryManager telemetry(model);
+  Input input(model, telemetry);
+  Actuator actuator(model);
+
+  // First, recovered pilot sticks alone cannot revoke LAND control.
+  model.state.input.buffer[AXIS_AUX_1] = 1500.0f;
+  model.state.input.buffer[AXIS_THRUST] = 2000.0f;
+  TEST_ASSERT_FALSE(input.failsafe(INPUT_RECEIVED));
+  input.filterInputs(INPUT_RECEIVED);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.25f,
+                           model.state.output.ch[AXIS_THRUST]);
+
+  // A deliberate pilot ARM OFF must actually propagate, even while the
+  // LAND supervisor holds vertical authority.
+  model.state.input.buffer[AXIS_AUX_1] = 1000.0f;
+  input.filterInputs(INPUT_RECEIVED);
+  actuator.updateModeMask();
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_FALSE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingActive);
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_RX_LOSS_DETECTED,
+                    model.state.failsafe.phase);
+  Output::Mixer mixer(model);
+  TEST_ASSERT_TRUE(mixer._stop());
+  ArduinoFakeReset();
+}
+
+void test_land_full_actuator_gyro_loss_aborts_without_false_landed()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 4800000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  // Live AUX ARM switch: this exercises updateArmingDisabled ->
+  // updateModeMask -> updateArmed -> updateFailsafeLand, not the helper alone.
+  model.config.conditions[0].id = MODE_ARMED;
+  model.config.conditions[0].ch = AXIS_AUX_1;
+  model.config.conditions[0].min = 1250;
+  model.config.conditions[0].max = 1750;
+  model.config.output.protocol = ESC_PROTOCOL_DSHOT150;
+  model.state.input.us[AXIS_AUX_1] = 1500;
+  model.state.input.us[AXIS_THRUST] = 1000;
+  Actuator actuator(model);
+  actuator.begin();
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = 2.0f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 1000000u;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  actuator.update();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_TRUE(model.state.failsafe.landingActive);
+
+  model.state.gyro.lastUpdateUs = NOW_US - 200000u;
+  actuator.update(); // General gyro supervisor must take priority.
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingActive);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingFault);
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_RX_LOSS_DETECTED,
+                    model.state.failsafe.phase);
+  Output::Mixer mixer(model);
+  TEST_ASSERT_TRUE(mixer._stop());
+
+  // Restoring the gyro while ARM is still high must not rearm automatically.
+  model.state.gyro.lastUpdateUs = NOW_US;
+  actuator.update();
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  ArduinoFakeReset();
+}
+
+void test_land_disarm_and_recovery_cannot_reuse_touchdown_history()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 5400000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = 2.0f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.failsafe.landingGroundContactCandidate = true;
+  model.state.failsafe.landingGroundContactStartedUs = NOW_US - 700000u;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 500000u;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  // Deliberate switch disarm mid-LAND is an abort, not proof of contact.
+  model.disarm(DISARM_REASON_SWITCH);
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_FALSE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingFault);
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_RX_LOSS_DETECTED,
+                    model.state.failsafe.phase);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
+
+  // A fresh LAND request cannot inherit the old contact dwell.
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US;
+  model.state.altitude.healthy = false;
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_TRUE(model.state.failsafe.landingFault);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+  model.state.altitude.healthy = true;
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_TRUE(model.state.failsafe.landingActive);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+  ArduinoFakeReset();
+}
+
+void test_land_repeated_failsafe_stage2_does_not_reset_contact_state()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 5700000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  TelemetryManager telemetry(model);
+  Input input(model, telemetry);
+  model.config.failsafe.procedure = FAILSAFE_PROCEDURE_AUTO_LAND;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 1000000u;
+  model.state.failsafe.landingGroundContactCandidate = true;
+  model.state.failsafe.landingGroundContactStartedUs = NOW_US - 300000u;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 100000u;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  input.failsafeStage2();
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+  TEST_ASSERT_EQUAL_UINT32(NOW_US - 300000u,
+                           model.state.failsafe.landingGroundContactStartedUs);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
+  ArduinoFakeReset();
+}
+
 void test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown()
 {
   ArduinoFakeReset();
@@ -5235,10 +5412,9 @@ void test_failsafe_land_v2_rx_recovery_stays_committed_to_land()
       uint32_t{1} <<
       MODE_ARMED);
 
-  // Receiver has now been healthy for longer than the 500 ms qualification
-  // period, but a failsafe LAND intentionally remains terminal for this
-  // armed flight. Pilot input stays gated until touchdown/disarm.
-  TEST_ASSERT_TRUE(
+  // Qualified input becomes visible to the ARM switch only. LAND keeps
+  // output authority until touchdown, explicit disarm, or fault abort.
+  TEST_ASSERT_FALSE(
       input.failsafe(
           INPUT_RECEIVED));
 
@@ -9385,6 +9561,10 @@ RUN_TEST(test_land_v2_fault_bypasses_motor_stop_feature);
 
 RUN_TEST(
     test_failsafe_land_v2_touchdown_dwell_disarms);
+RUN_TEST(test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover);
+RUN_TEST(test_land_full_actuator_gyro_loss_aborts_without_false_landed);
+RUN_TEST(test_land_disarm_and_recovery_cannot_reuse_touchdown_history);
+RUN_TEST(test_land_repeated_failsafe_stage2_does_not_reset_contact_state);
 RUN_TEST(test_land_without_rangefinder_elevated_terrain_contact);
 RUN_TEST(test_land_without_rangefinder_lower_terrain_contact);
 RUN_TEST(test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion);

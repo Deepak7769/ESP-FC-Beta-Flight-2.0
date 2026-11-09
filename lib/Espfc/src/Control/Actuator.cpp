@@ -988,6 +988,22 @@ void Actuator::updateFailsafeLand()
           MODE_ARMED);
 #endif
 
+  // A gyro failure or deliberate ARM-switch disarm can end an airborne
+  // failsafe LAND without proving ground contact. Abort its authority and
+  // request; report RX_LOSS_DETECTED, NOT the false LANDED state. Qualified
+  // receiver recovery and a fresh ARM switch cycle are required afterward.
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  if (failsafe.landingRequested &&
+      failsafe.phase == FC_FAILSAFE_LANDING &&
+      !_model.isModeActive(MODE_ARMED))
+  {
+    failsafe.landingRequested = false;
+    failsafe.landingFault = true;
+    failsafe.gpsRescueLandNoDrop = false;
+    failsafe.phase = FC_FAILSAFE_RX_LOSS_DETECTED;
+  }
+#endif
+
   // The logical LAND controller starts blocked. It is cleared only while a
   // healthy active LAND request owns the controller. Safe-bench builds still
   // block physical ESC attachment independently in Mixer.cpp.
@@ -1047,9 +1063,12 @@ void Actuator::updateFailsafeLand()
     failsafe.landingEstimatorHealthy =
         estimatorHealthy;
 
+    // A disarmed aircraft must not retain an authoritative LAND controller.
     failsafe.landingEligible =
         failsafe.rxEverValid &&
-        estimatorHealthy;
+        estimatorHealthy &&
+        (failsafe.phase != FC_FAILSAFE_LANDING ||
+         _model.isModeActive(MODE_ARMED));
 
     failsafe.landingActive =
         failsafe.landingEligible;

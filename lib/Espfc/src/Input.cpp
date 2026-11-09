@@ -108,6 +108,8 @@ int Input::begin()
 
   _model.state.failsafe.landingTouchdownStartedUs =
       0;
+  _model.state.failsafe.landingGroundContactCandidate = false;
+  _model.state.failsafe.landingGroundContactStartedUs = 0;
 
   _model.state.input.rxLoss =
       true;
@@ -555,15 +557,13 @@ bool FAST_CODE_ATTR Input::failsafe(
           return true;
         }
 
-        // Receiver is continuously healthy again, but pilot input remains
-        // gated while LAND owns the current flight.
-        input.rxLoss =
-            false;
-
-        input.rxFailSafe =
-            false;
-
-        return true;
+        // Receiver is requalified: process its AUX/ARM switch so a pilot can
+        // deliberately DISARM a malfunctioning LAND. The terminal LAND
+        // controller (or fault thrust hold) continues owning throttle and
+        // attitude outputs; merely decoding RX does not transfer authority.
+        input.rxLoss = false;
+        input.rxFailSafe = false;
+        return false;
       }
 #endif
 
@@ -905,6 +905,8 @@ void FAST_CODE_ATTR Input::failsafeStage2()
 
       failsafe.landingTouchdownStartedUs =
           0;
+      failsafe.landingGroundContactCandidate = false;
+      failsafe.landingGroundContactStartedUs = 0;
     }
 
     failsafe.phase =
