@@ -199,16 +199,11 @@ int VoltageSensor::readIbat()
       volts *
       1000.0f;
 
-  volts +=
-      _model.config.ibat.offset *
-      0.001f;
-
-  volts *=
-      _model.config.ibat.scale *
-      0.1f;
-
   battery.currentUnfiltered =
-      volts;
+      adcCurrentAmps(
+          milivolts,
+          _model.config.ibat.scale,
+          _model.config.ibat.offset);
 
   battery.current =
       _iFilter.update(

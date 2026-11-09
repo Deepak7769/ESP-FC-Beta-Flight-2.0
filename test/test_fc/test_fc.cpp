@@ -2969,6 +2969,22 @@ void test_msp_current_meter_reply_updates_battery_state()
 }
 
 
+void test_adc_current_calibration_uses_betaflight_units()
+{
+  // scale = mV per 10 A; offset = mA, not volts.
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 10.0f,
+      Sensor::VoltageSensor::adcCurrentAmps(100.0f, 100, 0));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 5.0f,
+      Sensor::VoltageSensor::adcCurrentAmps(100.0f, 200, 0));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 11.0f,
+      Sensor::VoltageSensor::adcCurrentAmps(100.0f, 100, 1000));
+  // A nonsensical zero/negative scale must never divide by zero.
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f,
+      Sensor::VoltageSensor::adcCurrentAmps(100.0f, 0, 1000));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f,
+      Sensor::VoltageSensor::adcCurrentAmps(100.0f, -1, 0));
+}
+
 void test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data()
 {
   ArduinoFakeReset();
@@ -10370,6 +10386,7 @@ RUN_TEST(test_controller_anti_gravity_tracks_manual_throttle_transient);
   RUN_TEST(test_model_gps_home_requires_fresh_3d_quality_and_respects_set_once);
   RUN_TEST(test_msp_current_meter_reply_updates_battery_state);
   RUN_TEST(test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data);
+  RUN_TEST(test_adc_current_calibration_uses_betaflight_units);
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
   RUN_TEST(test_controller_anti_gravity_yields_to_assisted_vertical_control);
 #endif
