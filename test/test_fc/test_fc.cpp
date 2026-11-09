@@ -4682,7 +4682,7 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
   When(Method(ArduinoFake(), millis)).AlwaysReturn(7900);
   Model model;
-  model.state.gyro.clock = 1000;
+  model.state.gyro.clock = 500;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
   model.config.mixerSync = 1;
@@ -4717,7 +4717,7 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
   uint32_t lastTick = 0;
   for (uint32_t tick = 0; tick < 7000; ++tick)
   {
-    const uint32_t now = START + tick * 1000u;
+    const uint32_t now = START + tick * 2000u;
     When(Method(ArduinoFake(), micros)).AlwaysReturn(now);
     model.state.gyro.lastUpdateUs = now;
     model.state.accel.lastUpdateUs = now;
