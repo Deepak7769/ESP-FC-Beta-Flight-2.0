@@ -4799,6 +4799,107 @@ void test_land_repeated_failsafe_stage2_does_not_reset_contact_state()
   ArduinoFakeReset();
 }
 
+
+void test_failsafe_gps_rescue_stage2_preserves_committed_land()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 6900000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  TelemetryManager telemetry(model);
+  Input input(model, telemetry);
+  model.config.failsafe.procedure = FAILSAFE_PROCEDURE_GPS_RESCUE;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.gpsRescueLandNoDrop = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 4000000u;
+  model.state.failsafe.landingGroundContactCandidate = true;
+  model.state.failsafe.landingGroundContactStartedUs = NOW_US - 200000u;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 100000u;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  input.failsafeStage2();
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_TRUE(model.state.failsafe.gpsRescueLandNoDrop);
+  TEST_ASSERT_EQUAL_UINT32(NOW_US - 4000000u,
+                           model.state.failsafe.landingRequestedUs);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
+  TEST_ASSERT_EQUAL_UINT32(NOW_US - 200000u,
+                           model.state.failsafe.landingGroundContactStartedUs);
+#endif
+  ArduinoFakeReset();
+}
+
+void test_mixer_automatic_thrust_ignores_low_manual_motor_stop()
+{
+  Model model;
+  model.config.featureMask |= FEATURE_MOTOR_STOP;
+  model.state.input.us[AXIS_THRUST] = 1000;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Output::Mixer mixer(model);
+  TEST_ASSERT_TRUE(mixer._stop());
+
+  model.state.assistedMode.altitudeActive = true;
+  model.updateModes((uint32_t{1} << MODE_ARMED) |
+                    (uint32_t{1} << MODE_ALTHOLD));
+  TEST_ASSERT_FALSE(mixer._stop());
+
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  model.state.gpsRescue.active = true;
+  TEST_ASSERT_FALSE(mixer._stop());
+  model.state.gpsRescue.active = false;
+  model.state.assistedMode.altitudeActive = false;
+
+  model.state.gpsRescue.faultEvaluationPending = true;
+  TEST_ASSERT_FALSE(mixer._stop());
+  model.state.gpsRescue.faultEvaluationPending = false;
+
+  model.state.failsafe.gpsRescueLandNoDrop = true;
+  TEST_ASSERT_FALSE(mixer._stop());
+  model.state.failsafe.gpsRescueLandNoDrop = false;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  TEST_ASSERT_TRUE(mixer._stop());
+  model.updateModes(0);
+  TEST_ASSERT_TRUE(mixer._stop());
+}
+
+void test_land_rangefinder_supervisor_gap_revokes_previous_touchdown_dwell()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 7500000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  setHealthyAssistedEstimatorState(model, NOW_US);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = 0.1f;
+  model.state.altitude.vario = 0.01f;
+  model.state.output.ch[AXIS_THRUST] = -0.2f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = NOW_US;
+  model.state.rangefinder.distance = 0.1f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 3000000u;
+  model.state.failsafe.landingEntryHeight = 2.0f;
+  model.state.failsafe.landingLastUpdateUs = NOW_US - 200000u;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 1200000u;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Actuator actuator(model);
+  actuator.updateFailsafeLand();
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+  // A new sample may start a NEW candidate, but it must not keep old time.
+  TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
+  TEST_ASSERT_EQUAL_UINT32(NOW_US,
+                           model.state.failsafe.landingTouchdownStartedUs);
+  ArduinoFakeReset();
+}
 void test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown()
 {
   ArduinoFakeReset();
@@ -9569,6 +9670,9 @@ RUN_TEST(test_land_without_rangefinder_elevated_terrain_contact);
 RUN_TEST(test_land_without_rangefinder_lower_terrain_contact);
 RUN_TEST(test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion);
 RUN_TEST(test_land_without_rangefinder_requires_uninterrupted_imu_evidence);
+RUN_TEST(test_failsafe_gps_rescue_stage2_preserves_committed_land);
+RUN_TEST(test_mixer_automatic_thrust_ignores_low_manual_motor_stop);
+RUN_TEST(test_land_rangefinder_supervisor_gap_revokes_previous_touchdown_dwell);
 RUN_TEST(test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown);
 RUN_TEST(test_failsafe_land_rangefinder_confirms_ground_above_takeoff_elevation);
 

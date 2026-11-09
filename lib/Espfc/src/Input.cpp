@@ -828,6 +828,17 @@ void FAST_CODE_ATTR Input::failsafeStage2()
     return;
   }
 
+  // Once any failsafe/GPS Rescue path commits to LAND, repeated Stage-2
+  // receiver ticks must not restart Rescue, clear LAND, or rewind contact
+  // timers. The supervisor owns the rest of the armed landing lifecycle.
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  if (failsafe.phase == FC_FAILSAFE_LANDING &&
+      failsafe.landingRequested)
+  {
+    return;
+  }
+#endif
+
   // Stage 2 is beginning from an armed state.
   failsafe.phase =
       FC_FAILSAFE_RX_LOSS_DETECTED;

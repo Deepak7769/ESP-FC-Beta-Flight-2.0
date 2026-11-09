@@ -1092,6 +1092,17 @@ void Actuator::updateFailsafeLand()
         static_cast<uint32_t>(now - failsafe.landingLastUpdateUs) > 150000u;
     failsafe.landingLastUpdateUs = now;
 
+    // Neither rangefinder nor IMU contact evidence persists through a
+    // supervisor stall. Reset BOTH dwell stages before processing a fresh
+    // observation so one late sample can never satisfy an old candidate.
+    if (landingSupervisorGap)
+    {
+      failsafe.landingGroundContactCandidate = false;
+      failsafe.landingGroundContactStartedUs = 0;
+      failsafe.landingTouchdownCandidate = false;
+      failsafe.landingTouchdownStartedUs = 0;
+    }
+
 #if defined(ESPFC_LAND_V2_ACTIVE)
     if (activeLandRequest)
     {
@@ -1732,9 +1743,9 @@ case MODE_ALTHOLD:
       altHoldPilotStickCentered(
           _model);
 #else
-  return
-      altitudeEstimateHealthy() &&
-      !_altHoldFaultLatched;
+  // Do not report a functioning AltHold mode on targets that compile no
+  // authoritative vertical output controller.
+  return false;
 #endif
 
     case MODE_GPS_RESCUE:

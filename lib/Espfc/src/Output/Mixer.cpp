@@ -803,12 +803,31 @@ float inline Mixer::erpmToRpm(float erpm)
 bool Mixer::_stop(void)
 {
   if (!_model.isModeActive(MODE_ARMED)) return true;
-  // During failsafe LAND a stale/lost receiver throttle must not activate
-  // MOTOR_STOP while the controller is maintaining propulsion.
-  if (_model.state.failsafe.landingRequested &&
-      _model.state.failsafe.phase == FC_FAILSAFE_LANDING) return false;
-  if (_model.isFeatureActive(FEATURE_MOTOR_STOP) && _model.isThrottleLow()) return true;
-  return false;
+
+  const auto& failsafe = _model.state.failsafe;
+  const auto& rescue = _model.state.gpsRescue;
+  const bool terminalLand =
+      failsafe.landingRequested &&
+      failsafe.phase == FC_FAILSAFE_LANDING;
+
+  // A centered AUX climb-stick is distinct from the conventional main
+  // throttle input. Once a vertical controller owns thrust, a low manual
+  // throttle must never cause MOTOR_STOP to bypass that controller.
+  const bool verticalControllerOwnsThrust =
+      _model.state.assistedMode.altitudeActive &&
+      (_model.isModeActive(MODE_ALTHOLD) || rescue.active);
+  const bool automaticThrustHold =
+      rescue.faultEvaluationPending || rescue.requestLand ||
+      failsafe.gpsRescueLandNoDrop;
+
+  if (terminalLand || verticalControllerOwnsThrust ||
+      automaticThrustHold || _model.isAirModeActive())
+  {
+    return false;
+  }
+
+  return _model.isFeatureActive(FEATURE_MOTOR_STOP) &&
+         _model.isThrottleLow();
 }
 
 } // namespace Espfc::Output
