@@ -85,24 +85,22 @@ int8_t readBit(
   return count;
 }
 
-  int8_t readBits(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t* data)
+  int8_t readBits(uint8_t addr, uint8_t reg, uint8_t start, uint8_t length, uint8_t* out)
   {
-    uint8_t count, b;
-    if ((count = readByte(devAddr, regAddr, &b)) != 0)
-    {
-      *data = Utils::getBitsMsb(b, bitStart, length);
-    }
-    return count;
+    if (!out) return 0;
+    uint8_t value = 0;
+    const int8_t result = readByte(addr, reg, &value);
+    if (result == 1) *out = Utils::getBitsMsb(value, start, length);
+    return result;
   }
 
-  int8_t readBitsLsb(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t* data)
+  int8_t readBitsLsb(uint8_t addr, uint8_t reg, uint8_t start, uint8_t length, uint8_t* out)
   {
-    uint8_t count, b;
-    if ((count = readByte(devAddr, regAddr, &b)) != 0)
-    {
-      *data = Utils::getBitsLsb(b, bitStart, length);
-    }
-    return count;
+    if (!out) return 0;
+    uint8_t value = 0;
+    const int8_t result = readByte(addr, reg, &value);
+    if (result == 1) *out = Utils::getBitsLsb(value, start, length);
+    return result;
   }
 
 bool writeBit(
@@ -136,7 +134,7 @@ bool writeBit(
   bool writeBits(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t data)
   {
     uint8_t b = 0;
-    if (readByte(devAddr, regAddr, &b) != 0)
+    if (readByte(devAddr, regAddr, &b) == 1)
     {
       b = Utils::setBitsMsb(b, bitStart, length, data);
       return writeByte(devAddr, regAddr, b);
@@ -150,7 +148,7 @@ bool writeBit(
   bool writeBitsLsb(uint8_t devAddr, uint8_t regAddr, uint8_t bitStart, uint8_t length, uint8_t data)
   {
     uint8_t b = 0;
-    if (readByte(devAddr, regAddr, &b) != 0)
+    if (readByte(devAddr, regAddr, &b) == 1)
     {
       b = Utils::setBitsLsb(b, bitStart, length, data);
       return writeByte(devAddr, regAddr, b);
@@ -164,7 +162,7 @@ bool writeBit(
   bool writeMask(uint8_t devAddr, uint8_t regAddr, uint8_t mask, uint8_t data)
   {
     uint8_t b = 0;
-    if (readByte(devAddr, regAddr, &b) != 0)
+    if (readByte(devAddr, regAddr, &b) == 1)
     {
       b = Utils::setMasked(b, mask, data);
       return writeByte(devAddr, regAddr, b);

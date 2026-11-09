@@ -233,7 +233,8 @@ void reset()
 
     updateFilter(in, out);
 
-    const float dt = std::clamp(in.dt, 0.001f, 0.25f);
+    const float dt = std::isfinite(in.dt) && in.dt > 0.0f
+        ? std::min(in.dt, 0.25f) : 0.0f;
     const float speed = std::hypot(in.velNorth, in.velEast);
  
     const bool stickActive = std::fabs(in.stickRoll) > _p.deadband || std::fabs(in.stickPitch) > _p.deadband;
@@ -388,8 +389,8 @@ private:
       const PositionHoldInput& in,
       PositionHoldOutput& out)
   {
-    const float controllerDt =
-        std::clamp(in.dt, 0.001f, 0.25f);
+    const float controllerDt = std::isfinite(in.dt) && in.dt > 0.0f
+        ? std::min(in.dt, 0.25f) : 0.0f;
 
     // When the receiver does not provide a timestamp (0), detect a new
     // position by coordinate change and use elapsed controller time for the

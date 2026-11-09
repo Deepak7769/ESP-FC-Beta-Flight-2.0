@@ -534,11 +534,12 @@ int update(
             now - range.lastUpdateUs) <
         RANGEFINDER_STALE_US;
 
-    const float rangeTiltCos =
-        std::clamp(
-            attitude.cosTheta,
-            0.50f,
-            1.0f);
+    // Reject excessive tilt before clamping its cosine.
+    const float rawRangeTiltCos = attitude.cosTheta;
+    const bool rangeTiltValid = std::isfinite(rawRangeTiltCos) &&
+        rawRangeTiltCos >= 0.50f;
+    const float rangeTiltCos = rangeTiltValid
+        ? std::min(rawRangeTiltCos, 1.0f) : 0.0f;
 
     const bool rangeValid =
         rangeFresh &&
@@ -547,7 +548,7 @@ int update(
         range.distance >= 0.05f &&
         range.distance <= 10.0f &&
         attitudeFresh &&
-        rangeTiltCos >= 0.50f;
+        rangeTiltValid;
 
     if (range.present &&
         (!range.sampleValid || !rangeFresh))

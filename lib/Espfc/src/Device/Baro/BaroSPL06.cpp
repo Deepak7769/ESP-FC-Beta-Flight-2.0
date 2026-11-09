@@ -142,7 +142,7 @@ float BaroSPL06::readPressure()
   float qua2, qua3;
   float fPCompensate;
 
-  readMesurment();
+  if (!readMesurment()) return NAN;
 
   fTsc = _raw_temp / (float)kt;
   fPsc = _raw_pressure / (float)kp;
@@ -182,16 +182,17 @@ bool BaroSPL06::testConnection()
   return true;
 }
 
-void BaroSPL06::readMesurment()
+bool BaroSPL06::readMesurment()
 {
   uint8_t buffer[6] = {};
-  if (_bus->readFast(_addr, SPL06_PRESSURE_REG, 6, buffer) != 6) return;
+  if (_bus->readFast(_addr, SPL06_PRESSURE_REG, 6, buffer) != 6) return false;
 
   _raw_pressure = buffer[2] | (buffer[1] << 8) | (buffer[0] << 16);
   _raw_pressure = (_raw_pressure & 0x800000) ? (0xFF000000 | _raw_pressure) : _raw_pressure;
 
   _raw_temp = buffer[5] | (buffer[4] << 8) | (buffer[3] << 16);
   _raw_temp = (_raw_temp & 0x800000) ? (0xFF000000 | _raw_temp) : _raw_temp;
+  return true;
 }
 
 int8_t BaroSPL06::writeReg(uint8_t reg, uint8_t val)

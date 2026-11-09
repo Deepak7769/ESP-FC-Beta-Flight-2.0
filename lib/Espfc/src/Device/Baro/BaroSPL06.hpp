@@ -35,7 +35,7 @@ public:
   bool testConnection() final;
 
 protected:
-  void readMesurment();
+  bool readMesurment();
   int8_t writeReg(uint8_t reg, uint8_t val);
 
   int8_t _mode;

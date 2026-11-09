@@ -1,4 +1,5 @@
 #include "Control/Pid.h"
+#include "Device/BusDevice.hpp"
 #include "Target/QueueAtomic.h"
 #include "Utils/Bits.hpp"
 #include "Utils/Filter.h"
@@ -21,6 +22,40 @@
 using namespace Espfc;
 using namespace Espfc::Control;
 using namespace Espfc::Utils;
+
+
+class TestFailedReadBus: public Device::BusDevice
+{
+public:
+  int written{0};
+  int8_t rc{-1};
+  BusType getType() const override { return BUS_I2C; }
+  int8_t read(uint8_t,uint8_t,uint8_t,uint8_t* d) override
+  {
+    if (rc == 1 && d) *d = 0x5a;
+    return rc;
+  }
+  int8_t readFast(uint8_t,uint8_t,uint8_t,uint8_t* d) override { return read(0,0,1,d); }
+  bool write(uint8_t,uint8_t,uint8_t,const uint8_t*) override { ++written; return true; }
+};
+
+void test_bus_helpers_reject_negative_reads()
+{
+  TestFailedReadBus bus;
+  uint8_t result = 0xa5;
+  TEST_ASSERT_EQUAL_INT8(-1, bus.readBits(1,2,3,1,&result));
+  TEST_ASSERT_EQUAL_HEX8(0xa5, result);
+  TEST_ASSERT_EQUAL_INT8(-1, bus.readBitsLsb(1,2,3,1,&result));
+  TEST_ASSERT_EQUAL_HEX8(0xa5, result);
+  TEST_ASSERT_FALSE(bus.writeBits(1,2,3,1,1));
+  TEST_ASSERT_FALSE(bus.writeBitsLsb(1,2,3,1,1));
+  TEST_ASSERT_FALSE(bus.writeMask(1,2,3,1));
+  TEST_ASSERT_EQUAL_INT(0, bus.written);
+  TEST_ASSERT_EQUAL_INT8(0, bus.readBits(1,2,3,1,nullptr));
+  bus.rc = 1;
+  TEST_ASSERT_TRUE(bus.writeMask(1,2,3,1));
+  TEST_ASSERT_EQUAL_INT(1, bus.written);
+}
 
 void test_math_map()
 {
@@ -1412,6 +1447,7 @@ int main(int argc, char** argv)
 {
   UNITY_BEGIN();
 
+  RUN_TEST(test_bus_helpers_reject_negative_reads);
   RUN_TEST(test_math_map);
   RUN_TEST(test_math_map3);
   RUN_TEST(test_math_deadband);

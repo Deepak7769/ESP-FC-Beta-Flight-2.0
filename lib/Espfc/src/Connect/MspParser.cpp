@@ -5,7 +5,7 @@ namespace Espfc::Connect {
 
 MspParser::MspParser() {}
 
-void MspParser::parse(char c, MspMessage& msg)
+void MspParser::parse(uint8_t c, MspMessage& msg)
 {
   switch (msg.state)
   {

@@ -141,6 +141,9 @@ public:
       const GpsRescueParams& p)
   {
     GpsRescueOutput out{};
+    // Do not inflate submillisecond navigation time at high PID rates.
+    const float elapsedDt = std::isfinite(in.dt) && in.dt > 0.0f
+        ? std::min(in.dt, 0.25f) : 0.0f;
     out.active = in.requested && in.armed;
 
     if (!out.active)
@@ -157,8 +160,7 @@ public:
       // Do not turn one bad sample into a motor-off event. Keep Rescue
       // active while the navigation fault is confirmed.
       _faultFlagsLatched |= faults;
-      _faultEvaluationElapsed +=
-          std::max(in.dt, 0.001f);
+      _faultEvaluationElapsed += elapsedDt;
 
       out.active = true;
       out.controlling = false;
@@ -187,7 +189,7 @@ public:
     _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
 
     updateHeadingEstimate(in, p);
-    _phaseElapsed += std::max(in.dt, 0.001f);
+    _phaseElapsed += elapsedDt;
 
     if (_phase == GpsRescuePhase::IDLE)
     {
@@ -323,10 +325,7 @@ public:
         }
         else
         {
-          _noProgressElapsed +=
-              std::max(
-                  in.dt,
-                  0.001f);
+          _noProgressElapsed += elapsedDt;
         }
 
         const float progressTimeout =

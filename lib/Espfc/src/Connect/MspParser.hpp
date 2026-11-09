@@ -8,7 +8,7 @@ class MspParser
 {
 public:
   MspParser();
-  void parse(char c, MspMessage& msg);
+  void parse(uint8_t c, MspMessage& msg);
 };
 
 } // namespace Espfc::Connect

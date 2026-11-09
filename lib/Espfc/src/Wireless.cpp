@@ -42,7 +42,7 @@ int Wireless::connect()
   if(_model.config.wireless.ssid[0] != 0)
   {
     WiFi.begin(_model.config.wireless.ssid, _model.config.wireless.pass);
-    _model.logger.info().log("WIFI STA").log(_model.config.wireless.ssid).log(_model.config.wireless.pass).log(WiFi.getMode()).logln(WiFi.status());
+    _model.logger.info().log("WIFI STA").log(_model.config.wireless.ssid).log(WiFi.getMode()).logln(WiFi.status());
   }
   if(!(WiFi.getMode() & WIFI_AP))
   {

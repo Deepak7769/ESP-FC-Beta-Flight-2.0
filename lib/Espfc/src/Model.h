@@ -667,12 +667,12 @@ void setOutputSaturation(
       config.gpsRescue.climbRateDmS =
           std::clamp<uint8_t>(
               config.gpsRescue.climbRateDmS,
-              5,
+              1,
               100);
       config.gpsRescue.descentRateDmS =
           std::clamp<uint8_t>(
               config.gpsRescue.descentRateDmS,
-              2,
+              1,
               50);
       config.gpsRescue.speedDmS =
           std::clamp<uint8_t>(

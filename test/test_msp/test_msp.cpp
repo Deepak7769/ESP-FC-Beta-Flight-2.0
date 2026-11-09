@@ -116,6 +116,32 @@ void test_msp_v2_parse_payload()
   TEST_ASSERT_EQUAL_UINT8(MSP_STATE_RECEIVED, msg.state);
 }
 
+
+void test_msp_v1_unsigned_checksum_bytes()
+{
+  MspParser parser;
+  for (uint16_t byte = 0; byte < 256; ++byte)
+  {
+    MspMessage msg;
+    const uint8_t frame[] = {'
+{
+  UNITY_BEGIN();
+  RUN_TEST(test_msp_v1_parse_header);
+  RUN_TEST(test_msp_v1_parse_no_payload);
+  RUN_TEST(test_msp_v1_parse_payload);
+  RUN_TEST(test_msp_v1_unsigned_checksum_bytes);
+  RUN_TEST(test_msp_v2_parse_header);
+  RUN_TEST(test_msp_v2_parse_no_payload);
+  RUN_TEST(test_msp_v2_parse_payload);
+
+  return UNITY_END();
+}, 'M', '<', 0, static_cast<uint8_t>(byte), static_cast<uint8_t>(byte)};
+    for (uint8_t c : frame) parser.parse(c, msg);
+    TEST_ASSERT_EQUAL_UINT8(MSP_STATE_RECEIVED, msg.state);
+    TEST_ASSERT_EQUAL_UINT8(byte, msg.cmd);
+  }
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
