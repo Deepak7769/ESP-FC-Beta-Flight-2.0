@@ -1698,9 +1698,15 @@ void test_actuator_althold_fault_requires_switch_cycle()
 
   actuator.updateModeMask();
 
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
   TEST_ASSERT_TRUE(
       model.isModeActive(
           MODE_ALTHOLD));
+#else
+  // Firmware with no active altitude-output controller must not accept
+  // a visually configured but inoperative AltHold mode.
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ALTHOLD));
+#endif
 
   // --------------------------------------------------
   // 2. Estimator failure
@@ -1754,9 +1760,15 @@ void test_actuator_althold_fault_requires_switch_cycle()
 
   actuator.updateModeMask();
 
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
   TEST_ASSERT_TRUE(
       model.isModeActive(
           MODE_ALTHOLD));
+#else
+  // Firmware with no active altitude-output controller must not accept
+  // a visually configured but inoperative AltHold mode.
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ALTHOLD));
+#endif
 }
 
 
