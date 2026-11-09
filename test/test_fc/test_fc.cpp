@@ -9834,6 +9834,24 @@ void test_mixer_vertical_saturation_feedback_is_directional()
 }
 
 
+void test_navigation_true_heading_applies_declination_once()
+{
+  using Espfc::Control::Navigation;
+  constexpr float DEG = Navigation::DEG_TO_RAD_FC;
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 10.0f * DEG,
+      Navigation::headingTrueNorth(0.0f, 100));
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, -10.0f * DEG,
+      Navigation::headingTrueNorth(0.0f, -100));
+  // Magnetic yaw is negative for clockwise rotation, so subtracting it
+  // yields compass clockwise heading. Positive east declination adds once.
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 95.0f * DEG,
+      Navigation::headingTrueNorth(-90.0f * DEG, 50));
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, -170.0f * DEG,
+      Navigation::headingTrueNorth(180.0f * DEG, 100));
+  TEST_ASSERT_TRUE(std::isnan(Navigation::headingTrueNorth(
+      std::numeric_limits<float>::quiet_NaN(), 0)));
+}
+
 void test_heading_health_requires_fresh_valid_calibrated_magnetometer()
 {
   ArduinoFakeReset();
@@ -9983,6 +10001,7 @@ void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_navigation_true_heading_applies_declination_once);
   RUN_TEST(test_heading_health_requires_fresh_valid_calibrated_magnetometer);
   RUN_TEST(test_gps_rescue_rejects_unqualified_absolute_heading);
   RUN_TEST(test_gps_rescue_never_treats_course_of_motion_as_body_yaw);

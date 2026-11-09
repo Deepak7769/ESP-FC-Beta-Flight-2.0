@@ -1712,7 +1712,9 @@ PositionHoldOutput posHoldOut{};
   const bool phMag = _model.magHeadingHealthy();
 
   const float phHeading =
-      -attitude.euler[AXIS_YAW];
+      Navigation::headingTrueNorth(
+          attitude.euler[AXIS_YAW],
+          _model.config.mag.declination);
  
   uint16_t phFlags = 0;
   phFlags |= phRequested ? (1u << 0) : 0u;
@@ -1988,7 +1990,9 @@ rescueIn.altitudeAboveHome =
     navigation.altitudeAboveHome;
 rescueIn.verticalRate = altitude.vario;
 rescueIn.yawHeading =
-    -attitude.euler[AXIS_YAW];
+    Navigation::headingTrueNorth(
+        attitude.euler[AXIS_YAW],
+        _model.config.mag.declination);
 rescueIn.courseOverGround =
     static_cast<float>(
         gps.velocity.raw.heading) *

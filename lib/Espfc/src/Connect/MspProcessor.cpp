@@ -1412,9 +1412,28 @@ case MSP_SET_FAILSAFE_CONFIG:
       r.writeU16(_model.config.mag.declination); // mag_declination * 10
       break;
 
-    case MSP_SET_COMPASS_CONFIG:
-      _model.config.mag.declination = m.readU16(); // mag_declination * 10
+    case MSP_SET_COMPASS_CONFIG: {
+      // Forbid live navigation-frame rotation while armed and reject
+      // truncated MSP setters instead of interpreting missing bytes as 0.
+      if (_model.isModeActive(MODE_ARMED) || m.remain() != 2)
+      {
+        r.result = -1;
+        break;
+      }
+      const uint16_t encoded = m.readU16();
+      const int32_t signedTenths =
+          encoded <= 0x7fff
+              ? static_cast<int32_t>(encoded)
+              : static_cast<int32_t>(encoded) - 65536;
+      if (signedTenths < -1800 || signedTenths > 1800)
+      {
+        r.result = -1;
+        break;
+      }
+      _model.config.mag.declination =
+          static_cast<int16_t>(signedTenths);
       break;
+    }
 
     case MSP_FILTER_CONFIG:
       r.writeU8(_model.config.gyro.filter.freq);          // gyro lpf

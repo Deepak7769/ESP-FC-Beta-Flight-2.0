@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace Espfc::Control {
 
@@ -59,6 +60,20 @@ public:
     while (a > PI_FC) a -= 2.0f * PI_FC;
     while (a < -PI_FC) a += 2.0f * PI_FC;
     return a;
+  }
+
+  // F26: AHRS yaw is magnetic and uses the opposite sign from compass
+  // heading; config declination is stored in signed tenths of a degree.
+  // Return NaN (never default to north) when attitude yaw is untrusted.
+  static float headingTrueNorth(float magneticYawRadians,
+                                int16_t declinationTenthsDeg)
+  {
+    if (!std::isfinite(magneticYawRadians))
+      return std::numeric_limits<float>::quiet_NaN();
+    return wrapRadians(
+        -magneticYawRadians +
+        static_cast<float>(declinationTenthsDeg) *
+            0.1f * DEG_TO_RAD_FC);
   }
 
   static NavigationState update(const NavigationInput& in)
