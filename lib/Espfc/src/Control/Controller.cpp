@@ -1709,9 +1709,7 @@ PositionHoldOutput posHoldOut{};
   // multirotor, which can translate sideways while its nose points elsewhere.
   // Require the configured magnetometer-backed AHRS heading until another
   // trustworthy absolute heading source is available.
-  const bool phMag =
-      _model.config.fusion.useMag &&
-      _model.magActive();
+  const bool phMag = _model.magHeadingHealthy();
 
   const float phHeading =
       -attitude.euler[AXIS_YAW];
@@ -1839,7 +1837,8 @@ PositionHoldOutput posHoldOut{};
 
 const bool gpsRescueRequested =
     _model.isModeActive(MODE_GPS_RESCUE) &&
-    _model.isModeActive(MODE_ARMED);
+    _model.isModeActive(MODE_ARMED) &&
+    _model.magHeadingHealthy();
 
 Control::NavigationInput navigationIn{};
 navigationIn.homeValid = gps.isHomeValid();

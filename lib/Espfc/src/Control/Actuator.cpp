@@ -1627,6 +1627,7 @@ bool Actuator::gpsRescueEligible() const
   }
 
   return
+      _model.magHeadingHealthy() &&
       attitudeEstimateHealthy() &&
       altitudeEstimateHealthy();
 }

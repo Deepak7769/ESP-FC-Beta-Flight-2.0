@@ -123,6 +123,28 @@ class Model
       return state.mag.present && config.mag.dev != MAG_NONE;
     }
 
+    // F14: a heading source needs finite, fresh calibrated observations,
+    // not merely a successfully detected magnetometer chip.
+    bool magHeadingHealthy() const
+    {
+      if (!magActive() || !config.fusion.useMag) return false;
+      const auto& mag = state.mag;
+      if (!mag.sampleValid || mag.lastUpdateUs == 0u ||
+          !mag.calibrationValid ||
+          mag.calibrationState != CALIBRATION_IDLE) return false;
+      const uint32_t expectedPeriodUs =
+          mag.timer.rate > 0
+              ? 1000000u / static_cast<uint32_t>(mag.timer.rate)
+              : 200000u;
+      const uint32_t staleUs =
+          std::clamp<uint32_t>(expectedPeriodUs * 3u, 250000u, 1000000u);
+      if (static_cast<uint32_t>(micros() - mag.lastUpdateUs) >= staleUs)
+        return false;
+      const auto& m = mag.adc;
+      const float normSq = m.x * m.x + m.y * m.y + m.z * m.z;
+      return std::isfinite(normSq) && normSq > 1.0e-12f;
+    }
+
     bool baroActive() const
     {
       return state.baro.present && config.baro.dev != BARO_NONE;

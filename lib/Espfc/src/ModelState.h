@@ -361,6 +361,9 @@ struct MagState
   Device::MagDevice* dev;
   bool present;
   int rate;
+  // Magnetometer presence is not the same as fresh calibrated heading.
+  bool sampleValid{false};
+  uint32_t lastUpdateUs{0};
 
   VectorInt16 raw;
   VectorFloat adc;

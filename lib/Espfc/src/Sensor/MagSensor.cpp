@@ -18,6 +18,9 @@ int MagSensor::begin()
 
   if (_model.state.mag.timer.rate < 5) return 0;
 
+  // A fresh post-init sample must establish heading health.
+  _model.state.mag.sampleValid = false;
+  _model.state.mag.lastUpdateUs = 0u;
   // by default use eeprom calibration settings
   _model.state.mag.calibrationState = CALIBRATION_IDLE;
   _model.state.mag.calibrationValid = true;
@@ -66,11 +69,9 @@ int MagSensor::read()
   if (!_mag || !_model.magActive() || !_model.state.mag.timer.check()) return 0;
 
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_MAG_READ);
-return
-    _mag->readMag(
-        _model.state.mag.raw)
-        ? 1
-        : 0;
+  const bool ok = _mag->readMag(_model.state.mag.raw) != 0;
+  if (!ok) _model.state.mag.sampleValid = false;
+  return ok ? 1 : 0;
 }
 
 int MagSensor::filter()
@@ -80,6 +81,13 @@ int MagSensor::filter()
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_MAG_FILTER);
 
   _model.state.mag.adc = _mag->convert(_model.state.mag.raw);
+  const auto& converted = _model.state.mag.adc;
+  if (!std::isfinite(converted.x) || !std::isfinite(converted.y) ||
+      !std::isfinite(converted.z))
+  {
+    _model.state.mag.sampleValid = false;
+    return 0; // Do not poison recursive magnetometer LPFs with NaN.
+  }
 
   align(_model.state.mag.adc, _model.config.mag.align);
   _model.state.mag.adc = _model.state.boardAlignment.apply(_model.state.mag.adc);
@@ -91,7 +99,13 @@ int MagSensor::filter()
 
   calibrate();
 
-  return 1;
+  const auto& sample = _model.state.mag.adc;
+  const float normSq =
+      sample.x * sample.x + sample.y * sample.y + sample.z * sample.z;
+  const bool valid = std::isfinite(normSq) && normSq > 1.0e-12f;
+  _model.state.mag.sampleValid = valid;
+  if (valid) _model.state.mag.lastUpdateUs = micros();
+  return valid ? 1 : 0;
 }
 
 void MagSensor::calibrate()

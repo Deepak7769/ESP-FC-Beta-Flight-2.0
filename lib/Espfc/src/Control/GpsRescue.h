@@ -130,8 +130,6 @@ public:
     _returnStartDistance = 0.0f;
     _bestReturnDistance = 0.0f;
     _noProgressElapsed = 0.0f;
-    _headingOffset = 0.0f;
-    _headingOffsetValid = false;
     _faultEvaluationElapsed = 0.0f;
     _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
   }
@@ -188,7 +186,7 @@ public:
     _faultEvaluationElapsed = 0.0f;
     _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
 
-    updateHeadingEstimate(in, p);
+    // Course over ground is a velocity vector, NOT body yaw.
     _phaseElapsed += elapsedDt;
 
     if (_phase == GpsRescuePhase::IDLE)
@@ -550,47 +548,9 @@ private:
     }
   }
 
-  float navigationHeading(
-      const GpsRescueInput& in) const
+  float navigationHeading(const GpsRescueInput& in) const
   {
-    return Navigation::wrapRadians(
-        in.yawHeading +
-        (_headingOffsetValid
-             ? _headingOffset
-             : 0.0f));
-  }
-
-  void updateHeadingEstimate(
-      const GpsRescueInput& in,
-      const GpsRescueParams& p)
-  {
-    if (!in.courseValid || in.groundSpeed < 0.5f)
-      return;
-
-    const float desiredOffset =
-        Navigation::wrapRadians(
-            in.courseOverGround -
-            in.yawHeading);
-
-    if (!_headingOffsetValid)
-    {
-      _headingOffset = desiredOffset;
-      _headingOffsetValid = true;
-      return;
-    }
-
-    const float offsetError =
-        Navigation::wrapRadians(
-            desiredOffset -
-            _headingOffset);
-
-    _headingOffset =
-        Navigation::wrapRadians(
-            _headingOffset +
-            std::clamp(
-                offsetError * p.headingBlend,
-                -0.15f,
-                0.15f));
+    return Navigation::wrapRadians(in.yawHeading);
   }
 
   static float verticalReturnRate(
@@ -729,8 +689,6 @@ private:
   float _returnStartDistance{0.0f};
   float _bestReturnDistance{0.0f};
   float _noProgressElapsed{0.0f};
-  float _headingOffset{0.0f};
-  bool _headingOffsetValid{false};
   float _faultEvaluationElapsed{0.0f};
   uint16_t _faultFlagsLatched{GPS_RESCUE_FAULT_NONE};
 };

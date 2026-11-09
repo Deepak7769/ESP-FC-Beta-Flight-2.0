@@ -513,7 +513,7 @@ Quaternion Fusion::filterQuaternion(const Quaternion& q)
 
 Quaternion FAST_CODE_ATTR Fusion::madgwickFusion(VectorFloat g, VectorFloat a, VectorFloat m)
 {
-  if (_useMag && _model.magActive())
+  if (_useMag && _model.magHeadingHealthy())
   {
     _madgwick.update(g.x, g.y, g.z, a.x, a.y, a.z, m.x, m.y, m.z);
   }
@@ -526,7 +526,7 @@ Quaternion FAST_CODE_ATTR Fusion::madgwickFusion(VectorFloat g, VectorFloat a, V
 
 Quaternion FAST_CODE_ATTR Fusion::mahonyFusion(VectorFloat g, VectorFloat a, VectorFloat m)
 {
-  if (_useMag && _model.magActive())
+  if (_useMag && _model.magHeadingHealthy())
   {
     _mahony.update(g.x, g.y, g.z, a.x, a.y, a.z, m.x, m.y, m.z);
   }
@@ -539,7 +539,7 @@ Quaternion FAST_CODE_ATTR Fusion::mahonyFusion(VectorFloat g, VectorFloat a, Vec
 
 Quaternion FAST_CODE_ATTR Fusion::rtqfFusion(VectorFloat g, VectorFloat a, VectorFloat m)
 {
-  if (_useMag && _model.magActive())
+  if (_useMag && _model.magHeadingHealthy())
   {
     _rtqf.update(g.x, g.y, g.z, a.x, a.y, a.z, m.x, m.y, m.z);
   }

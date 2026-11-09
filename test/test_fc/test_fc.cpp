@@ -1,6 +1,7 @@
 #include "Control/Actuator.h"
 #include "Control/AssistedModeV2.h"
 #include "Control/Controller.h"
+#include "Control/GpsRescue.h"
 #include "ResourceManager.h"
 #include "Control/Altitude.hpp"
 #include "Connect/MspProcessor.hpp"
@@ -9832,6 +9833,115 @@ void test_mixer_vertical_saturation_feedback_is_directional()
       model.state.innerPid[AXIS_THRUST].outputSaturated);
 }
 
+
+void test_heading_health_requires_fresh_valid_calibrated_magnetometer()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 5000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+  Model model;
+  model.config.fusion.useMag = 1;
+  model.config.mag.dev = MAG_HMC5883L;
+  model.state.mag.present = true;
+  model.state.mag.timer.setRate(10);
+  model.state.mag.calibrationValid = true;
+  model.state.mag.calibrationState = CALIBRATION_IDLE;
+  model.state.mag.adc = VectorFloat(30.0f, 5.0f, 12.0f);
+  // Device presence does not establish a trustworthy heading.
+  TEST_ASSERT_FALSE(model.magHeadingHealthy());
+  model.state.mag.sampleValid = true;
+  model.state.mag.lastUpdateUs = NOW - 100000u;
+  TEST_ASSERT_TRUE(model.magHeadingHealthy());
+
+  model.state.mag.lastUpdateUs = NOW - 800000u;
+  TEST_ASSERT_FALSE(model.magHeadingHealthy());
+  model.state.mag.lastUpdateUs = NOW;
+  model.state.mag.calibrationState = CALIBRATION_UPDATE;
+  TEST_ASSERT_FALSE(model.magHeadingHealthy());
+  model.state.mag.calibrationState = CALIBRATION_IDLE;
+  model.state.mag.adc.x = std::numeric_limits<float>::quiet_NaN();
+  TEST_ASSERT_FALSE(model.magHeadingHealthy());
+  model.state.mag.adc = VectorFloat(30.0f, 5.0f, 12.0f);
+  model.config.fusion.useMag = 0;
+  TEST_ASSERT_FALSE(model.magHeadingHealthy());
+  ArduinoFakeReset();
+}
+
+void test_gps_rescue_rejects_unqualified_absolute_heading()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 5200000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+  Model model;
+  setHealthyAssistedEstimatorState(model, NOW);
+  model.state.altitude.healthy = true;
+  model.state.gps.present = true;
+  model.state.gps.homeSet = true;
+  model.state.gps.fix = true;
+  model.state.gps.fixType = 3;
+  model.state.gps.numSats = 12;
+  model.state.gps.lastMsgTs = NOW - 100000u;
+  model.state.gps.accuracy.horizontal = 1500;
+  model.state.gps.distanceToHome = 100.0f;
+  model.config.gps.minSats = 8;
+  model.config.gpsRescue.minDistanceM = 20;
+  model.config.fusion.useMag = 1;
+  model.config.mag.dev = MAG_HMC5883L;
+  model.state.mag.present = true;
+  model.state.mag.timer.setRate(10);
+  model.state.mag.calibrationValid = true;
+  model.state.mag.calibrationState = CALIBRATION_IDLE;
+  model.state.mag.adc = VectorFloat(30.0f, 5.0f, 12.0f);
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  Actuator actuator(model);
+  TEST_ASSERT_FALSE(actuator.gpsRescueEligible());
+  model.state.mag.sampleValid = true;
+  model.state.mag.lastUpdateUs = NOW - 100000u;
+  TEST_ASSERT_TRUE(actuator.gpsRescueEligible());
+  model.state.mag.lastUpdateUs = NOW - 900000u;
+  TEST_ASSERT_FALSE(actuator.gpsRescueEligible());
+  ArduinoFakeReset();
+}
+
+void test_gps_rescue_never_treats_course_of_motion_as_body_yaw()
+{
+  Espfc::Control::GpsRescue rescue;
+  Espfc::Control::GpsRescueParams params{};
+  Espfc::Control::GpsRescueInput in{};
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 12;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.05f;
+  in.north = 100.0f;
+  in.east = 0.0f;
+  in.altitudeAboveHome = 10.0f;
+  in.yawHeading = 0.0f;
+  in.courseValid = true;
+  in.courseOverGround = 1.57079632679f;
+  in.groundSpeed = 3.0f;
+  in.velocityEast = 3.0f;
+  in.dt = 0.005f;
+  const auto first = rescue.update(in, params);
+  TEST_ASSERT_TRUE(first.active);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, first.navigationHeading);
+
+  // Body is still facing north while travelling west.
+  in.courseOverGround = -1.57079632679f;
+  in.velocityEast = -3.0f;
+  for (int j = 0; j < 30; ++j)
+  {
+    const auto out = rescue.update(in, params);
+    TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, out.navigationHeading);
+  }
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -9873,6 +9983,9 @@ void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_heading_health_requires_fresh_valid_calibrated_magnetometer);
+  RUN_TEST(test_gps_rescue_rejects_unqualified_absolute_heading);
+  RUN_TEST(test_gps_rescue_never_treats_course_of_motion_as_body_yaw);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);
