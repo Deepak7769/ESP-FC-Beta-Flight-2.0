@@ -111,6 +111,7 @@ int Input::begin()
       0;
   _model.state.failsafe.landingGroundContactCandidate = false;
   _model.state.failsafe.landingGroundContactStartedUs = 0;
+  _model.state.failsafe.landingGroundIdleRequested = false;
 
   _model.state.input.rxLoss =
       true;
@@ -947,6 +948,7 @@ void FAST_CODE_ATTR Input::failsafeStage2()
           0;
       failsafe.landingGroundContactCandidate = false;
       failsafe.landingGroundContactStartedUs = 0;
+      failsafe.landingGroundIdleRequested = false;
     }
 
     failsafe.phase =
@@ -993,6 +995,7 @@ void FAST_CODE_ATTR Input::failsafeStage2()
 
     failsafe.landingTouchdownStartedUs =
         0;
+    failsafe.landingGroundIdleRequested = false;
 
     failsafe.landingEntryHeight =
         0.0f;

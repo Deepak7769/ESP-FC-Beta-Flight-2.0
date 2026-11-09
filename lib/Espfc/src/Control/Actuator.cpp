@@ -1044,6 +1044,7 @@ void Actuator::updateFailsafeLand()
         0;
     failsafe.landingGroundContactCandidate = false;
     failsafe.landingGroundContactStartedUs = 0;
+    failsafe.landingGroundIdleRequested = false;
   }
   else
   {
@@ -1097,6 +1098,7 @@ void Actuator::updateFailsafeLand()
     // observation so one late sample can never satisfy an old candidate.
     if (landingSupervisorGap)
     {
+      failsafe.landingGroundIdleRequested = false;
       failsafe.landingGroundContactCandidate = false;
       failsafe.landingGroundContactStartedUs = 0;
       failsafe.landingTouchdownCandidate = false;
@@ -1121,6 +1123,7 @@ void Actuator::updateFailsafeLand()
         failsafe.landingTouchdownStartedUs = 0;
         failsafe.landingGroundContactCandidate = false;
         failsafe.landingGroundContactStartedUs = 0;
+        failsafe.landingGroundIdleRequested = false;
         return;
       }
       else
@@ -1366,14 +1369,23 @@ void Actuator::updateFailsafeLand()
             !gpsVelocityKnown ||
             (std::isfinite(horizontalSpeedSq) &&
              horizontalSpeedSq < 250000.0f); // 0.5 m/s in mm/s units
+        // This path can lower motor thrust after probable contact, but
+        // barometer+IMU can never provide a terrain-independent guarantee.
+        // Flight auto-disarm requires a deliberate build policy and measured
+        // aircraft acceptance. Native tests are non-actuating.
+#if defined(UNIT_TEST) || defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
+        constexpr bool noRangeAutoDisarmAuthorized = true;
+#else
+        constexpr bool noRangeAutoDisarmAuthorized = false;
+#endif
         const bool nearMotorMinimum =
             std::isfinite(commandedThrust) &&
             commandedThrust <= -0.94f;
         const bool noRangeContactEvidence =
-            !groundSensor.present &&
+            noRangeAutoDisarmAuthorized && !groundSensor.present &&
             landingElapsedUs >= MIN_LANDING_TIME_US &&
             descentEvidence && slowVerticalMotion &&
-            lowLandingThrust && nearMotorMinimum &&
+            lowLandingThrust &&
             rotationStable && tiltStable && linearMotionStable &&
             gpsMotionAcceptable;
 
@@ -1385,6 +1397,7 @@ void Actuator::updateFailsafeLand()
         {
           failsafe.landingGroundContactCandidate = false;
           failsafe.landingGroundContactStartedUs = 0;
+          failsafe.landingGroundIdleRequested = false;
           if (!groundSensor.present)
           {
             failsafe.landingTouchdownCandidate = false;
@@ -1405,12 +1418,27 @@ void Actuator::updateFailsafeLand()
                  failsafe.landingGroundContactStartedUs) >=
                  NO_RANGE_CONTACT_DWELL_US);
 
+        // A sustained contact hypothesis permits rate-limited ground-idle
+        // reduction. The second dwell cannot start until the controller
+        // and the actual mixer confirm lower output on every motor.
+        failsafe.landingGroundIdleRequested =
+            noRangeContactEvidence && contactStageComplete;
+        const auto& mix = _model.state.mixer;
+        const bool motorMixRecentlyApplied =
+            mix.lastMotorMixUs != 0u &&
+            static_cast<uint32_t>(now - mix.lastMotorMixUs) < 100000u;
+        const bool groundIdleEstablished =
+            failsafe.landingGroundIdleRequested &&
+            nearMotorMinimum && motorMixRecentlyApplied &&
+            mix.allMotorOutputsNearIdle;
+
         const bool touchdownEvidence =
             landingElapsedUs >= MIN_LANDING_TIME_US &&
             slowVerticalMotion && nearGround &&
             descentEvidence && lowLandingThrust &&
             contactStageComplete &&
-            (groundSensor.present || noRangeContactEvidence);
+            (groundSensor.present ||
+             (noRangeContactEvidence && groundIdleEstablished));
 
         // Once strict ground-contact evidence has started the dwell timer,
         // allow a slightly wider hold band. This mirrors staged/hysteretic
@@ -1437,7 +1465,8 @@ void Actuator::updateFailsafeLand()
             groundReferenceUsable &&
             (!groundSensor.present ||
              groundSensor.distance <= TOUCHDOWN_HOLD_HEIGHT_M) &&
-            (groundSensor.present || noRangeContactEvidence) &&
+            (groundSensor.present ||
+             (noRangeContactEvidence && groundIdleEstablished)) &&
             descentEvidence &&
             std::isfinite(
                 commandedThrust) &&
@@ -1636,6 +1665,7 @@ void Actuator::startFailsafeLanding()
     failsafe.landingTouchdownStartedUs = 0;
     failsafe.landingGroundContactCandidate = false;
     failsafe.landingGroundContactStartedUs = 0;
+    failsafe.landingGroundIdleRequested = false;
   }
 
   // No failed altitude estimate authorizes an airborne DROP, whether
@@ -1820,6 +1850,7 @@ void Actuator::updateArmed()
           0;
       failsafe.landingGroundContactCandidate = false;
       failsafe.landingGroundContactStartedUs = 0;
+      failsafe.landingGroundIdleRequested = false;
 
       failsafe.landingEntryHeight =
           0.0f;

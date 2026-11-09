@@ -109,6 +109,8 @@ _altHoldWasActive =
 
 _altHoldV2OutputWasActive =
     false;
+_landGroundIdleWasActive = false;
+_landGroundIdleThrust = 0.0f;
 
 _manualThrottleHandoffActive =
     false;
@@ -695,6 +697,17 @@ const bool legacyAltHoldActive =
 auto& verticalPid =
     innerPid[AXIS_THRUST];
 
+#if defined(ESPFC_LAND_V2_ACTIVE) && \
+    (defined(UNIT_TEST) || defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK))
+const bool groundIdleAuthority =
+    landingV2RequestedForOutput && altHoldV2OutputActive &&
+    _model.state.failsafe.landingGroundIdleRequested &&
+    !_model.state.rangefinder.present;
+#else
+constexpr bool groundIdleAuthority = false;
+#endif
+if (!groundIdleAuthority) _landGroundIdleWasActive = false;
+
 if (altHoldV2OutputActive)
 {
   _manualThrottleHandoffActive = false;
@@ -862,6 +875,31 @@ if (altHoldV2OutputActive)
               -0.80f,
               0.80f);
     }
+  }
+
+  if (groundIdleAuthority &&
+      std::isfinite(output.ch[AXIS_THRUST]))
+  {
+    // Stage-1 IMU/motion evidence is confirmed by Actuator before this
+    // controller override may slew collective downward. It does not
+    // modify the recursive PID state or learned hover thrust.
+    // Ground-idle flight authorization requires an explicit build flag.
+    constexpr float GROUND_IDLE_COLLECTIVE = -0.96f;
+    constexpr float GROUND_IDLE_SLEW_PER_S = 0.70f;
+    if (!_landGroundIdleWasActive)
+    {
+      _landGroundIdleWasActive = true;
+      _landGroundIdleThrust =
+          std::clamp(output.ch[AXIS_THRUST], -1.0f, 1.0f);
+    }
+    const float step = GROUND_IDLE_SLEW_PER_S *
+        (std::isfinite(verticalPid.dt)
+             ? std::clamp(verticalPid.dt, 0.0f, 0.02f) : 0.0f);
+    _landGroundIdleThrust =
+        std::max(GROUND_IDLE_COLLECTIVE,
+                 _landGroundIdleThrust - step);
+    output.ch[AXIS_THRUST] =
+        std::min(output.ch[AXIS_THRUST], _landGroundIdleThrust);
   }
 
   _model.state.assistedMode.hoverThrust =

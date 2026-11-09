@@ -394,6 +394,7 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
 
   float verticalHeadroomHigh = 1.0f;
   float verticalHeadroomLow = 1.0f;
+  float maxMotorLowerHeadroom = 0.0f;
   bool motorPresent = false;
 
   for (size_t i = 0; i < mixerCount; i++)
@@ -441,6 +442,8 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
               std::min(
                   verticalHeadroomLow,
                   lowerHeadroom);
+          maxMotorLowerHeadroom =
+              std::max(maxMotorLowerHeadroom, lowerHeadroom);
 
           if (upperHeadroom <= 0.02f)
           {
@@ -495,6 +498,9 @@ void FAST_CODE_ATTR Mixer::updateMixer(const MixerConfig& mixer, float* outputs)
           1.0f);
   _model.state.mixer.verticalSaturated =
       verticalSaturated;
+  _model.state.mixer.allMotorOutputsNearIdle =
+      motorPresent && maxMotorLowerHeadroom <= 0.06f;
+  _model.state.mixer.lastMotorMixUs = micros();
 
   _model.setOutputSaturation(
       saturated,

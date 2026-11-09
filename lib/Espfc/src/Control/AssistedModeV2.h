@@ -44,6 +44,16 @@
     !defined(ESPFC_ALTHOLD_V2_ACTIVE)
 #error "LAND V2 requires AltHold V2"
 #endif
+
+// Without a rangefinder, IMU/barometer can only hypothesize touchdown.
+// The staged low-idle motor command and automatic disarm are therefore
+// disabled in motor-driving production unless the integrator explicitly
+// acknowledges the physical acceptance tests by defining this flag.
+// Do not enable merely because software simulation tests are green.
+#if defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK) && \
+    !defined(ESPFC_LAND_V2_ACTIVE)
+#error "No-range LAND auto-disarm requires LAND V2"
+#endif
 // Channel index carrying a spring-centered vertical-stick command for AltHold.
 // 3 == the normal throttle channel and preserves existing bench/test behavior.
 // The production controller must explicitly provide a separate centered

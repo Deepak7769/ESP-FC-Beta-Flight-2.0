@@ -56,6 +56,9 @@ private:
   // Tracks ownership of thrust output so AltHold V2
   // can enter without a thrust discontinuity.
   bool _altHoldV2OutputWasActive = false;
+  // Contact-qualified idle slew is independent of recursive PID state.
+  bool _landGroundIdleWasActive = false;
+  float _landGroundIdleThrust = 0.0f;
   // Valid armed AltHold -> manual handoff: transition only until the
   // pilot's real throttle is reached; reset on disarm/failsafe/re-entry.
   bool _manualThrottleHandoffActive = false;

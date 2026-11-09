@@ -4628,6 +4628,10 @@ static void setNoRangeLandingFixture(Model& model, uint32_t now,
   model.state.altitude.vario = 0.0f;
   model.state.altitude.acceleration = 0.0f;
   model.state.output.ch[AXIS_THRUST] = -0.97f;
+  // These isolated Actuator tests inject a simulated all-motors-low mixer
+  // snapshot. The separate end-to-end test below uses the actual Mixer.
+  model.state.mixer.allMotorOutputsNearIdle = true;
+  model.state.mixer.lastMotorMixUs = now;
   model.state.failsafe.rxEverValid = true;
   model.state.failsafe.landingRequested = true;
   model.state.failsafe.landingRequestedUs = now - 3000000u;
@@ -4645,6 +4649,7 @@ static void stepNoRangeLanding(Model& model, Actuator& actuator, uint32_t now)
   model.state.attitude.lastUpdateUs = now;
   model.state.baro.lastUpdateUs = now;
   model.state.altitude.lastUpdateUs = now;
+  model.state.mixer.lastMotorMixUs = now;
   actuator.updateFailsafeLand();
 }
 
@@ -4664,6 +4669,107 @@ static void checkNoRangeTouchdownAtHeight(float entry, float height)
   TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
   TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
   TEST_ASSERT_FALSE(model.state.failsafe.landingRequested);
+  ArduinoFakeReset();
+}
+
+
+void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
+{
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  ArduinoFakeReset();
+  constexpr uint32_t START = 7900000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
+  When(Method(ArduinoFake(), millis)).AlwaysReturn(7900);
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.gyro.dlpf = GYRO_DLPF_256;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.begin();
+  Controller controller(model);
+  controller.begin();
+  setHealthyAssistedEstimatorState(model, START);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = 1.0f;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.output.ch[AXIS_THRUST] = 0.2f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = START - 3000000u;
+  model.state.failsafe.landingEntryHeight = 2.0f;
+  model.state.failsafe.landingEntryThrust = 0.2f;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+
+  Actuator actuator(model);
+  Output::Mixer mixer(model);
+  const MixerConfig motorsConfig =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  float motors[OUTPUT_CHANNELS] = {};
+  bool sawStage1 = false, sawControllerIdle = false;
+  bool sawActualMixerIdle = false, disarmed = false;
+  for (uint32_t tick = 0; tick < 7000; ++tick)
+  {
+    const uint32_t now = START + tick * 1000u;
+    When(Method(ArduinoFake(), micros)).AlwaysReturn(now);
+    model.state.gyro.lastUpdateUs = now;
+    model.state.accel.lastUpdateUs = now;
+    model.state.attitude.lastUpdateUs = now;
+    model.state.baro.lastUpdateUs = now;
+    model.state.altitude.lastUpdateUs = now;
+    if (tick % 50u == 0u)
+    {
+      actuator.updateFailsafeLand();
+      sawStage1 |= model.state.failsafe.landingGroundIdleRequested;
+    }
+    if (!model.isModeActive(MODE_ARMED))
+    {
+      disarmed = true;
+      break;
+    }
+    controller.update();
+    mixer.updateMixer(motorsConfig, motors);
+    sawControllerIdle |=
+        model.state.failsafe.landingGroundIdleRequested &&
+        model.state.output.ch[AXIS_THRUST] <= -0.94f;
+    sawActualMixerIdle |=
+        model.state.failsafe.landingGroundIdleRequested &&
+        model.state.mixer.allMotorOutputsNearIdle;
+  }
+  TEST_ASSERT_TRUE(sawStage1);
+  TEST_ASSERT_TRUE(sawControllerIdle);
+  TEST_ASSERT_TRUE(sawActualMixerIdle);
+  TEST_ASSERT_TRUE(disarmed);
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
+  TEST_ASSERT_EQUAL_UINT32(DISARM_REASON_FAILSAFE,
+                           model.state.mode.disarmReason);
+  ArduinoFakeReset();
+#endif
+}
+
+void test_land_motor_idle_requires_all_outputs_not_any_one()
+{
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(9000000u);
+  Model model;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.state.output.ch[AXIS_THRUST] = -0.96f;
+  const MixerConfig cfg =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  Output::Mixer mixer(model);
+  float out[OUTPUT_CHANNELS]{};
+
+  // Roll correction lifts one motor away from idle; the old minimum
+  // headroom flag would still misleadingly report some motor at idle.
+  model.state.output.ch[AXIS_ROLL] = 0.20f;
+  mixer.updateMixer(cfg, out);
+  TEST_ASSERT_FALSE(model.state.mixer.allMotorOutputsNearIdle);
+
+  model.state.output.ch[AXIS_ROLL] = 0.0f;
+  mixer.updateMixer(cfg, out);
+  TEST_ASSERT_TRUE(model.state.mixer.allMotorOutputsNearIdle);
   ArduinoFakeReset();
 }
 
@@ -9871,6 +9977,8 @@ RUN_TEST(test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover);
 RUN_TEST(test_land_full_actuator_gyro_loss_aborts_without_false_landed);
 RUN_TEST(test_land_disarm_and_recovery_cannot_reuse_touchdown_history);
 RUN_TEST(test_land_repeated_failsafe_stage2_does_not_reset_contact_state);
+RUN_TEST(test_land_real_controller_and_mixer_reach_ground_idle_before_disarm);
+RUN_TEST(test_land_motor_idle_requires_all_outputs_not_any_one);
 RUN_TEST(test_land_without_rangefinder_elevated_terrain_contact);
 RUN_TEST(test_land_without_rangefinder_lower_terrain_contact);
 RUN_TEST(test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion);

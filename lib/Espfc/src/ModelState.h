@@ -240,6 +240,8 @@ public:
   // Launch-relative barometric altitude is never used as ground clearance.
   bool landingGroundContactCandidate{false};
   uint32_t landingGroundContactStartedUs{0};
+  // Stage 1 must precede any controller-initiated ground-idle ramp.
+  bool landingGroundIdleRequested{false};
 
   float landingEntryHeight{0.0f};
 
@@ -344,6 +346,9 @@ struct MixerState
   bool verticalSaturated{false};
   bool verticalSaturationHigh{false};
   bool verticalSaturationLow{false};
+  // Every motor, not merely the lowest one, must be near minimum.
+  bool allMotorOutputsNearIdle{false};
+  uint32_t lastMotorMixUs{0};
   float verticalHeadroomHigh{1.0f};
   float verticalHeadroomLow{1.0f};
 
