@@ -2818,13 +2818,17 @@ void test_model_disallows_arming_with_zero_motor_mixer()
 
 void test_model_direct_range_pin_cannot_conflict_with_motor()
 {
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), millis)).AlwaysReturn(1);
   Model model;
+  model.logger.begin(256);
   model.config.pin[PIN_OUTPUT_0] = 40;
   model.config.rangefinder.type = RANGEFINDER_HCSR04;
   model.config.rangefinder.triggerPin = 40;
   model.config.rangefinder.echoPin = 41;
   TEST_ASSERT_FALSE(model.validatePinResources());
   TEST_ASSERT_TRUE(model.state.pinConflict);
+  ArduinoFakeReset();
 }
 
 void test_model_gps_home_requires_fresh_3d_quality_and_respects_set_once()
