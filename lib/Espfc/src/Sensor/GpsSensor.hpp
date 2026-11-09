@@ -79,7 +79,7 @@ private:
   void setState(State state);
 
   void handleError();
-  void handleNavPvt() const;
+  void handleNavPvt();
   void handleNavSat() const;
   void handleNavSol() const;
   void handleNavPosllh();

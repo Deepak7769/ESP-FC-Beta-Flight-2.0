@@ -8,7 +8,7 @@ namespace Espfc::Connect {
 int Vtx::begin(Stream::ReadWritable* serial)
 {
   _serial = serial;
-  _timer.setRate(300000);
+  _timer.setInterval(300000); // 300 ms, not a 300kHz update rate
 
   _state = State::INIT;
   return 1;

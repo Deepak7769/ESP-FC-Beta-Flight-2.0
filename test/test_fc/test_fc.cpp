@@ -2754,6 +2754,117 @@ void test_msp_current_meter_short_reply_is_ignored()
 }
 
 
+
+void test_mixer_disarmed_motor_test_session_expires_and_hard_stops()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 3300000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+  Model model;
+  model.state.currentMixer =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  for (size_t i = 0; i < OUTPUT_CHANNELS; ++i)
+  {
+    model.state.output.disarmed[i] = 1000;
+    model.state.output.motorTestUs[i] = 1000;
+  }
+  model.state.output.motorTestUs[0] = 1500;
+  model.state.output.motorTestLastUpdateUs = NOW;
+  model.state.output.motorTestActive = true;
+
+  Output::Mixer mixer(model);
+  float motorMix[OUTPUT_CHANNELS]{};
+  mixer.writeOutput(model.state.currentMixer, motorMix);
+  TEST_ASSERT_EQUAL_INT(1500, model.state.output.us[0]);
+  TEST_ASSERT_EQUAL_INT(1000, model.state.output.us[1]);
+
+  // A stale Configurator connection cannot leave a motor spinning.
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW + 251000u);
+  mixer.writeOutput(model.state.currentMixer, motorMix);
+  TEST_ASSERT_FALSE(model.state.output.motorTestActive);
+  TEST_ASSERT_EQUAL_INT(1000, model.state.output.us[0]);
+
+  // A failsafe or disarm must clear a still-live test immediately.
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW + 300000u);
+  model.state.output.motorTestActive = true;
+  model.state.output.motorTestLastUpdateUs = NOW + 300000u;
+  model.state.failsafe.phase = FC_FAILSAFE_RX_LOSS_DETECTED;
+  mixer.writeOutput(model.state.currentMixer, motorMix);
+  TEST_ASSERT_FALSE(model.state.output.motorTestActive);
+  TEST_ASSERT_EQUAL_INT(1000, model.state.output.us[0]);
+
+  model.state.failsafe.phase = FC_FAILSAFE_IDLE;
+  model.state.output.motorTestActive = true;
+  model.state.output.motorTestLastUpdateUs = NOW + 300000u;
+  mixer.writeDisarmed();
+  TEST_ASSERT_FALSE(model.state.output.motorTestActive);
+  TEST_ASSERT_EQUAL_INT(1000, model.state.output.us[0]);
+  ArduinoFakeReset();
+}
+
+void test_model_disallows_arming_with_zero_motor_mixer()
+{
+  Model model;
+  model.state.mode.armingDisabledFlags = 0;
+  model.state.pinConflict = false;
+  model.state.currentMixer.count = 0;
+  TEST_ASSERT_TRUE(model.armingDisabled());
+
+  model.state.currentMixer =
+      Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
+  TEST_ASSERT_TRUE(model.state.currentMixer.count > 0);
+  TEST_ASSERT_FALSE(model.armingDisabled());
+}
+
+void test_model_direct_range_pin_cannot_conflict_with_motor()
+{
+  Model model;
+  model.config.pin[PIN_OUTPUT_0] = 40;
+  model.config.rangefinder.type = RANGEFINDER_HCSR04;
+  model.config.rangefinder.triggerPin = 40;
+  model.config.rangefinder.echoPin = 41;
+  TEST_ASSERT_FALSE(model.validatePinResources());
+  TEST_ASSERT_TRUE(model.state.pinConflict);
+}
+
+void test_model_gps_home_requires_fresh_3d_quality_and_respects_set_once()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 11000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+  Model model;
+  model.config.gps.minSats = 8;
+  model.config.gps.setHomeOnce = true;
+  auto& gps = model.state.gps;
+  gps.present = true;
+  gps.fix = true;
+  gps.fixType = 3;
+  gps.numSats = 12;
+  gps.accuracy.horizontal = 1000;
+  gps.location.raw.lat = 210000000;
+  gps.location.raw.lon = 790000000;
+
+  // Fix flags alone are not proof of a fresh coherent GPS observation.
+  gps.lastMsgTs = NOW - 750000u;
+  model.setGpsHome(true);
+  TEST_ASSERT_FALSE(gps.homeSet);
+
+  gps.lastMsgTs = NOW - 100000u;
+  gps.accuracy.horizontal = 0;
+  model.setGpsHome(true);
+  TEST_ASSERT_FALSE(gps.homeSet);
+
+  gps.accuracy.horizontal = 1000;
+  model.setGpsHome(false);
+  TEST_ASSERT_TRUE(gps.homeSet);
+  TEST_ASSERT_EQUAL_INT32(210000000, gps.location.home.lat);
+
+  gps.location.raw.lat = 215000000;
+  model.setGpsHome(false);
+  TEST_ASSERT_EQUAL_INT32(210000000, gps.location.home.lat);
+  ArduinoFakeReset();
+}
+
 void test_model_sanitize_preserves_msp_current_source()
 {
   Model model;
@@ -9811,6 +9922,10 @@ RUN_TEST(test_controller_anti_gravity_tracks_manual_throttle_transient);
   RUN_TEST(test_msp_current_meter_reply_is_ignored_when_source_is_not_msp);
   RUN_TEST(test_msp_current_meter_short_reply_is_ignored);
   RUN_TEST(test_model_sanitize_preserves_msp_current_source);
+  RUN_TEST(test_mixer_disarmed_motor_test_session_expires_and_hard_stops);
+  RUN_TEST(test_model_disallows_arming_with_zero_motor_mixer);
+  RUN_TEST(test_model_direct_range_pin_cannot_conflict_with_motor);
+  RUN_TEST(test_model_gps_home_requires_fresh_3d_quality_and_respects_set_once);
   RUN_TEST(test_msp_current_meter_reply_updates_battery_state);
   RUN_TEST(test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data);
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)

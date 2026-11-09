@@ -75,7 +75,10 @@ int GyroSensor::reload(ModelChangeEvent event)
   {
    case MODEL_CHANGE_FILTER:
 {
-  _model.state.gyro.scale = Utils::toRad(2000.f) / 32768.f;
+  // Honour device-specific selected full-scale sensitivity (e.g. LSM6DSO).
+  const float scaleDpsPerLsb = _gyro
+      ? _gyro->gyroScaleDpsPerLsb() : (2000.0f / 32768.0f);
+  _model.state.gyro.scale = Utils::toRad(scaleDpsPerLsb);
 
       _sma.begin(_model.config.loopSync);
       _dyn_notch_denom = std::max((uint32_t)1, _model.state.loopTimer.rate / 1000);

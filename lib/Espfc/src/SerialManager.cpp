@@ -123,7 +123,7 @@ int SerialManager::begin()
     }
     else if(spc.functionMask & SERIAL_FUNCTION_BLACKBOX)
     {
-      //sdc.baud = spc.blackboxBaud;
+      sdc.baud = spc.blackboxBaud;
       if(sdc.baud == 230400 || sdc.baud == 460800)
       {
         sdc.stop_bits = Hal::SDC_SERIAL_STOP_BITS_2;

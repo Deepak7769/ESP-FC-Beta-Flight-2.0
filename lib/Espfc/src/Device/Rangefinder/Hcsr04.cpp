@@ -81,6 +81,7 @@ int Hcsr04Rangefinder::update()
     return 0;
 
   const uint32_t now = micros();
+  bool newMeasurement = false;
 
   switch (_state)
   {
@@ -151,11 +152,12 @@ int Hcsr04Rangefinder::update()
 
         if (valid)
         {
-          _distance = distanceCm;
+          _distance = distanceCm * 0.01f; // centimetres -> metres
           // HC-SR04 has no native quality field. A valid in-range
           // echo gets full quality; estimator innovation gating remains
           // the consistency check.
           _quality = 100;
+          newMeasurement = true;
         }
         else
         {
@@ -185,7 +187,7 @@ int Hcsr04Rangefinder::update()
       break;
   }
 
-  return _measurementValid ? 1 : 0;
+  return newMeasurement ? 1 : 0;
 }
 
 bool Hcsr04Rangefinder::present() const

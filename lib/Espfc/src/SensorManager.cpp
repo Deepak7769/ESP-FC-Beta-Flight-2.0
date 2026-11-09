@@ -41,6 +41,13 @@ int FAST_CODE_ATTR SensorManager::read()
 {
   int flags = SENSOR_READ_NONE;
 
+  // Multicore executes read(), not updateDelayed(). Advance only the
+  // configured direct GPIO rangefinder's nonblocking echo state here.
+  if (_model.config.rangefinder.type == RANGEFINDER_HCSR04)
+  {
+    _rangefinder.update();
+  }
+
   const bool gyroReadOk = _gyro.read();
 
   // Always advance the scheduler divider.

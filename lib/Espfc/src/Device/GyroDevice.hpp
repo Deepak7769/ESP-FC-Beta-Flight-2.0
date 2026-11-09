@@ -33,6 +33,8 @@ public:
 
   virtual DeviceType getType() const = 0;
 
+  virtual float gyroScaleDpsPerLsb() const { return 2000.0f / 32768.0f; }
+
   virtual int readGyro(VectorInt16& v) = 0;
   virtual int readAccel(VectorInt16& v) = 0;
 virtual void setDLPFMode(uint8_t mode) = 0;

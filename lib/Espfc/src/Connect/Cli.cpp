@@ -1033,6 +1033,31 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
 
   if (!cmd.args[0]) return;
 
+  // Safety is enforced by firmware, not the Configurator/CLI UX.
+  // Diagnostics remain readable while armed, but maintenance, EEPROM,
+  // calibration and live configuration mutations are prohibited.
+  const char* op = cmd.args[0];
+  const bool changesHome =
+      std::strcmp(op, "gps") == 0 && cmd.args[1] &&
+      (std::strcmp(cmd.args[1], "set_home") == 0 ||
+       std::strcmp(cmd.args[1], "clear_home") == 0);
+  const bool armedUnsafeCommand =
+      std::strcmp(op, "set") == 0 ||
+      std::strcmp(op, "cal") == 0 ||
+      std::strcmp(op, "preset") == 0 ||
+      std::strcmp(op, "load") == 0 ||
+      std::strcmp(op, "save") == 0 ||
+      std::strcmp(op, "defaults") == 0 ||
+      std::strcmp(op, "reboot") == 0 ||
+      std::strcmp(op, "exit") == 0 ||
+      std::strcmp(op, "flash") == 0 ||
+      changesHome;
+  if (_model.isModeActive(MODE_ARMED) && armedUnsafeCommand)
+  {
+    s.println("ERROR: maintenance or configuration unavailable while armed");
+    return;
+  }
+
   if (std::strcmp(cmd.args[0], "help") == 0)
   {
     static const char* const helps[] = {"available commands:", " help", " dump", " get param", " set param value ...",
@@ -1355,9 +1380,9 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       _model.config.conditions[1].max = 2100;
 
       _model.config.conditions[2].id = MODE_AIRMODE;
-      _model.config.conditions[2].ch = 0; // aux1
-      _model.config.conditions[2].min = (1700 - 900) / 25;
-      _model.config.conditions[2].max = (2100 - 900) / 25;
+      _model.config.conditions[2].ch = AXIS_AUX_1;
+      _model.config.conditions[2].min = 1700;
+      _model.config.conditions[2].max = 2100;
 
       s.println("OK");
     }
@@ -1418,6 +1443,12 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       uint32_t mode = _model.config.scaler[i].dimension;
       if (!mode) continue;
       short c = _model.config.scaler[i].channel;
+      if (c < 0 || static_cast<size_t>(c) >=
+            std::min<size_t>(_model.state.input.channelCount, AXIS_COUNT))
+      {
+        s.println("Invalid scaler channel");
+        continue;
+      }
       float v = _model.state.input.ch[c];
       float min = _model.config.scaler[i].minScale * 0.01f;
       float max = _model.config.scaler[i].maxScale * 0.01f;

@@ -8,6 +8,7 @@
 #include <EscDriver.h>
 #include "ModelConfig.h"
 #include "ModelState.h"
+#include "Hal/Time.hpp"
 #include "Stream/ReadWritable.hpp"
 #include "Utils/Storage.h"
 #include "Utils/Logger.hpp"
@@ -175,7 +176,8 @@ class Model
 #else
      return
     state.mode.armingDisabledFlags != 0 ||
-    state.pinConflict;
+    state.pinConflict ||
+    state.currentMixer.count == 0;
 #endif
     }
 
@@ -241,8 +243,15 @@ void setOutputSaturation(
 
     void setGpsHome(bool force = false)
     {
-      if(state.gps.fix &&
-         state.gps.numSats >= config.gps.minSats)
+      // A stale/partial GPS fix cannot establish a new launch datum.
+      const auto& gps = state.gps;
+      const uint32_t now = micros();
+      if (gps.present && gps.fix && gps.fixType >= 3 &&
+          gps.numSats >= config.gps.minSats &&
+          gps.lastMsgTs != 0 &&
+          static_cast<uint32_t>(now - gps.lastMsgTs) < 500000u &&
+          gps.accuracy.horizontal != 0 &&
+          gps.accuracy.horizontal <= 10000u)
       {
         if(force || !state.gps.homeSet || !config.gps.setHomeOnce)
         {
@@ -628,6 +637,14 @@ void setOutputSaturation(
           PIN_INPUT_ADC_1]);
 
 #endif
+
+  if (config.rangefinder.type == RANGEFINDER_HCSR04)
+  {
+    // Detect reuse of an enabled motor/UART/bus pin. Target-specific
+    // input/capture/output capability checks still require a HAL policy.
+    reservePin(config.rangefinder.triggerPin);
+    reservePin(config.rangefinder.echoPin);
+  }
 
   state.pinConflict =
       conflict;

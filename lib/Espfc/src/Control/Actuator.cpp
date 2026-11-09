@@ -1836,7 +1836,7 @@ void Actuator::updateArmed()
       failsafe.gpsRescueLandNoDrop =
           false;
 
-      _model.setGpsHome(true);
+      _model.setGpsHome(false);
     }
     else if (!armed && _model.state.mode.disarmReason == DISARM_REASON_SYSTEM)
     {

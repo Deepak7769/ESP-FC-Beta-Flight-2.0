@@ -913,7 +913,7 @@ void GpsSensor::handleCfgValGet() const
   }
 }
 
-void GpsSensor::handleNavPvt() const
+void GpsSensor::handleNavPvt()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavPvt92)) return;
   const auto& m = *_ubxMsg.getAs<Gps::UbxNavPvt92>();
@@ -963,6 +963,7 @@ void GpsSensor::handleNavPvt() const
   _model.state.gps.interval = now - _model.state.gps.lastMsgTs;
   _model.state.gps.lastMsgTs = now;
 
+  updateRawPositionDiagnostics(m.lat, m.lon, m.iTow);
   calculateHomeVector();
 }
 

@@ -1,4 +1,5 @@
 #include "Connect/MspProcessor.hpp"
+#include "Control/AssistedModeV2.h"
 #include "Hardware.h"
 #include "Hal/Time.hpp"
 #include "Model.h"
@@ -335,7 +336,9 @@ case MSP_BUILD_INFO:
   r.writeU16(4103);  // USE_SERIALRX_SBUS
   r.writeU16(16412); // USE_GPS
   r.writeU16(16415); // USE_MAG
-  r.writeU16(16422); // USE_ALTITUDE_HOLD
+  #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  r.writeU16(16422); // USE_ALTITUDE_HOLD only with authority
+  #endif
   r.writeU16(16423); // USE_SOFTSERIAL
   r.writeU16(16421); // USE_VTX
   r.writeU16(16425); // USE_POSITION_HOLD
@@ -343,7 +346,6 @@ case MSP_BUILD_INFO:
   r.writeU16(8231);  // USE_DSHOT
   r.writeU16(8232);  // USE_MULTISHOT
   r.writeU16(8233);  // USE_ONESHOT
-  r.writeU16(8234);  // USE_PROSHOT
   r.writeU16(8235);  // USE_PWM_OUTPUT
   r.writeU16(0);     // end of build-option list
   break;
@@ -1018,6 +1020,7 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SET_MOTOR_CONFIG:
+      if (m.remain() < 6) { r.result = -1; break; }
       m.readU16();                                    // minthrottle (dropped in 1.46)
       _model.config.output.maxThrottle = m.readU16(); // maxthrottle
       _model.config.output.minCommand = m.readU16();  // mincommand
@@ -1105,6 +1108,7 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SET_RX_CONFIG:
+      if (m.remain() < 12) { r.result = -1; break; }
       _model.config.input.serialRxProvider = m.readU8(); // serialrx_provider
       _model.config.input.maxCheck = m.readU16();        // maxcheck
       _model.config.input.midRc = m.readU16();           // midrc
@@ -1459,6 +1463,7 @@ case MSP_SET_FAILSAFE_CONFIG:
       break;
 
     case MSP_SET_FILTER_CONFIG:
+      if (m.remain() < 5) { r.result = -1; break; }
       _model.config.gyro.filter.freq = m.readU8();
       _model.config.dterm.filter.freq = m.readU16();
       _model.config.yaw.filter.freq = m.readU16();
@@ -1954,16 +1959,54 @@ constexpr int REQUIRED_PID_BYTES =
       }
       break;
 
-    case MSP_SET_MOTOR:
-      if (_model.isFeatureActive(FEATURE_GPS) && _model.config.blackbox.mode > 0)
+    case MSP_SET_MOTOR: {
+      // Motors tab is a DISARMED-only, bounded actuator session. Never
+      // overwrite the normal stop commands with tester values and never
+      // let a truncated packet leave half a command applied.
+      if (_model.isModeActive(MODE_ARMED) ||
+          _model.state.failsafe.phase != FC_FAILSAFE_IDLE ||
+          _model.state.pinConflict ||
+          m.remain() != 2 * OUTPUT_CHANNELS)
       {
-        _model.setGpsHome(true);
+        r.result = -1;
+        break;
       }
-      for (size_t i = 0; i < OUTPUT_CHANNELS; i++)
+
+      int16_t requested[OUTPUT_CHANNELS]{};
+      bool anyRunning = false;
+      bool invalid = false;
+      const size_t motorCount =
+          _model.state.currentMixer.count <= OUTPUT_CHANNELS
+              ? _model.state.currentMixer.count : 0u;
+      for (size_t i = 0; i < OUTPUT_CHANNELS; ++i)
       {
-        _model.state.output.disarmed[i] = m.readU16();
+        const uint16_t value = m.readU16();
+        const bool validMotor = i < motorCount &&
+            !_model.config.output.channel[i].servo;
+        if (value < 1000u || value > 2000u ||
+            (!validMotor && value != 1000u))
+        {
+          invalid = true;
+        }
+        requested[i] = static_cast<int16_t>(value);
+        anyRunning |= validMotor && value > 1000u;
       }
+      if (invalid)
+      {
+        r.result = -1;
+        break;
+      }
+
+      auto& output = _model.state.output;
+      output.motorTestActive = false; // publish complete snapshot atomically
+      for (size_t i = 0; i < OUTPUT_CHANNELS; ++i)
+      {
+        output.motorTestUs[i] = requested[i];
+      }
+      output.motorTestLastUpdateUs = micros();
+      output.motorTestActive = anyRunning;
       break;
+    }
 
     case MSP_SERVO:
       for (size_t i = 0; i < OUTPUT_CHANNELS; i++)
@@ -2112,6 +2155,8 @@ constexpr int REQUIRED_PID_BYTES =
     break;
 
     case MSP_SET_PASSTHROUGH: {
+      // An armed ESC passthrough could pause the flight loop.
+      if (_model.isModeActive(MODE_ARMED)) { r.result = -1; break; }
       uint8_t ptMode = MSP_PASSTHROUGH_ESC_4WAY;
       uint8_t ptArg = 0;
       if (m.remain() >= 2)
@@ -2517,6 +2562,8 @@ constexpr int REQUIRED_PID_BYTES =
       break;
 
     case MSP_REBOOT: {
+      // Never turn an armed maintenance packet into flight termination.
+      if (_model.isModeActive(MODE_ARMED)) { r.result = -1; break; }
       uint8_t rebootType = 0; // reboot to firmware only
       if (m.remain())
       {

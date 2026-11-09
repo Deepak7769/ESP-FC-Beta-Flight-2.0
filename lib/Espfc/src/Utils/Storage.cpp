@@ -16,7 +16,8 @@ namespace Espfc::Utils {
 int Storage::begin()
 {
   EEPROM.begin(EEPROM_SIZE);
-  static_assert(sizeof(ModelConfig) <= EEPROM_SIZE, "ModelConfig Size too big");
+  static_assert(sizeof(ModelConfig) + 4 <= EEPROM_SIZE,
+                "ModelConfig plus header exceeds EEPROM");
   return 1;
 }
 
@@ -36,6 +37,10 @@ StorageResult Storage::load(ModelConfig& config) const
   uint16_t size = 0;
   size = EEPROM.read(addr++);
   size |= EEPROM.read(addr++) << 8;
+  if (size == 0 || size > EEPROM_SIZE - 4)
+  {
+    return STORAGE_ERR_BAD_SIZE;
+  }
 
   if (version == EEPROM_VERSION)
   {

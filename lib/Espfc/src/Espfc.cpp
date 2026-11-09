@@ -48,6 +48,17 @@ int Espfc::begin()
 
 int FAST_CODE_ATTR Espfc::update(bool externalTrigger)
 {
+  // Independent of gyro/controller availability, revoke timed-out motor
+  // tests and WRITE true disarmed outputs. A stale ESC command must not
+  // survive merely because the gyro transaction or loop divider failed.
+  auto& motorTest = _model.state.output;
+  if (!_model.isModeActive(MODE_ARMED) &&
+      motorTest.motorTestActive &&
+      static_cast<uint32_t>(micros() - motorTest.motorTestLastUpdateUs) >= 250000u)
+  {
+    _mixer.writeDisarmed();
+  }
+
   if (externalTrigger)
   {
     _model.state.gyro.timer.update();

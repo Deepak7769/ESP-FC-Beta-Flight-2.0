@@ -293,6 +293,11 @@ struct OutputState
   float ch[OUTPUT_CHANNELS];
   int16_t us[OUTPUT_CHANNELS];
   int16_t disarmed[OUTPUT_CHANNELS];
+
+  // Bounded disarmed-only motor test: never reuse normal stop commands.
+  int16_t motorTestUs[OUTPUT_CHANNELS]{};
+  uint32_t motorTestLastUpdateUs{0};
+  bool motorTestActive{false};
   bool saturated;
   OutputTelemetryState telemetry;
 };

@@ -170,6 +170,11 @@ void Mixer::writeDisarmed()
     return;
   }
 
+  // Any hard disarm, DROP or supervisor stop revokes an existing test
+  // session before writing physical ESC outputs.
+  _model.state.output.motorTestActive = false;
+  _model.state.output.motorTestLastUpdateUs = 0;
+
   float outputs[
       OUTPUT_CHANNELS] = {};
 
@@ -597,13 +602,33 @@ void FAST_CODE_ATTR Mixer::writeOutput(const MixerConfig& mixer, float* out)
           : 0u;
 
   bool stop = _stop();
+  auto& test = _model.state.output;
+  const bool disarmed = !_model.isModeActive(MODE_ARMED);
+  // The receiver/configurator must refresh active motor tests frequently.
+  // A failed gyro PID cycle cannot make this session indefinitely valid.
+  constexpr uint32_t MOTOR_TEST_TIMEOUT_US = 250000u;
+  const bool motorTestAllowed =
+      disarmed && test.motorTestActive &&
+      _model.state.failsafe.phase == FC_FAILSAFE_IDLE &&
+      !_model.state.pinConflict &&
+      test.motorTestLastUpdateUs != 0u &&
+      static_cast<uint32_t>(micros() - test.motorTestLastUpdateUs) <
+          MOTOR_TEST_TIMEOUT_US;
+  if (test.motorTestActive && !motorTestAllowed)
+  {
+    test.motorTestActive = false;
+  }
   for (size_t i = 0; i < OUTPUT_CHANNELS; i++)
   {
     const OutputChannelConfig& och = _model.config.output.channel[i];
     if (i >= mixerCount || stop)
     {
+      const int16_t stoppedCommand =
+          och.servo && _model.state.output.disarmed[i] == 1000
+              ? och.neutral : _model.state.output.disarmed[i];
       _model.state.output.us[i] =
-          och.servo && _model.state.output.disarmed[i] == 1000 ? och.neutral : _model.state.output.disarmed[i];
+          motorTestAllowed && stop && i < mixerCount && !och.servo
+              ? test.motorTestUs[i] : stoppedCommand;
     }
     else
     {

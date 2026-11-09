@@ -13,6 +13,8 @@ public:
 
   GyroDeviceType getType() const override;
 
+  float gyroScaleDpsPerLsb() const override { return 0.070f; }
+
   int readGyro(VectorInt16& v) override;
   int readAccel(VectorInt16& v) override;
 
