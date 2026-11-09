@@ -2985,6 +2985,108 @@ void test_adc_current_calibration_uses_betaflight_units()
       Sensor::VoltageSensor::adcCurrentAmps(100.0f, -1, 0));
 }
 
+void test_new_armed_flight_requires_new_fresh_gps_home()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 12000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+
+  Model model;
+  model.config.gps.setHomeOnce = true;
+  model.config.gps.minSats = 8;
+  auto& gps = model.state.gps;
+  gps.present = true;
+  gps.fix = true;
+  gps.fixType = 3;
+  gps.numSats = 12;
+  gps.accuracy.horizontal = 1000;
+  gps.lastMsgTs = NOW_US - 100000u;
+  gps.location.raw.lat = 210000000;
+  gps.location.raw.lon = 790000000;
+  model.setGpsHome(false);
+  TEST_ASSERT_TRUE(gps.homeSet);
+
+  Actuator actuator(model);
+  gps.location.raw.lat = 220000000;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  actuator.updateArmed();
+  TEST_ASSERT_TRUE(gps.homeSet);
+  TEST_ASSERT_EQUAL_INT32(220000000, gps.location.home.lat);
+
+  model.updateModes(0);
+  actuator.updateArmed();
+  // Stale navigation epoch must not reuse the previous flight's home.
+  gps.lastMsgTs = NOW_US - 800000u;
+  gps.location.raw.lat = 230000000;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  actuator.updateArmed();
+  TEST_ASSERT_FALSE(gps.homeSet);
+  ArduinoFakeReset();
+}
+
+void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
+{
+  ArduinoFakeReset();
+  Model model;
+  model.config.vbat.source = 1;
+  Sensor::VoltageSensor sensor(model);
+  sensor.begin();
+  auto& battery = model.state.battery;
+
+  // An unplugged pack at USB boot must not exhaust the detection window.
+  for (int i = 0; i < 100; ++i)
+  {
+    battery.voltage = 0.0f;
+    sensor.updatePackDetection();
+  }
+  TEST_ASSERT_EQUAL_INT(50, battery.samples);
+  TEST_ASSERT_EQUAL_INT(0, battery.cells);
+
+  // A later connected 3S pack is recognized normally.
+  for (int i = 0; i < 50; ++i)
+  {
+    battery.voltage = 12.0f;
+    sensor.updatePackDetection();
+  }
+  TEST_ASSERT_EQUAL_INT(0, battery.samples);
+  TEST_ASSERT_EQUAL_INT(3, battery.cells);
+  battery.consumedMah = 345.0f;
+  battery.consumedMahValid = true;
+
+  // Brief low voltage while disarmed is not enough to reset the pack.
+  for (int i = 0; i < 49; ++i)
+  {
+    battery.voltage = 0.0f;
+    sensor.updatePackDetection();
+  }
+  TEST_ASSERT_EQUAL_INT(3, battery.cells);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 345.0f, battery.consumedMah);
+
+  sensor.updatePackDetection();
+  TEST_ASSERT_EQUAL_INT(0, battery.cells);
+  TEST_ASSERT_EQUAL_INT(50, battery.samples);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, battery.consumedMah);
+  TEST_ASSERT_FALSE(battery.consumedMahValid);
+
+  // A new 4S pack must be measured from scratch after the disconnect.
+  for (int i = 0; i < 50; ++i)
+  {
+    battery.voltage = 16.0f;
+    sensor.updatePackDetection();
+  }
+  TEST_ASSERT_EQUAL_INT(4, battery.cells);
+
+  // An armed flight cannot reset cell count from low voltage alone.
+  model.updateModes(1u << MODE_ARMED);
+  for (int i = 0; i < 60; ++i)
+  {
+    battery.voltage = 0.0f;
+    sensor.updatePackDetection();
+  }
+  TEST_ASSERT_EQUAL_INT(4, battery.cells);
+  ArduinoFakeReset();
+}
+
 void test_consumed_capacity_integrates_fresh_samples()
 {
   float mah = 0.0f;
@@ -10417,6 +10519,8 @@ RUN_TEST(test_controller_anti_gravity_tracks_manual_throttle_transient);
   RUN_TEST(test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data);
   RUN_TEST(test_adc_current_calibration_uses_betaflight_units);
   RUN_TEST(test_consumed_capacity_integrates_fresh_samples);
+  RUN_TEST(test_battery_pack_detection_handles_late_connection_and_disarmed_swap);
+  RUN_TEST(test_new_armed_flight_requires_new_fresh_gps_home);
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
   RUN_TEST(test_controller_anti_gravity_yields_to_assisted_vertical_control);
 #endif

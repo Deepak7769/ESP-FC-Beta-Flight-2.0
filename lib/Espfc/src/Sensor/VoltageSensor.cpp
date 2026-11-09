@@ -11,6 +11,8 @@ int VoltageSensor::begin()
 {
   _model.state.battery.timer.setRate(100);
   _model.state.battery.samples = 50;
+  _model.state.battery.cells = 0;
+  _packAbsentReads = 0;
 
   _model.state.battery.mspCurrentCentiAmps = 0;
   _model.state.battery.mspMahDrawn = 0;
@@ -81,12 +83,8 @@ int VoltageSensor::readVbat()
   _model.state.battery.voltageUnfiltered = volts;
   _model.state.battery.voltage = _vFilter.update(_model.state.battery.voltageUnfiltered);
 
-  // cell count detection
-  if (_model.state.battery.samples > 0)
-  {
-    _model.state.battery.cells = std::ceil(_model.state.battery.voltage / 4.2f);
-    _model.state.battery.samples--;
-  }
+  // Keep looking for the main pack even when USB powered at boot.
+  updatePackDetection();
 
   _model.state.battery.cellVoltage = _model.state.battery.voltage / std::clamp<int>(_model.state.battery.cells, 1, 6);
   _model.state.battery.percentage =
@@ -101,6 +99,64 @@ int VoltageSensor::readVbat()
 #else
   return 0;
 #endif
+}
+
+
+void VoltageSensor::updatePackDetection()
+{
+  auto& battery = _model.state.battery;
+  const float volts = battery.voltage;
+
+  if (!std::isfinite(volts) || volts < 0.0f)
+  {
+    _packAbsentReads = 0;
+    return;
+  }
+
+  // At least 2.5 V allows a discharged 1S pack while excluding most
+  // open-input noise. The original 50-reading cell estimate starts only
+  // after a plausible voltage is actually observed.
+  if (volts >= 2.5f)
+  {
+    _packAbsentReads = 0;
+    if (battery.samples > 0)
+    {
+      battery.cells = static_cast<int8_t>(
+          std::clamp<int>(
+              static_cast<int>(std::ceil(volts / 4.2f)),
+              1, 6));
+      --battery.samples;
+    }
+    return;
+  }
+
+  // Never interpret an in-flight voltage sag as a pack replacement.
+  if (_model.isModeActive(MODE_ARMED) ||
+      battery.cells == 0 || volts >= 2.0f)
+  {
+    _packAbsentReads = 0;
+    return;
+  }
+
+  // 50 consecutive VBAT observations (~1 s at the 50 Hz VBAT cadence)
+  // below 2 V while disarmed are required before clearing pack state.
+  if (++_packAbsentReads < 50u)
+  {
+    return;
+  }
+
+  _packAbsentReads = 0;
+  battery.cells = 0;
+  battery.samples = 50;
+  battery.consumedMah = 0.0f;
+  battery.consumedMahValid = false;
+  battery.mspCurrentValid = false;
+  battery.mspCurrentLastUpdateUs = 0;
+  battery.mspMahDrawn = 0;
+  battery.currentUnfiltered = 0.0f;
+  battery.current = 0.0f;
+  _lastAdcSampleUs = 0;
+  _iFilter.prime(0.0f);
 }
 
 int VoltageSensor::readIbat()
@@ -193,6 +249,21 @@ int VoltageSensor::readIbat()
   }
 
 #ifdef ESPFC_ADC_1
+#if defined(ESPFC_ADC_0)
+  // With an ADC-voltage meter, an absent pack cannot produce valid
+  // consumption even if the current ADC has an offset/noise reading.
+  if (_model.config.vbat.source == 1 &&
+      _model.config.pin[PIN_INPUT_ADC_0] != -1 &&
+      battery.cells == 0)
+  {
+    battery.consumedMahValid = false;
+    _lastAdcSampleUs = 0;
+    battery.currentUnfiltered = 0.0f;
+    battery.current = 0.0f;
+    _iFilter.prime(0.0f);
+    return 0;
+  }
+#endif
   if (_model.config.ibat.source !=
           CURRENT_METER_ADC ||
       _model.config.pin[

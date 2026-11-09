@@ -20,6 +20,10 @@ public:
   int reload(ModelChangeEvent event);
   int update();
   int readVbat();
+
+  // Purely voltage-driven pack lifecycle; callable from native tests.
+  // A confirmed disarmed disconnect is required before resetting cell count.
+  void updatePackDetection();
   int readIbat();
 
   // A gap without fresh ADC data must not be integrated as real discharge.
@@ -56,6 +60,7 @@ private:
   State _state;
   uint32_t _lastAdcSampleUs{0};
   int8_t _lastConsumedSource{CURRENT_METER_NONE};
+  uint8_t _packAbsentReads{0};
 };
 
 } // namespace Espfc::Sensor

@@ -1868,6 +1868,9 @@ void Actuator::updateArmed()
       failsafe.gpsRescueLandNoDrop =
           false;
 
+      // A new flight must not retain Rescue authority to a previous home.
+      // setHomeOnce still applies to subsequent capture attempts this flight.
+      _model.state.gps.homeSet = false;
       _model.setGpsHome(false);
     }
     else if (!armed && _model.state.mode.disarmReason == DISARM_REASON_SYSTEM)
