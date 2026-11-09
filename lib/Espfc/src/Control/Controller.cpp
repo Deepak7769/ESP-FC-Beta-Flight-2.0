@@ -1867,18 +1867,18 @@ navigationIn.homeLatitudeE7 =
     gps.location.home.lat;
 navigationIn.homeLongitudeE7 =
     gps.location.home.lon;
+// Position filtering is stateful; lack of a new GPS epoch cannot switch
+// the flight controller back to raw GNSS velocity on every intermediate
+// PID cycle. Rejected/uninitialized filtered data withdraws authority.
+navigationIn.velocitySourceValid =
+    gps.diagnostics.filterAccepted &&
+    navigationIn.gpsAgeUs < 500000u;
 navigationIn.velocityNorth =
-    gps.diagnostics.filterAccepted
-        ? static_cast<float>(
-              gps.diagnostics.filteredNorthSpeed) * 0.001f
-        : static_cast<float>(
-              gps.velocity.raw.north) * 0.001f;
+    static_cast<float>(
+        gps.diagnostics.filteredNorthSpeed) * 0.001f;
 navigationIn.velocityEast =
-    gps.diagnostics.filterAccepted
-        ? static_cast<float>(
-              gps.diagnostics.filteredEastSpeed) * 0.001f
-        : static_cast<float>(
-              gps.velocity.raw.east) * 0.001f;
+    static_cast<float>(
+        gps.diagnostics.filteredEastSpeed) * 0.001f;
 navigationIn.velocityDown =
     static_cast<float>(
         gps.velocity.raw.down) * 0.001f;

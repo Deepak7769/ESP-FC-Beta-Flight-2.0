@@ -19,6 +19,8 @@ struct NavigationInput
   int32_t longitudeE7{0};
   int32_t homeLatitudeE7{0};
   int32_t homeLongitudeE7{0};
+  // Filtered GPS velocity must come from a coherent accepted sample.
+  bool velocitySourceValid{true};
   float velocityNorth{0.0f};
   float velocityEast{0.0f};
   float velocityDown{0.0f};
@@ -100,7 +102,7 @@ public:
     out.velocityDown = in.velocityDown;
 
     out.velocityValid =
-        in.gpsValid &&
+        in.gpsValid && in.velocitySourceValid &&
         std::isfinite(in.velocityNorth) &&
         std::isfinite(in.velocityEast) &&
         std::isfinite(in.velocityDown);

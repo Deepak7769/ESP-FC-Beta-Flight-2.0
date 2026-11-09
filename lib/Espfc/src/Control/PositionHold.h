@@ -178,6 +178,7 @@ void resetController()
 void resetFilter()
 {
   _filterInitialized = false;
+  _lastGpsSampleAccepted = false;
   _filterLastGpsTimestampMs = 0;
   _filterFallbackElapsedS = 0.0f;
   _filterLastLat = 0;
@@ -440,7 +441,7 @@ private:
       _filterLastLon = in.lon;
       _filterFallbackElapsedS = 0.0f;
 
-      out.gpsFilterAccepted = true;
+      _lastGpsSampleAccepted = true;
       ++_acceptedSamples;
     }
     else if (newGpsSample)
@@ -509,7 +510,7 @@ private:
       const bool accepted =
           innovation <= innovationLimit;
 
-      out.gpsFilterAccepted = accepted;
+      _lastGpsSampleAccepted = accepted;
 
       if (accepted)
       {
@@ -622,6 +623,8 @@ private:
             std::lrint(
                 _filteredLon * 1e7));
 
+    // Missing GPS epoch preserves the last accepted/rejected observation.
+    out.gpsFilterAccepted = _lastGpsSampleAccepted;
     out.filteredLat = filteredLat;
     out.filteredLon = filteredLon;
 
@@ -679,6 +682,7 @@ private:
 
   // GPS filter state.
   bool _filterInitialized = false;
+  bool _lastGpsSampleAccepted = false;
 
   double _filteredLat = 0.0;
   double _filteredLon = 0.0;

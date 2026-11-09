@@ -9834,6 +9834,65 @@ void test_mixer_vertical_saturation_feedback_is_directional()
 }
 
 
+
+void test_position_hold_preserves_filter_acceptance_between_gps_epochs()
+{
+  Espfc::Control::PositionHold filter;
+  Espfc::Control::PositionHoldInput in{};
+  in.lat = 215000000;
+  in.lon = 785000000;
+  in.gpsTimestampMs = 1000;
+  in.horizontalAccuracy = 1.0f;
+  in.dt = 0.005f;
+
+  const auto first = filter.filterGps(in);
+  TEST_ASSERT_TRUE(first.gpsFilterAccepted);
+  const auto repeated = filter.filterGps(in);
+  TEST_ASSERT_TRUE(repeated.gpsFilterAccepted);
+  TEST_ASSERT_EQUAL_UINT32(first.acceptedSamples,
+                           repeated.acceptedSamples);
+
+  // A position teleport must be rejected and remain rejected across
+  // subsequent loop cycles until a new receiver epoch is accepted.
+  in.gpsTimestampMs = 1200;
+  in.lat += 1000000;
+  const auto rejected = filter.filterGps(in);
+  TEST_ASSERT_FALSE(rejected.gpsFilterAccepted);
+  const auto noEpoch = filter.filterGps(in);
+  TEST_ASSERT_FALSE(noEpoch.gpsFilterAccepted);
+  TEST_ASSERT_EQUAL_UINT32(rejected.rejectedSamples,
+                           noEpoch.rejectedSamples);
+  filter.resetFilter();
+  TEST_ASSERT_TRUE(filter.filterGps(in).gpsFilterAccepted);
+}
+
+void test_navigation_rejects_finite_velocity_without_accepted_filter()
+{
+  Espfc::Control::NavigationInput in{};
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeValid = true;
+  in.altitudeValid = true;
+  in.velocitySourceValid = false;
+  in.latitudeE7 = 215000000;
+  in.longitudeE7 = 785000000;
+  in.homeLatitudeE7 = 215000000;
+  in.homeLongitudeE7 = 785000000;
+  in.velocityNorth = 1.0f;
+  in.velocityEast = 0.0f;
+  in.altitude = 10.0f;
+  in.homeAltitude = 0.0f;
+  const auto rejected = Espfc::Control::Navigation::update(in);
+  TEST_ASSERT_TRUE(rejected.positionValid);
+  TEST_ASSERT_FALSE(rejected.velocityValid);
+  TEST_ASSERT_FALSE(rejected.healthy);
+
+  in.velocitySourceValid = true;
+  const auto accepted = Espfc::Control::Navigation::update(in);
+  TEST_ASSERT_TRUE(accepted.velocityValid);
+  TEST_ASSERT_TRUE(accepted.healthy);
+}
+
 void test_navigation_true_heading_applies_declination_once()
 {
   using Espfc::Control::Navigation;
@@ -10001,6 +10060,8 @@ void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_position_hold_preserves_filter_acceptance_between_gps_epochs);
+  RUN_TEST(test_navigation_rejects_finite_velocity_without_accepted_filter);
   RUN_TEST(test_navigation_true_heading_applies_declination_once);
   RUN_TEST(test_heading_health_requires_fresh_valid_calibrated_magnetometer);
   RUN_TEST(test_gps_rescue_rejects_unqualified_absolute_heading);
