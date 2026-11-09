@@ -133,18 +133,13 @@ int FAST_CODE_ATTR SensorManager::fusion()
 // main task
 int FAST_CODE_ATTR SensorManager::update()
 {
-  if (!_gyro.read())
-  {
-    return 0;
-  }
-
-  return preLoop();
+  // Acquisition remains gyro-rate; loop-rate filters must run at PID rate.
+  return _gyro.read() ? 1 : 0;
 }
 
 // sub task
 int SensorManager::updateDelayed()
 {
-  _gyro.postLoop();
 
   // The rangefinder backend is non-blocking. Poll it every delayed
   // sensor pass so HC-SR04 echo timing is independent of the one-sensor
@@ -155,9 +150,9 @@ int SensorManager::updateDelayed()
   int status = 0;
   if (_model.state.accel.timer.syncTo(_model.state.gyro.timer))
   {
-    _accel.update();
+    const bool accelOk = _accel.update() != 0;
     _model.state.mode.button = _button.update();
-    status = 1;
+    status = accelOk ? 1 : 0;
   }
 
   // delay imu update to next cycle

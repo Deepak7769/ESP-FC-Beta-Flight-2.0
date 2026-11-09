@@ -184,6 +184,7 @@ if (_model.state.actuatorTimer.check())
   if (gyroSampleValid &&
       controlDue)
   {
+    _sensor.preLoop();
     _resourceManager.update();
     _controller.update();
 
@@ -197,6 +198,7 @@ if (_model.state.actuatorTimer.check())
     {
       _blackbox.update();
     }
+    _sensor.postLoop();
   }
 
   // Arming/failsafe supervision is likewise independent of the PID sample.

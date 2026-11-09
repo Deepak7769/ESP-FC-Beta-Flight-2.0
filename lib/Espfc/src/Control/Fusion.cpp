@@ -218,6 +218,18 @@ if (!previousSolutionFresh)
     return 0;
   }
 
+  // A rejected IMU read must not renew the cached attitude solution.
+  // Keep the previous good estimate for its existing 100ms freshness
+  // window rather than instantly cutting attitude control on one glitch.
+  const auto& gyro = _model.state.gyro;
+  const auto& accel = _model.state.accel;
+  const bool freshInputs =
+      gyro.sampleValid && accel.sampleValid &&
+      gyro.lastUpdateUs != 0u && accel.lastUpdateUs != 0u &&
+      static_cast<uint32_t>(now - gyro.lastUpdateUs) < ATTITUDE_STALE_US &&
+      static_cast<uint32_t>(now - accel.lastUpdateUs) < ATTITUDE_STALE_US;
+  if (!freshInputs) return 0;
+
 const auto g =
     attitude.rate;
 

@@ -79,15 +79,14 @@ int FAST_CODE_ATTR AccelSensor::read()
 {
   if (!_model.accelActive())
   {
+    _model.state.accel.sampleValid = false;
     return 0;
   }
 
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_ACCEL_READ);
-return
-    _gyro->readAccel(
-        _model.state.accel.raw)
-        ? 1
-        : 0;
+  const bool ok = _gyro->readAccel(_model.state.accel.raw) != 0;
+  if (!ok) _model.state.accel.sampleValid = false;
+  return ok ? 1 : 0;
 }
 
 int FAST_CODE_ATTR AccelSensor::filter()

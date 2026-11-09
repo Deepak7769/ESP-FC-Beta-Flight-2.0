@@ -5753,6 +5753,41 @@ void test_baro_bias_seeds_first_absolute_altitude_sample()
       149,
       model.state.baro.altitudeBiasSamples);
 }
+void test_fusion_rejected_imu_does_not_republish_cached_attitude()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW = 1200000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+  When(Method(ArduinoFake(), millis)).AlwaysReturn(1200);
+  Model model;
+  model.state.loopTimer.setRate(500);
+  model.state.accel.timer.setRate(500);
+  model.state.gyro.present = true;
+  model.state.accel.present = true;
+  model.state.gyro.sampleValid = true;
+  model.state.gyro.lastUpdateUs = NOW;
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = NOW;
+  model.config.fusion.mode = FUSION_MAHONY;
+  model.state.attitude.rate = VectorFloat(0.0f, 0.0f, 0.0f);
+  model.state.accel.adc.store(VectorFloat(0.0f, 0.0f, ACCEL_G));
+  Espfc::Control::Fusion fusion(model);
+  fusion.begin();
+  TEST_ASSERT_EQUAL_INT(1, fusion.update());
+  const uint32_t lastGood = model.state.attitude.lastUpdateUs;
+  const Quaternion knownGood = model.state.attitude.quaternion;
+  model.state.accel.sampleValid = false;
+  TEST_ASSERT_EQUAL_INT(0, fusion.update());
+  TEST_ASSERT_EQUAL_UINT32(lastGood, model.state.attitude.lastUpdateUs);
+  TEST_ASSERT_TRUE(model.state.attitude.healthy);
+  TEST_ASSERT_FLOAT_WITHIN(0.00001f, knownGood.w, model.state.attitude.quaternion.w);
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = NOW - 150000u;
+  TEST_ASSERT_EQUAL_INT(0, fusion.update());
+  TEST_ASSERT_EQUAL_UINT32(lastGood, model.state.attitude.lastUpdateUs);
+  ArduinoFakeReset();
+}
+
 void test_fusion_rejects_invalid_accel_without_poisoning_state()
 {
   // Fusion::update() uses micros().
@@ -5786,6 +5821,10 @@ void test_fusion_rejects_invalid_accel_without_poisoning_state()
 
   model.state.accel.present =
       true;
+  model.state.gyro.sampleValid = true;
+  model.state.gyro.lastUpdateUs = 1000u;
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = 1000u;
 
   model.config.fusion.mode =
       FUSION_MAHONY;
@@ -9865,6 +9904,7 @@ RUN_TEST(
 RUN_TEST(
     test_baro_bias_seeds_first_absolute_altitude_sample);
 
+RUN_TEST(test_fusion_rejected_imu_does_not_republish_cached_attitude);
 RUN_TEST(
     test_fusion_rejects_invalid_accel_without_poisoning_state);
   RUN_TEST(
