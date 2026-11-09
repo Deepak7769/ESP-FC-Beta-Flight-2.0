@@ -15,7 +15,19 @@ GyroDeviceType GyroMPU9250::getType() const
 void GyroMPU9250::setDLPFMode(uint8_t mode)
 {
   GyroMPU6050::setDLPFMode(mode);
-  _bus->writeByte(_addr, MPU9250_ACCEL_CONF2, mode);
+  if (!_configOk) return;
+  const uint8_t expected = mode & 0x07;
+  if (!_bus->writeByte(_addr, MPU9250_ACCEL_CONF2, expected))
+  {
+    _configOk = false;
+    return;
+  }
+  uint8_t actual = 0;
+  if (_bus->readByte(_addr, MPU9250_ACCEL_CONF2, &actual) != 1 ||
+      (actual & 0x07) != expected)
+  {
+    _configOk = false;
+  }
 }
 
 bool GyroMPU9250::testConnection()

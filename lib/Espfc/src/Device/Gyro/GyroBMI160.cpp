@@ -120,11 +120,11 @@ int GyroBMI160::begin(BusDevice* bus)
 int GyroBMI160::begin(BusDevice* bus, uint8_t addr)
 {
   setBus(bus, addr);
-
+  _configOk = false;
   if (!testConnection()) return 0;
 
   // reset device
-  _bus->writeByte(_addr, BMI160_RA_CMD, BMI160_CMD_SOFT_RESET);
+  if (!_bus->writeByte(_addr, BMI160_RA_CMD, BMI160_CMD_SOFT_RESET)) return 0;
   delay(1);
 
   if (_bus->isSPI())
@@ -139,19 +139,19 @@ int GyroBMI160::begin(BusDevice* bus, uint8_t addr)
   }
 
   // Start up accelerometer
-  _bus->writeByte(_addr, BMI160_RA_CMD, BMI160_CMD_ACC_MODE_NORMAL);
+  if (!_bus->writeByte(_addr, BMI160_RA_CMD, BMI160_CMD_ACC_MODE_NORMAL)) return 0;
   delay(100);
 
   // Start up gyroscope
-  _bus->writeByte(_addr, BMI160_RA_CMD, BMI160_CMD_GYR_MODE_NORMAL);
+  if (!_bus->writeByte(_addr, BMI160_RA_CMD, BMI160_CMD_GYR_MODE_NORMAL)) return 0;
   delay(100);
 
   // Set up full scale Accel range. +-16G
-  _bus->writeByte(_addr, BMI160_RA_ACCEL_RANGE, BMI160_ACCEL_RANGE_16G);
+  if (!_bus->writeByte(_addr, BMI160_RA_ACCEL_RANGE, BMI160_ACCEL_RANGE_16G)) return 0;
   delay(1);
 
   // Set up full scale Gyro range. +-2000dps
-  _bus->writeByte(_addr, BMI160_RA_GYRO_RANGE, BMI160_GYRO_RANGE_2000);
+  if (!_bus->writeByte(_addr, BMI160_RA_GYRO_RANGE, BMI160_GYRO_RANGE_2000)) return 0;
   delay(1);
 
   // Enable accel offset
@@ -163,25 +163,39 @@ int GyroBMI160::begin(BusDevice* bus, uint8_t addr)
   delay(1);
 
   // Enable data ready interrupt
-  _bus->writeByte(_addr, BMI160_REG_INT_EN1, BMI160_INT_EN1_DRDY);
+  if (!_bus->writeByte(_addr, BMI160_REG_INT_EN1, BMI160_INT_EN1_DRDY)) return 0;
   delay(1);
 
   // Enable INT1 pin
-  _bus->writeByte(_addr, BMI160_REG_INT_OUT_CTRL, BMI160_INT_OUT_CTRL_INT1_CONFIG);
+  if (!_bus->writeByte(_addr, BMI160_REG_INT_OUT_CTRL, BMI160_INT_OUT_CTRL_INT1_CONFIG)) return 0;
   delay(1);
 
   // Map data ready interrupt to INT1 pin
-  _bus->writeByte(_addr, BMI160_REG_INT_MAP1, BMI160_REG_INT_MAP1_INT1_DRDY);
+  if (!_bus->writeByte(_addr, BMI160_REG_INT_MAP1, BMI160_REG_INT_MAP1_INT1_DRDY)) return 0;
   delay(1);
 
   // Set Accel rate 1600HZ
-  _bus->writeByte(_addr, BMI160_RA_ACCEL_CONF, BMI160_ACCEL_RATE_800HZ);
+  if (!_bus->writeByte(_addr, BMI160_RA_ACCEL_CONF, BMI160_ACCEL_RATE_800HZ)) return 0;
   delay(1);
 
   // Set Gyro rate 3200HZ
-  _bus->writeByte(_addr, BMI160_RA_GYRO_CONF, BMI160_GYRO_RATE_3200HZ);
+  if (!_bus->writeByte(_addr, BMI160_RA_GYRO_CONF, BMI160_GYRO_RATE_3200HZ)) return 0;
   delay(1);
 
+  // Validate the actual hardware ranges and ODRs, not just write ACKs.
+  uint8_t accelRange = 0, gyroRange = 0, accelRate = 0, gyroRate = 0;
+  if (_bus->readByte(_addr, BMI160_RA_ACCEL_RANGE, &accelRange) != 1 ||
+      _bus->readByte(_addr, BMI160_RA_GYRO_RANGE, &gyroRange) != 1 ||
+      _bus->readByte(_addr, BMI160_RA_ACCEL_CONF, &accelRate) != 1 ||
+      _bus->readByte(_addr, BMI160_RA_GYRO_CONF, &gyroRate) != 1 ||
+      accelRange != BMI160_ACCEL_RANGE_16G ||
+      gyroRange != BMI160_GYRO_RANGE_2000 ||
+      (accelRate & 0x0f) != BMI160_ACCEL_RATE_800HZ ||
+      (gyroRate & 0x0f) != BMI160_GYRO_RATE_3200HZ)
+  {
+    return 0;
+  }
+  _configOk = true;
   return 1;
 }
 

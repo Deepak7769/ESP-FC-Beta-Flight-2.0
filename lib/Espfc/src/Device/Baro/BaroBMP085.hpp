@@ -36,9 +36,11 @@ public:
   bool testConnection() final;
 
 protected:
-  int8_t _mode;
-  int32_t _t_fine;
-  CalibrationData _cal;
+  int8_t _mode{0x2e};
+  int32_t _t_fine{0};
+  CalibrationData _cal{};
+  bool _temperatureValid{false};
+  uint32_t _lastTemperatureUs{0};
 };
 
 } // namespace Espfc::Device::Baro

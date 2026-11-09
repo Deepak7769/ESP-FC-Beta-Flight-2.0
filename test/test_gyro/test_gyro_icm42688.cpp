@@ -1,10 +1,16 @@
 #include "Device/Baro/BaroBMP280.hpp"
+#include "Device/Baro/BaroBMP085.hpp"
 #include "Device/Gyro/GyroICM42688.hpp"
+#include "Device/Gyro/GyroBMI160.hpp"
+#include "Device/Gyro/GyroLSM6DSO.hpp"
+#include "Device/Gyro/GyroMPU9250.hpp"
+#include "Device/Gyro/GyroICM20602.hpp"
 #include "Device/GyroDevice.hpp"
 #include "Device/Mag/MagHMC5883L.hpp"
 #include <ArduinoFake.h>
 #include <platform.h>
 #include <unity.h>
+#include <cmath>
 
 using namespace Espfc;
 using namespace Espfc::Device;
@@ -22,6 +28,7 @@ public:
   bool failRead = false;
   int failReadReg = -1;
   int failWriteReg = -1;
+  bool mirrorWritesToRead = false;
 
   BusType getType() const override
   {
@@ -56,7 +63,11 @@ public:
     }
 
     for (uint8_t i = 0; i < length; i++)
-      writeRegs[(regAddr + i) & 0xFF] = data[i];
+    {
+      const uint8_t address = (regAddr + i) & 0xff;
+      writeRegs[address] = data[i];
+      if (mirrorWritesToRead) readRegs[address] = data[i];
+    }
 
     return true;
   }
@@ -77,6 +88,151 @@ void tearDown()
 {
 }
 
+
+void test_bmi160_configuration_requires_successful_writes_and_readback()
+{
+  MockBusDevice bus;
+  bus.readRegs[0x00] = 0xd1;
+  bus.mirrorWritesToRead = true;
+  GyroBMI160 gyro;
+  TEST_ASSERT_EQUAL_INT(1, gyro.begin(&bus, 0x68));
+  TEST_ASSERT_TRUE(gyro.configurationValid());
+  TEST_ASSERT_EQUAL_HEX8(0x0c, bus.readRegs[0x41]); // accel 16g
+  TEST_ASSERT_EQUAL_HEX8(0x00, bus.readRegs[0x43]); // gyro 2000dps
+
+  MockBusDevice failedWrite;
+  failedWrite.readRegs[0x00] = 0xd1;
+  failedWrite.mirrorWritesToRead = true;
+  failedWrite.failWriteReg = 0x43;
+  GyroBMI160 rejected;
+  TEST_ASSERT_EQUAL_INT(0, rejected.begin(&failedWrite, 0x68));
+  TEST_ASSERT_FALSE(rejected.configurationValid());
+
+  MockBusDevice failedReadback;
+  failedReadback.readRegs[0x00] = 0xd1;
+  GyroBMI160 rejectedReadback;
+  TEST_ASSERT_EQUAL_INT(0, rejectedReadback.begin(&failedReadback, 0x68));
+  TEST_ASSERT_FALSE(rejectedReadback.configurationValid());
+}
+
+void test_lsm6dso_configuration_requires_successful_writes_and_readback()
+{
+  MockBusDevice bus;
+  bus.readRegs[0x0f] = 0x6c;
+  bus.mirrorWritesToRead = true;
+  GyroLSM6DSO gyro;
+  TEST_ASSERT_EQUAL_INT(1, gyro.begin(&bus, 0x6a));
+  TEST_ASSERT_TRUE(gyro.configurationValid());
+  TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.070f,
+                           gyro.gyroScaleDpsPerLsb());
+
+  MockBusDevice failedWrite;
+  failedWrite.readRegs[0x0f] = 0x6c;
+  failedWrite.mirrorWritesToRead = true;
+  failedWrite.failWriteReg = 0x11;
+  GyroLSM6DSO rejected;
+  TEST_ASSERT_EQUAL_INT(0, rejected.begin(&failedWrite, 0x6a));
+  TEST_ASSERT_FALSE(rejected.configurationValid());
+
+  MockBusDevice failedReadback;
+  failedReadback.readRegs[0x0f] = 0x6c;
+  GyroLSM6DSO rejectedReadback;
+  TEST_ASSERT_EQUAL_INT(0, rejectedReadback.begin(&failedReadback, 0x6a));
+  TEST_ASSERT_FALSE(rejectedReadback.configurationValid());
+}
+
+
+class InspectBMP085: public BaroBMP085
+{
+public:
+  const CalibrationData& calibration() const { return _cal; }
+  void useOss0ForTest() { _mode = 0x34; }
+};
+
+void seedBMP085Calibration(MockBusDevice& bus)
+{
+  // Bosch datasheet example, big-endian register order 0xaa..0xbf.
+  const uint16_t words[] = {
+      0x0198, 0xffb8, 0xc7d1, 0x7fe5, 0x7ff5, 0x5a71,
+      0x182e, 0x0004, 0x8000, 0xddf9, 0x0b34};
+  bus.readRegs[0xd0] = 0x55;
+  for (size_t i = 0; i < 11; ++i)
+  {
+    bus.readRegs[0xaa + i * 2] = words[i] >> 8;
+    bus.readRegs[0xab + i * 2] = words[i] & 0xff;
+  }
+}
+
+void test_bmp085_decodes_big_endian_and_rejects_invalid_samples()
+{
+  MockBusDevice bus;
+  seedBMP085Calibration(bus);
+  InspectBMP085 bmp;
+  TEST_ASSERT_EQUAL_INT(1, bmp.begin(&bus, 0x77));
+  TEST_ASSERT_EQUAL_INT16(408, bmp.calibration().ac1);
+  TEST_ASSERT_EQUAL_INT16(-72, bmp.calibration().ac2);
+  TEST_ASSERT_EQUAL_UINT16(32741, bmp.calibration().ac4);
+  TEST_ASSERT_EQUAL_INT16(-8711, bmp.calibration().mc);
+
+  // A pressure reading must never use an uninitialized temperature factor.
+  TEST_ASSERT_TRUE(std::isnan(bmp.readPressure()));
+
+  constexpr uint32_t NOW = 100000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
+  bus.readRegs[0xf6] = 0x6c; // UT = 27898
+  bus.readRegs[0xf7] = 0xfa;
+  TEST_ASSERT_FLOAT_WITHIN(0.2f, 15.0f, bmp.readTemperature());
+
+  bmp.useOss0ForTest();
+  bus.readRegs[0xf6] = 0x5d; // UP = 23843 (OSS=0)
+  bus.readRegs[0xf7] = 0x23;
+  bus.readRegs[0xf8] = 0x00;
+  TEST_ASSERT_FLOAT_WITHIN(20.0f, 69964.0f, bmp.readPressure());
+
+  bus.failReadReg = 0xf6;
+  TEST_ASSERT_TRUE(std::isnan(bmp.readTemperature()));
+  TEST_ASSERT_TRUE(std::isnan(bmp.readPressure()));
+  ArduinoFakeReset();
+}
+
+void test_bmp085_rejects_truncated_calibration_or_reset_failure()
+{
+  MockBusDevice failedRead;
+  seedBMP085Calibration(failedRead);
+  failedRead.failReadReg = 0xaa;
+  InspectBMP085 bmp;
+  TEST_ASSERT_EQUAL_INT(0, bmp.begin(&failedRead, 0x77));
+
+  MockBusDevice failedReset;
+  seedBMP085Calibration(failedReset);
+  failedReset.failWriteReg = 0xe0;
+  InspectBMP085 failed;
+  TEST_ASSERT_EQUAL_INT(0, failed.begin(&failedReset, 0x77));
+}
+
+
+void test_mpu_derivatives_invalidate_failed_accel_filter_register()
+{
+  MockBusDevice bus;
+  bus.mirrorWritesToRead = true;
+  GyroMPU9250 mpu;
+  mpu.setBus(&bus, 0x68);
+  mpu.setDLPFMode(3);
+  TEST_ASSERT_TRUE(mpu.configurationValid());
+  bus.failWriteReg = 0x1d;
+  mpu.setDLPFMode(4);
+  TEST_ASSERT_FALSE(mpu.configurationValid());
+
+  MockBusDevice icmBus;
+  icmBus.mirrorWritesToRead = true;
+  GyroICM20602 icm;
+  icm.setBus(&icmBus, 0x68);
+  icm.setDLPFMode(2);
+  TEST_ASSERT_TRUE(icm.configurationValid());
+  icmBus.failWriteReg = 0x1d;
+  icm.setDLPFMode(4);
+  TEST_ASSERT_FALSE(icm.configurationValid());
+}
 
 void test_whoami_match()
 {
@@ -384,6 +540,11 @@ void test_name_table()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_bmi160_configuration_requires_successful_writes_and_readback);
+  RUN_TEST(test_lsm6dso_configuration_requires_successful_writes_and_readback);
+  RUN_TEST(test_bmp085_decodes_big_endian_and_rejects_invalid_samples);
+  RUN_TEST(test_bmp085_rejects_truncated_calibration_or_reset_failure);
+  RUN_TEST(test_mpu_derivatives_invalidate_failed_accel_filter_register);
   RUN_TEST(test_whoami_match);
   RUN_TEST(test_whoami_mismatch);
   RUN_TEST(test_chip_id_is_empty_before_connection);

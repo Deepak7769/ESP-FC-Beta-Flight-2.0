@@ -23,6 +23,10 @@ public:
   void setRate(int rate) override;
 
   bool testConnection() override;
+  bool configurationValid() const override { return _configOk; }
+
+private:
+  bool _configOk{false};
 };
 
 } // namespace Espfc::Device::Gyro

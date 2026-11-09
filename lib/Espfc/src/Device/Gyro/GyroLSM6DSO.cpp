@@ -70,39 +70,62 @@ int GyroLSM6DSO::begin(BusDevice* bus)
 int GyroLSM6DSO::begin(BusDevice* bus, uint8_t addr)
 {
   setBus(bus, addr);
-
+  _configOk = false;
   if (!testConnection()) return 0;
 
   // reset device
-  _bus->writeMask(_addr, LSM6DSO_REG_CTRL3_C, LSM6DSO_MASK_CTRL3_C_RESET, 1);
+  if (!_bus->writeMask(_addr, LSM6DSO_REG_CTRL3_C, LSM6DSO_MASK_CTRL3_C_RESET, 1)) return 0;
   delay(100);
 
   // Accel, 833hz ODR, 16G scale, use LPF1 output
-  _bus->writeByte(_addr, LSM6DSO_REG_CTRL1_XL,
+  if (!_bus->writeByte(_addr, LSM6DSO_REG_CTRL1_XL,
                   (LSM6DSO_VAL_CTRL1_XL_ODR833 << 4) | (LSM6DSO_VAL_CTRL1_XL_16G << 2) |
-                      (LSM6DSO_VAL_CTRL1_XL_LPF1 << 1));
+                      (LSM6DSO_VAL_CTRL1_XL_LPF1 << 1))) return 0;
   delay(1);
 
   // Gyro, 6664hz ODR, 2000dps scale
-  _bus->writeByte(_addr, LSM6DSO_REG_CTRL2_G, (LSM6DSO_VAL_CTRL2_G_ODR6664 << 4) | (LSM6DSO_VAL_CTRL2_G_2000DPS << 2));
+  if (!_bus->writeByte(_addr, LSM6DSO_REG_CTRL2_G, (LSM6DSO_VAL_CTRL2_G_ODR6664 << 4) | (LSM6DSO_VAL_CTRL2_G_2000DPS << 2))) return 0;
   delay(1);
 
   // latch LSB/MSB during reads; set interrupt pins active high; set interrupt pins push/pull; set 4-wire SPI; enable
   // auto-increment burst reads
-  _bus->writeMask(_addr, LSM6DSO_REG_CTRL3_C, LSM6DSO_MASK_CTRL3_C,
+  if (!_bus->writeMask(_addr, LSM6DSO_REG_CTRL3_C, LSM6DSO_MASK_CTRL3_C,
                   (LSM6DSO_VAL_CTRL3_C_BDU | LSM6DSO_VAL_CTRL3_C_H_LACTIVE | LSM6DSO_VAL_CTRL3_C_PP_OD |
-                   LSM6DSO_VAL_CTRL3_C_SIM | LSM6DSO_VAL_CTRL3_C_IF_INC));
+                   LSM6DSO_VAL_CTRL3_C_SIM | LSM6DSO_VAL_CTRL3_C_IF_INC))) return 0;
 
   // enable accelerometer high performane mode; set gyro LPF1 cutoff to 335.5hz
-  _bus->writeMask(_addr, LSM6DSO_REG_CTRL4_C, LSM6DSO_MASK_CTRL4_C, (LSM6DSO_VAL_CTRL4_C_LPF1_SEL_G));
+  if (!_bus->writeMask(_addr, LSM6DSO_REG_CTRL4_C, LSM6DSO_MASK_CTRL4_C, (LSM6DSO_VAL_CTRL4_C_LPF1_SEL_G))) return 0;
 
   // enable gyro LPF1
-  _bus->writeMask(_addr, LSM6DSO_REG_CTRL6_C, LSM6DSO_MASK_CTRL6_C,
-                  (LSM6DSO_VAL_CTRL6_C_XL_HM_MODE | LSM6DSO_VAL_CTRL6_C_FTYPE_335HZ));
+  if (!_bus->writeMask(_addr, LSM6DSO_REG_CTRL6_C, LSM6DSO_MASK_CTRL6_C,
+                  (LSM6DSO_VAL_CTRL6_C_XL_HM_MODE | LSM6DSO_VAL_CTRL6_C_FTYPE_335HZ))) return 0;
 
   // disable I3C interface
-  _bus->writeMask(_addr, LSM6DSO_REG_CTRL9_XL, LSM6DSO_MASK_CTRL9_XL, LSM6DSO_VAL_CTRL9_XL_I3C_DISABLE);
+  if (!_bus->writeMask(_addr, LSM6DSO_REG_CTRL9_XL, LSM6DSO_MASK_CTRL9_XL, LSM6DSO_VAL_CTRL9_XL_I3C_DISABLE)) return 0;
 
+  uint8_t accelCtrl = 0, gyroCtrl = 0, ctrl3 = 0, ctrl4 = 0, ctrl9 = 0;
+  const uint8_t expectedAccel =
+      (LSM6DSO_VAL_CTRL1_XL_ODR833 << 4) |
+      (LSM6DSO_VAL_CTRL1_XL_16G << 2) |
+      (LSM6DSO_VAL_CTRL1_XL_LPF1 << 1);
+  const uint8_t expectedGyro =
+      (LSM6DSO_VAL_CTRL2_G_ODR6664 << 4) |
+      (LSM6DSO_VAL_CTRL2_G_2000DPS << 2);
+  if (_bus->readByte(_addr, LSM6DSO_REG_CTRL1_XL, &accelCtrl) != 1 ||
+      _bus->readByte(_addr, LSM6DSO_REG_CTRL2_G, &gyroCtrl) != 1 ||
+      _bus->readByte(_addr, LSM6DSO_REG_CTRL3_C, &ctrl3) != 1 ||
+      _bus->readByte(_addr, LSM6DSO_REG_CTRL4_C, &ctrl4) != 1 ||
+      _bus->readByte(_addr, LSM6DSO_REG_CTRL9_XL, &ctrl9) != 1 ||
+      (accelCtrl & 0xfc) != expectedAccel ||
+      (gyroCtrl & 0xfc) != expectedGyro ||
+      (ctrl3 & (LSM6DSO_VAL_CTRL3_C_BDU | LSM6DSO_VAL_CTRL3_C_IF_INC)) !=
+          (LSM6DSO_VAL_CTRL3_C_BDU | LSM6DSO_VAL_CTRL3_C_IF_INC) ||
+      (ctrl4 & LSM6DSO_VAL_CTRL4_C_LPF1_SEL_G) == 0 ||
+      (ctrl9 & LSM6DSO_VAL_CTRL9_XL_I3C_DISABLE) == 0)
+  {
+    return 0;
+  }
+  _configOk = true;
   return 1;
 }
 

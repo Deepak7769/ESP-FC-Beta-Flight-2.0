@@ -14,7 +14,19 @@ GyroDeviceType GyroICM20602::getType() const
 void GyroICM20602::setDLPFMode(uint8_t mode)
 {
   GyroMPU6050::setDLPFMode(mode);
-  _bus->writeByte(_addr, ICM20602_RA_ACCEL2_CONFIG, mode);
+  if (!_configOk) return;
+  const uint8_t expected = mode & 0x07;
+  if (!_bus->writeByte(_addr, ICM20602_RA_ACCEL2_CONFIG, expected))
+  {
+    _configOk = false;
+    return;
+  }
+  uint8_t actual = 0;
+  if (_bus->readByte(_addr, ICM20602_RA_ACCEL2_CONFIG, &actual) != 1 ||
+      (actual & 0x07) != expected)
+  {
+    _configOk = false;
+  }
 }
 
 bool GyroICM20602::testConnection()
