@@ -105,9 +105,13 @@ int Blackbox::begin()
   cp->motor_output_limit = _model.config.output.motorLimit;
   cp->throttle_boost = 0;
   cp->throttle_boost_cutoff = 100;
+#if defined(ESPFC_ANTI_GRAVITY_ACTIVE)
+  cp->anti_gravity_gain = _model.config.antiGravityGain;
+#else
   cp->anti_gravity_gain = 0;
-  cp->anti_gravity_p_gain = 0;
-  cp->anti_gravity_cutoff_hz = 100;
+#endif
+  cp->anti_gravity_p_gain = ControllerConfig::ANTI_GRAVITY_P_GAIN;
+  cp->anti_gravity_cutoff_hz = ControllerConfig::ANTI_GRAVITY_CUTOFF_HZ;
   cp->d_max_gain = 0;
   cp->d_max_advance = 0;
   cp->angle_limit = _model.config.level.angleLimit;
@@ -418,12 +422,14 @@ void FAST_CODE_ATTR Blackbox::updateArmed()
 
 void FAST_CODE_ATTR Blackbox::updateMode()
 {
-  updateModeFlag(&rcModeActivationMask, BOXARM, _model.isSwitchActive(MODE_ARMED));
-  updateModeFlag(&rcModeActivationMask, BOXANGLE, _model.isSwitchActive(MODE_ANGLE));
-  updateModeFlag(&rcModeActivationMask, BOXALTHOLD, _model.isSwitchActive(MODE_ALTHOLD));
-  updateModeFlag(&rcModeActivationMask, BOXFAILSAFE, _model.isSwitchActive(MODE_FAILSAFE));
+  // Blackbox flight modes represent actual controller authority, not just
+  // auxiliary switch requests rejected by estimator or build capability.
+  updateModeFlag(&rcModeActivationMask, BOXARM, _model.isModeActive(MODE_ARMED));
+  updateModeFlag(&rcModeActivationMask, BOXANGLE, _model.isModeActive(MODE_ANGLE));
+  updateModeFlag(&rcModeActivationMask, BOXALTHOLD, _model.isModeActive(MODE_ALTHOLD));
+  updateModeFlag(&rcModeActivationMask, BOXFAILSAFE, _model.isModeActive(MODE_FAILSAFE));
   updateModeFlag(&rcModeActivationMask, BOXBLACKBOX, _model.isSwitchActive(MODE_BLACKBOX));
-  updateModeFlag(&rcModeActivationMask, BOXAIRMODE, _model.isSwitchActive(MODE_AIRMODE));
+  updateModeFlag(&rcModeActivationMask, BOXAIRMODE, _model.isModeActive(MODE_AIRMODE));
   updateModeFlag(&rcModeActivationMask, BOXBLACKBOXERASE, _model.isSwitchActive(MODE_BLACKBOX_ERASE));
 }
 

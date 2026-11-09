@@ -14,6 +14,7 @@
 #include "Sensor/VoltageSensor.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
+#include "Blackbox/BlackboxSerialBuffer.h"
 #include "Utils/Timer.h"
 #include "msp/msp_protocol.h"
 
@@ -26,6 +27,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <limits>
+#include <vector>
 
 using namespace fakeit;
 using namespace Espfc;
@@ -9835,6 +9837,78 @@ void test_mixer_vertical_saturation_feedback_is_directional()
 
 
 
+
+class TestPartialSerialSink final : public Stream::ReadWritable
+{
+public:
+  std::vector<uint8_t> written;
+  size_t writeLimit{2};
+  void begin(const Hal::SerialDeviceConfig&) override {}
+  void updateBaudRate(int) override {}
+  size_t write(uint8_t c) override { return write(&c, 1u); }
+  size_t write(const uint8_t* data, size_t len) override
+  {
+    const size_t accepted = std::min(len, writeLimit);
+    if (data && accepted)
+      written.insert(written.end(), data, data + accepted);
+    return accepted;
+  }
+  int availableForWrite() override { return static_cast<int>(writeLimit); }
+  void flush() override {}
+  bool isTxFifoEmpty() override { return true; }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  size_t readMany(uint8_t*, size_t) override { return 0; }
+  int peek() override { return -1; }
+};
+
+void test_blackbox_serial_buffer_preserves_partial_writes_in_order()
+{
+  TestPartialSerialSink port;
+  Blackbox::BlackboxSerialBuffer buffer;
+  buffer.wrap(&port);
+  uint8_t data[12]{};
+  for (size_t i = 0; i < sizeof(data); ++i)
+    data[i] = static_cast<uint8_t>(i + 1);
+  TEST_ASSERT_EQUAL_UINT(12u, buffer.write(data, sizeof(data)));
+
+  for (size_t i = 0; i < 6; ++i)
+  {
+    buffer.flush();
+    TEST_ASSERT_EQUAL_UINT((i + 1) * 2u, port.written.size());
+  }
+  TEST_ASSERT_TRUE(buffer.isTxFifoEmpty());
+  TEST_ASSERT_EQUAL_UINT(12u, port.written.size());
+  for (size_t i = 0; i < sizeof(data); ++i)
+    TEST_ASSERT_EQUAL_UINT8(data[i], port.written[i]);
+}
+
+void test_blackbox_serial_buffer_reports_full_backpressure_without_overflow()
+{
+  TestPartialSerialSink port;
+  port.writeLimit = 0; // transport is blocked; no writes accepted
+  Blackbox::BlackboxSerialBuffer buffer;
+  buffer.wrap(&port);
+  uint8_t one = 0x5a;
+  for (size_t i = 0; i < Blackbox::BlackboxSerialBuffer::SIZE; ++i)
+    TEST_ASSERT_EQUAL_UINT(1u, buffer.write(one));
+  TEST_ASSERT_EQUAL_UINT(0u, buffer.write(static_cast<uint8_t>(0xaa)));
+  TEST_ASSERT_EQUAL_INT(0, buffer.availableForWrite());
+  TEST_ASSERT_EQUAL_UINT(0u, port.written.size());
+
+  port.writeLimit = Blackbox::BlackboxSerialBuffer::SIZE;
+  buffer.flush();
+  TEST_ASSERT_EQUAL_UINT(Blackbox::BlackboxSerialBuffer::SIZE,
+                         port.written.size());
+  TEST_ASSERT_EQUAL_INT(Blackbox::BlackboxSerialBuffer::SIZE,
+                        buffer.availableForWrite());
+  TEST_ASSERT_EQUAL_UINT(1u, buffer.write(static_cast<uint8_t>(0xaa)));
+  buffer.flush();
+  TEST_ASSERT_EQUAL_UINT(Blackbox::BlackboxSerialBuffer::SIZE + 1u,
+                         port.written.size());
+  TEST_ASSERT_EQUAL_HEX8(0xaa, port.written.back());
+}
+
 void test_position_hold_preserves_filter_acceptance_between_gps_epochs()
 {
   Espfc::Control::PositionHold filter;
@@ -10060,6 +10134,8 @@ void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_blackbox_serial_buffer_preserves_partial_writes_in_order);
+  RUN_TEST(test_blackbox_serial_buffer_reports_full_backpressure_without_overflow);
   RUN_TEST(test_position_hold_preserves_filter_acceptance_between_gps_epochs);
   RUN_TEST(test_navigation_rejects_finite_velocity_without_accepted_filter);
   RUN_TEST(test_navigation_true_heading_applies_declination_once);
