@@ -4565,13 +4565,13 @@ void test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion()
   TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
 
   model.state.output.ch[AXIS_THRUST] = -0.97f;
-  model.state.gyro.adc[AXIS_ROLL] = 0.40f;
+  model.state.gyro.adc.set(AXIS_ROLL, 0.40f);
   for (uint32_t i = 67; i < 130; ++i)
     stepNoRangeLanding(model, actuator, START + i * 50000u);
   TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
   TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
 
-  model.state.gyro.adc[AXIS_ROLL] = 0.0f;
+  model.state.gyro.adc.set(AXIS_ROLL, 0.0f);
   model.state.gps.present = true;
   model.state.gps.fix = true;
   model.state.gps.fixType = 3;
@@ -4600,13 +4600,13 @@ void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
   TEST_ASSERT_TRUE(model.state.failsafe.landingGroundContactCandidate);
   TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
 
-  model.state.accel.world[AXIS_ROLL] = 3.0f;
+  model.state.accel.world.set(AXIS_ROLL, 3.0f);
   stepNoRangeLanding(model, actuator, START + 22u * 50000u);
   TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
   TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
   TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
 
-  model.state.accel.world[AXIS_ROLL] = 0.0f;
+  model.state.accel.world.set(AXIS_ROLL, 0.0f);
   for (uint32_t i = 23; i < 41; ++i)
     stepNoRangeLanding(model, actuator, START + i * 50000u);
   TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
