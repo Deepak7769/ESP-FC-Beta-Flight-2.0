@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
 
 using namespace fakeit;
@@ -4710,6 +4711,10 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
   float motors[OUTPUT_CHANNELS] = {};
   bool sawStage1 = false, sawControllerIdle = false;
   bool sawActualMixerIdle = false, disarmed = false;
+  uint32_t stageOneTicks = 0;
+  float minStageThrust = 2.0f;
+  float maxStageThrust = -2.0f;
+  uint32_t lastTick = 0;
   for (uint32_t tick = 0; tick < 7000; ++tick)
   {
     const uint32_t now = START + tick * 1000u;
@@ -4731,6 +4736,15 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
     }
     controller.update();
     mixer.updateMixer(motorsConfig, motors);
+    lastTick = tick;
+    if (model.state.failsafe.landingGroundIdleRequested)
+    {
+      stageOneTicks++;
+      minStageThrust = std::min(minStageThrust,
+          model.state.output.ch[AXIS_THRUST]);
+      maxStageThrust = std::max(maxStageThrust,
+          model.state.output.ch[AXIS_THRUST]);
+    }
     sawControllerIdle |=
         model.state.failsafe.landingGroundIdleRequested &&
         model.state.output.ch[AXIS_THRUST] <= -0.94f;
@@ -4738,6 +4752,13 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
         model.state.failsafe.landingGroundIdleRequested &&
         model.state.mixer.allMotorOutputsNearIdle;
   }
+  std::printf("LAND F01 integration: stageTicks=%lu lastTick=%lu minThrust=%.4f maxThrust=%.4f lastOutput=%.4f active=%d altActive=%d dt=%.6f\\n",
+      static_cast<unsigned long>(stageOneTicks),
+      static_cast<unsigned long>(lastTick), minStageThrust, maxStageThrust,
+      model.state.output.ch[AXIS_THRUST],
+      model.state.failsafe.landingActive ? 1 : 0,
+      model.state.assistedMode.altitudeActive ? 1 : 0,
+      model.state.innerPid[AXIS_THRUST].dt);
   TEST_ASSERT_TRUE(sawStage1);
   TEST_ASSERT_TRUE(sawControllerIdle);
   TEST_ASSERT_TRUE(sawActualMixerIdle);
