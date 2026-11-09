@@ -58,6 +58,10 @@ static void setHealthyAssistedEstimatorState(
 
   model.state.accel.present =
       true;
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = nowUs;
+  model.state.accel.world = VectorFloat(0.0f, 0.0f, 0.0f);
+  model.state.gyro.adc = VectorFloat(0.0f, 0.0f, 0.0f);
 
   model.state.attitude.healthy =
       true;
@@ -4487,6 +4491,137 @@ void test_land_v2_fault_bypasses_motor_stop_feature()
   TEST_ASSERT_TRUE(mixer._stop());
 }
 
+
+static void setNoRangeLandingFixture(Model& model, uint32_t now,
+                                      float entry, float height)
+{
+  setHealthyAssistedEstimatorState(model, now);
+  model.state.altitude.healthy = true;
+  model.state.altitude.height = height;
+  model.state.altitude.vario = 0.0f;
+  model.state.altitude.acceleration = 0.0f;
+  model.state.output.ch[AXIS_THRUST] = -0.97f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = now - 3000000u;
+  model.state.failsafe.landingEntryHeight = entry;
+  model.state.failsafe.landingEntryThrust = 0.2f;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+}
+
+static void stepNoRangeLanding(Model& model, Actuator& actuator, uint32_t now)
+{
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(now);
+  model.state.gyro.lastUpdateUs = now;
+  model.state.accel.lastUpdateUs = now;
+  model.state.attitude.lastUpdateUs = now;
+  model.state.baro.lastUpdateUs = now;
+  model.state.altitude.lastUpdateUs = now;
+  actuator.updateFailsafeLand();
+}
+
+static void checkNoRangeTouchdownAtHeight(float entry, float height)
+{
+  ArduinoFakeReset();
+  constexpr uint32_t START = 5000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
+  Model model;
+  setNoRangeLandingFixture(model, START, entry, height);
+  Actuator actuator(model);
+  for (uint32_t i = 0; i < 57; ++i)
+  {
+    stepNoRangeLanding(model, actuator, START + i * 50000u);
+    if (i < 43) TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  }
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingRequested);
+  ArduinoFakeReset();
+}
+
+void test_land_without_rangefinder_elevated_terrain_contact()
+{
+  checkNoRangeTouchdownAtHeight(5.0f, 4.0f);
+}
+
+void test_land_without_rangefinder_lower_terrain_contact()
+{
+  checkNoRangeTouchdownAtHeight(-2.0f, -3.0f);
+}
+
+void test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t START = 6000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
+  Model model;
+  setNoRangeLandingFixture(model, START, 1.0f, 0.05f);
+  Actuator actuator(model);
+  model.state.output.ch[AXIS_THRUST] = -0.30f;
+  for (uint32_t i = 0; i < 67; ++i)
+    stepNoRangeLanding(model, actuator, START + i * 50000u);
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+
+  model.state.output.ch[AXIS_THRUST] = -0.97f;
+  model.state.gyro.adc[AXIS_ROLL] = 0.40f;
+  for (uint32_t i = 67; i < 130; ++i)
+    stepNoRangeLanding(model, actuator, START + i * 50000u);
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
+
+  model.state.gyro.adc[AXIS_ROLL] = 0.0f;
+  model.state.gps.present = true;
+  model.state.gps.fix = true;
+  model.state.gps.fixType = 3;
+  model.state.gps.velocity.raw.north = 900; // mm/s
+  for (uint32_t i = 130; i < 194; ++i)
+  {
+    uint32_t now = START + i * 50000u;
+    model.state.gps.lastMsgTs = now;
+    stepNoRangeLanding(model, actuator, now);
+  }
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+  ArduinoFakeReset();
+}
+
+void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t START = 7000000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
+  Model model;
+  setNoRangeLandingFixture(model, START, 3.0f, 2.0f);
+  Actuator actuator(model);
+  for (uint32_t i = 0; i < 22; ++i)
+    stepNoRangeLanding(model, actuator, START + i * 50000u);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingGroundContactCandidate);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
+
+  model.state.accel.world[AXIS_ROLL] = 3.0f;
+  stepNoRangeLanding(model, actuator, START + 22u * 50000u);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+
+  model.state.accel.world[AXIS_ROLL] = 0.0f;
+  for (uint32_t i = 23; i < 41; ++i)
+    stepNoRangeLanding(model, actuator, START + i * 50000u);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
+  stepNoRangeLanding(model, actuator, START + 6000000u);
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+
+  model.state.accel.sampleValid = false;
+  for (uint32_t i = 1; i < 47; ++i)
+    stepNoRangeLanding(model, actuator, START + 6000000u + i * 50000u);
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
+  ArduinoFakeReset();
+}
+
 void test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown()
 {
   ArduinoFakeReset();
@@ -4589,6 +4724,10 @@ void test_failsafe_land_v2_touchdown_dwell_disarms()
 
   model.state.altitude.vario =
       0.05f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = NOW_US;
+  model.state.rangefinder.distance = 0.10f;
 
   model.state.output.ch[
       AXIS_THRUST] =
@@ -4679,6 +4818,10 @@ void test_failsafe_land_v2_touchdown_candidate_has_hysteresis()
 
   model.state.altitude.vario =
       0.20f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = NOW_US;
+  model.state.rangefinder.distance = 0.35f;
 
   model.state.output.ch[
       AXIS_THRUST] =
@@ -5029,6 +5172,10 @@ void test_failsafe_land_v2_high_altitude_timeout_requires_ground_contact()
   model.state.altitude.height = 0.10f;
   model.state.altitude.vario = 0.02f;
   model.state.output.ch[AXIS_THRUST] = -0.20f;
+  model.state.rangefinder.present = true;
+  model.state.rangefinder.sampleValid = true;
+  model.state.rangefinder.lastUpdateUs = NOW_US;
+  model.state.rangefinder.distance = 0.10f;
   model.state.failsafe.landingTouchdownCandidate = true;
   model.state.failsafe.landingTouchdownStartedUs = NOW_US - 1000000u;
   actuator.updateFailsafeLand();
@@ -9238,6 +9385,10 @@ RUN_TEST(test_land_v2_fault_bypasses_motor_stop_feature);
 
 RUN_TEST(
     test_failsafe_land_v2_touchdown_dwell_disarms);
+RUN_TEST(test_land_without_rangefinder_elevated_terrain_contact);
+RUN_TEST(test_land_without_rangefinder_lower_terrain_contact);
+RUN_TEST(test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion);
+RUN_TEST(test_land_without_rangefinder_requires_uninterrupted_imu_evidence);
 RUN_TEST(test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown);
 RUN_TEST(test_failsafe_land_rangefinder_confirms_ground_above_takeoff_elevation);
 

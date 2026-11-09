@@ -1026,6 +1026,8 @@ void Actuator::updateFailsafeLand()
 
     failsafe.landingTouchdownStartedUs =
         0;
+    failsafe.landingGroundContactCandidate = false;
+    failsafe.landingGroundContactStartedUs = 0;
   }
   else
   {
@@ -1064,8 +1066,12 @@ void Actuator::updateFailsafeLand()
           true;
     }
 
-    failsafe.landingLastUpdateUs =
-        now;
+    // A long supervisor gap must invalidate contact dwell. Timer rollover
+    // remains safe under unsigned subtraction.
+    const bool landingSupervisorGap =
+        failsafe.landingLastUpdateUs != 0u &&
+        static_cast<uint32_t>(now - failsafe.landingLastUpdateUs) > 150000u;
+    failsafe.landingLastUpdateUs = now;
 
 #if defined(ESPFC_LAND_V2_ACTIVE)
     if (activeLandRequest)
@@ -1083,6 +1089,8 @@ void Actuator::updateFailsafeLand()
         failsafe.landingDescentRequested = false;
         failsafe.landingTouchdownCandidate = false;
         failsafe.landingTouchdownStartedUs = 0;
+        failsafe.landingGroundContactCandidate = false;
+        failsafe.landingGroundContactStartedUs = 0;
         return;
       }
       else
@@ -1210,16 +1218,14 @@ void Actuator::updateFailsafeLand()
             std::isfinite(groundSensor.distance) &&
             groundSensor.distance >= 0.0f;
 
+        // If a rangefinder is installed, a stale/invalid reading VETOES
+        // touchdown rather than silently falling back to barometer height.
         const bool groundReferenceUsable =
             !groundSensor.present || groundSensorFresh;
-        const float groundClearance =
-            groundSensor.present
-                ? groundSensor.distance
-                : altitude.height;
-
         const bool nearGround =
-            groundReferenceUsable &&
-            groundClearance <= TOUCHDOWN_HEIGHT_M;
+            !groundSensor.present ||
+            (groundSensorFresh &&
+             groundSensor.distance <= TOUCHDOWN_HEIGHT_M);
 
         // Mature multicopter landing detectors do not declare touchdown from
         // low vertical speed alone: they also require evidence that thrust has
@@ -1282,13 +1288,99 @@ void Actuator::updateFailsafeLand()
                 touchdownReferenceThrust -
                     TOUCHDOWN_THRUST_MARGIN;
 
+        // PX4/ArduPilot-inspired no-rangefinder ground-contact stage.
+        // A baro vertical speed near zero is NOT ground evidence by itself.
+        // Require near-idle collective, valid fresh IMU, low linear/angular
+        // motion, reasonable tilt, and (if present) low GPS ground speed.
+        // With no GPS, horizontal velocity remains unobservable: use an
+        // extended dwell and retain an explicit unverified flight-test gate.
+        const auto& gyro = _model.state.gyro;
+        const auto& accel = _model.state.accel;
+        const auto& attitude = _model.state.attitude;
+        const auto& gps = _model.state.gps;
+        const bool imuFresh =
+            gyro.present && gyro.sampleValid &&
+            accel.present && accel.sampleValid &&
+            static_cast<uint32_t>(now - gyro.lastUpdateUs) < 100000u &&
+            static_cast<uint32_t>(now - accel.lastUpdateUs) < 100000u;
+        const bool rotationStable =
+            imuFresh &&
+            std::isfinite(gyro.adc[AXIS_ROLL]) &&
+            std::isfinite(gyro.adc[AXIS_PITCH]) &&
+            std::isfinite(gyro.adc[AXIS_YAW]) &&
+            std::fabs(gyro.adc[AXIS_ROLL]) < 0.12f &&
+            std::fabs(gyro.adc[AXIS_PITCH]) < 0.12f &&
+            std::fabs(gyro.adc[AXIS_YAW]) < 0.12f;
+        const bool tiltStable =
+            std::fabs(attitude.euler[AXIS_ROLL]) < 0.26f &&
+            std::fabs(attitude.euler[AXIS_PITCH]) < 0.26f;
+        const bool linearMotionStable =
+            imuFresh &&
+            std::isfinite(accel.world[AXIS_ROLL]) &&
+            std::isfinite(accel.world[AXIS_PITCH]) &&
+            std::isfinite(accel.world[AXIS_YAW]) &&
+            std::fabs(accel.world[AXIS_ROLL]) < 1.0f &&
+            std::fabs(accel.world[AXIS_PITCH]) < 1.0f &&
+            std::fabs(accel.world[AXIS_YAW]) < 0.75f &&
+            std::fabs(altitude.acceleration) < 0.75f;
+        const bool gpsVelocityKnown =
+            gps.present && gps.fix && gps.fixType >= 3 &&
+            gps.lastMsgTs != 0u &&
+            static_cast<uint32_t>(now - gps.lastMsgTs) < 500000u;
+        const float horizontalSpeedSq =
+            static_cast<float>(gps.velocity.raw.north) *
+                static_cast<float>(gps.velocity.raw.north) +
+            static_cast<float>(gps.velocity.raw.east) *
+                static_cast<float>(gps.velocity.raw.east);
+        const bool gpsMotionAcceptable =
+            !gpsVelocityKnown ||
+            (std::isfinite(horizontalSpeedSq) &&
+             horizontalSpeedSq < 250000.0f); // 0.5 m/s in mm/s units
+        const bool nearMotorMinimum =
+            std::isfinite(commandedThrust) &&
+            commandedThrust <= -0.94f;
+        const bool noRangeContactEvidence =
+            !groundSensor.present &&
+            landingElapsedUs >= MIN_LANDING_TIME_US &&
+            descentEvidence && slowVerticalMotion &&
+            lowLandingThrust && nearMotorMinimum &&
+            rotationStable && tiltStable && linearMotionStable &&
+            gpsMotionAcceptable;
+
+        // Stage 1 (ground contact): demand uninterrupted strong evidence.
+        // A skipped supervisor interval resets the stage, preventing a time
+        // jump over old sensor values from satisfying touchdown dwell.
+        if (groundSensor.present || !noRangeContactEvidence ||
+            landingSupervisorGap)
+        {
+          failsafe.landingGroundContactCandidate = false;
+          failsafe.landingGroundContactStartedUs = 0;
+          if (!groundSensor.present)
+          {
+            failsafe.landingTouchdownCandidate = false;
+            failsafe.landingTouchdownStartedUs = 0;
+          }
+        }
+        else if (!failsafe.landingGroundContactCandidate)
+        {
+          failsafe.landingGroundContactCandidate = true;
+          failsafe.landingGroundContactStartedUs = now;
+        }
+
+        constexpr uint32_t NO_RANGE_CONTACT_DWELL_US = 750000u;
+        const bool contactStageComplete =
+            groundSensor.present ||
+            (failsafe.landingGroundContactCandidate &&
+             static_cast<uint32_t>(now -
+                 failsafe.landingGroundContactStartedUs) >=
+                 NO_RANGE_CONTACT_DWELL_US);
+
         const bool touchdownEvidence =
-            landingElapsedUs >=
-                MIN_LANDING_TIME_US &&
-            slowVerticalMotion &&
-            nearGround &&
-            descentEvidence &&
-            lowLandingThrust;
+            landingElapsedUs >= MIN_LANDING_TIME_US &&
+            slowVerticalMotion && nearGround &&
+            descentEvidence && lowLandingThrust &&
+            contactStageComplete &&
+            (groundSensor.present || noRangeContactEvidence);
 
         // Once strict ground-contact evidence has started the dwell timer,
         // allow a slightly wider hold band. This mirrors staged/hysteretic
@@ -1313,8 +1405,9 @@ void Actuator::updateFailsafeLand()
                 altitude.vario) <=
                 TOUCHDOWN_HOLD_VARIO_MS &&
             groundReferenceUsable &&
-            groundClearance <=
-                TOUCHDOWN_HOLD_HEIGHT_M &&
+            (!groundSensor.present ||
+             groundSensor.distance <= TOUCHDOWN_HOLD_HEIGHT_M) &&
+            (groundSensor.present || noRangeContactEvidence) &&
             descentEvidence &&
             std::isfinite(
                 commandedThrust) &&
@@ -1351,8 +1444,11 @@ void Actuator::updateFailsafeLand()
                   failsafe
                       .landingTouchdownStartedUs);
 
-          if (touchdownDwellUs >=
-              TOUCHDOWN_DWELL_US)
+          // No rangefinder: require a longer second stage than for an
+          // actual ground-distance measurement.
+          const uint32_t requiredDwellUs =
+              groundSensor.present ? TOUCHDOWN_DWELL_US : 1500000u;
+          if (touchdownDwellUs >= requiredDwellUs)
           {
             failsafe.landingRequested =
                 false;
@@ -1508,6 +1604,8 @@ void Actuator::startFailsafeLanding()
     failsafe.landingLastUpdateUs = 0;
     failsafe.landingTouchdownCandidate = false;
     failsafe.landingTouchdownStartedUs = 0;
+    failsafe.landingGroundContactCandidate = false;
+    failsafe.landingGroundContactStartedUs = 0;
   }
 
   // No failed altitude estimate authorizes an airborne DROP, whether
@@ -1690,6 +1788,8 @@ void Actuator::updateArmed()
 
       failsafe.landingTouchdownStartedUs =
           0;
+      failsafe.landingGroundContactCandidate = false;
+      failsafe.landingGroundContactStartedUs = 0;
 
       failsafe.landingEntryHeight =
           0.0f;

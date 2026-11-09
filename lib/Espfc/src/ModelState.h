@@ -235,6 +235,12 @@ public:
 
   uint32_t landingTouchdownStartedUs{0};
 
+  // No-rangefinder contact stage: an independent low-thrust/IMU/motion
+  // qualification must persist BEFORE the normal touchdown dwell begins.
+  // Launch-relative barometric altitude is never used as ground clearance.
+  bool landingGroundContactCandidate{false};
+  uint32_t landingGroundContactStartedUs{0};
+
   float landingEntryHeight{0.0f};
 
   float landingEntryVario{0.0f};
