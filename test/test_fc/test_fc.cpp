@@ -2985,6 +2985,31 @@ void test_adc_current_calibration_uses_betaflight_units()
       Sensor::VoltageSensor::adcCurrentAmps(100.0f, -1, 0));
 }
 
+void test_consumed_capacity_integrates_fresh_samples()
+{
+  float mah = 0.0f;
+  // 10 A for 360 seconds, sampled at 50 Hz, must consume 1000 mAh.
+  for (int i = 0; i < 18000; ++i)
+  {
+    mah = Sensor::VoltageSensor::integrateConsumedMah(mah, 10.0f, 20000u);
+  }
+  TEST_ASSERT_FLOAT_WITHIN(1.0f, 1000.0f, mah);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, mah,
+      Sensor::VoltageSensor::integrateConsumedMah(mah, 10.0f, 500000u));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, mah,
+      Sensor::VoltageSensor::integrateConsumedMah(mah, -2.0f, 20000u));
+
+  BatteryState battery;
+  TEST_ASSERT_EQUAL_UINT32(0u, battery.reportedConsumedMah());
+  battery.consumedMah = 123.6f;
+  battery.consumedMahValid = true;
+  TEST_ASSERT_EQUAL_UINT32(124u, battery.reportedConsumedMah());
+  battery.consumedMah = std::numeric_limits<float>::quiet_NaN();
+  TEST_ASSERT_EQUAL_UINT32(0u, battery.reportedConsumedMah());
+  battery.consumedMah = 20000000.0f;
+  TEST_ASSERT_EQUAL_UINT32(16777215u, battery.reportedConsumedMah());
+}
+
 void test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data()
 {
   ArduinoFakeReset();
@@ -3033,6 +3058,8 @@ void test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data()
       750,
       model.state.battery
           .rawCurrent);
+  TEST_ASSERT_TRUE(model.state.battery.consumedMahValid);
+  TEST_ASSERT_EQUAL_UINT32(42u, model.state.battery.reportedConsumedMah());
 
   TEST_ASSERT_FLOAT_WITHIN(
       0.001f,
@@ -3059,6 +3086,8 @@ void test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data()
   TEST_ASSERT_FALSE(
       model.state.battery
           .mspCurrentValid);
+  TEST_ASSERT_FALSE(model.state.battery.consumedMahValid);
+  TEST_ASSERT_EQUAL_UINT32(0u, model.state.battery.reportedConsumedMah());
 }
 
 
@@ -10387,6 +10416,7 @@ RUN_TEST(test_controller_anti_gravity_tracks_manual_throttle_transient);
   RUN_TEST(test_msp_current_meter_reply_updates_battery_state);
   RUN_TEST(test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data);
   RUN_TEST(test_adc_current_calibration_uses_betaflight_units);
+  RUN_TEST(test_consumed_capacity_integrates_fresh_samples);
 #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
   RUN_TEST(test_controller_anti_gravity_yields_to_assisted_vertical_control);
 #endif

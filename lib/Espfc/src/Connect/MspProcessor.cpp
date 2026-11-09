@@ -497,7 +497,8 @@ case MSP_BUILD_INFO:
 
     case MSP_ANALOG:
       r.writeU8(toVbatVoltageLegacy(_model.state.battery.voltage)); // voltage in 0.1V
-      r.writeU16(_model.state.battery.mspMahDrawn);                 // mAh drawn
+      r.writeU16(static_cast<uint16_t>(
+          std::min<uint32_t>(_model.state.battery.reportedConsumedMah(), 65535u))); // mAh drawn
       r.writeU16(_model.getRssi());                                 // rssi
       r.writeU16(toIbatCurrent(_model.state.battery.current));      // amperage in 0.01A
       r.writeU16(toVbatVoltage(_model.state.battery.voltage));      // voltage in 0.01V
@@ -547,7 +548,8 @@ case MSP_BUILD_INFO:
 
       // battery state
       r.writeU8(toVbatVoltageLegacy(_model.state.battery.voltage)); // in 0.1V steps
-      r.writeU16(_model.state.battery.mspMahDrawn);                 // milliamp hours drawn from battery
+      r.writeU16(static_cast<uint16_t>(
+          std::min<uint32_t>(_model.state.battery.reportedConsumedMah(), 65535u))); // mAh drawn
       r.writeU16(toIbatCurrent(_model.state.battery.current));      // send current in 0.01 A steps, range is -320A to 320A
 
       // battery alerts
@@ -577,10 +579,8 @@ case MSP_BUILD_INFO:
               ? 90
               : 10);
 
-      r.writeU16(
-          mspSource
-              ? _model.state.battery.mspMahDrawn
-              : 0);
+      r.writeU16(static_cast<uint16_t>(
+          std::min<uint32_t>(_model.state.battery.reportedConsumedMah(), 65535u)));
 
       const long milliAmps =
           lrintf(

@@ -179,7 +179,7 @@ public:
 
     uint16_t voltage = std::clamp(lrintf(_model.state.battery.voltage * 10.0f), 0l, 32000l);
     uint16_t current = std::clamp(lrintf(_model.state.battery.current * 10.0f), 0l, 32000l);
-    uint32_t mahDrawn = 0;
+    uint32_t mahDrawn = _model.state.battery.reportedConsumedMah();
     uint8_t remainPerc = lrintf(_model.state.battery.percentage);
 
     msg.writeU16(Utils::toBigEndian16(voltage));

@@ -16,6 +16,10 @@ int VoltageSensor::begin()
   _model.state.battery.mspMahDrawn = 0;
   _model.state.battery.mspCurrentLastUpdateUs = 0;
   _model.state.battery.mspCurrentValid = false;
+  _model.state.battery.consumedMah = 0.0f;
+  _model.state.battery.consumedMahValid = false;
+  _lastAdcSampleUs = 0;
+  _lastConsumedSource = _model.config.ibat.source;
 
   reload(MODEL_CHANGE_FILTER);
 
@@ -104,6 +108,15 @@ int VoltageSensor::readIbat()
   auto& battery =
       _model.state.battery;
 
+  // Do not merge consumption accumulated by different meter sources.
+  if (_lastConsumedSource != _model.config.ibat.source)
+  {
+    _lastConsumedSource = _model.config.ibat.source;
+    _lastAdcSampleUs = 0;
+    battery.consumedMah = 0.0f;
+    battery.consumedMahValid = false;
+  }
+
   if (_model.config.ibat.source ==
       CURRENT_METER_MSP)
   {
@@ -126,6 +139,7 @@ int VoltageSensor::readIbat()
       // telemetry is deliberately fail-silent and has no control authority.
       battery.mspCurrentValid =
           false;
+      battery.consumedMahValid = false;
 
       battery.currentUnfiltered =
           0.0f;
@@ -153,6 +167,8 @@ int VoltageSensor::readIbat()
     battery.current =
         _iFilter.update(
             amps);
+    battery.consumedMah = static_cast<float>(battery.mspMahDrawn);
+    battery.consumedMahValid = true;
 
     if (_model.config.debug.mode ==
         DEBUG_CURRENT_SENSOR)
@@ -182,6 +198,7 @@ int VoltageSensor::readIbat()
       _model.config.pin[
           PIN_INPUT_ADC_1] == -1)
   {
+    battery.consumedMahValid = false;
     return 0;
   }
 
@@ -209,6 +226,17 @@ int VoltageSensor::readIbat()
       _iFilter.update(
           battery.currentUnfiltered);
 
+  const uint32_t sampleUs = micros();
+  if (_lastAdcSampleUs != 0)
+  {
+    battery.consumedMah = integrateConsumedMah(
+        battery.consumedMah,
+        battery.currentUnfiltered,
+        static_cast<uint32_t>(sampleUs - _lastAdcSampleUs));
+  }
+  _lastAdcSampleUs = sampleUs;
+  battery.consumedMahValid = true;
+
   if (_model.config.debug.mode ==
       DEBUG_CURRENT_SENSOR)
   {
@@ -230,6 +258,7 @@ int VoltageSensor::readIbat()
 
   return 1;
 #else
+  battery.consumedMahValid = false;
   return 0;
 #endif
 }

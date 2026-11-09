@@ -3,6 +3,7 @@
 #include "BaseSensor.hpp"
 #include "Model.h"
 #include "Utils/Filter.h"
+#include <cmath>
 
 namespace Espfc::Sensor {
 
@@ -21,6 +22,21 @@ public:
   int readVbat();
   int readIbat();
 
+  // A gap without fresh ADC data must not be integrated as real discharge.
+  static float integrateConsumedMah(float previousMah, float amps, uint32_t elapsedUs)
+  {
+    if (!std::isfinite(previousMah) || previousMah < 0.0f)
+    {
+      previousMah = 0.0f;
+    }
+    if (!std::isfinite(amps) || amps <= 0.0f ||
+        elapsedUs == 0 || elapsedUs > 250000u)
+    {
+      return previousMah;
+    }
+    return previousMah + amps * static_cast<float>(elapsedUs) / 3600000.0f;
+  }
+
   // Betaflight ADC current-meter calibration: scale is mV / 10 A;
   // offset is mA. Keep the conversion independent of ADC hardware for tests.
   static float adcCurrentAmps(float millivolts, int16_t scale, int16_t offsetMilliAmps)
@@ -38,6 +54,8 @@ private:
   Utils::Filter _iFilterFast;
   Utils::Filter _iFilter;
   State _state;
+  uint32_t _lastAdcSampleUs{0};
+  int8_t _lastConsumedSource{CURRENT_METER_NONE};
 };
 
 } // namespace Espfc::Sensor

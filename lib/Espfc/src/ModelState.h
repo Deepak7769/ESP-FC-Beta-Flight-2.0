@@ -1,6 +1,9 @@
 #ifndef _ESPFC_MODEL_STATE_H_
 #define _ESPFC_MODEL_STATE_H_
 
+#include <algorithm>
+#include <cmath>
+
 #ifndef UNIT_TEST
 #include <IPAddress.h>
 #endif
@@ -152,6 +155,21 @@ class BatteryState
     uint16_t mspMahDrawn = 0;
     uint32_t mspCurrentLastUpdateUs = 0;
     bool mspCurrentValid = false;
+
+    // One canonical source-aware capacity measurement for all telemetry.
+    float consumedMah{0.0f};
+    bool consumedMahValid{false};
+
+    uint32_t reportedConsumedMah() const
+    {
+      if (!consumedMahValid || !std::isfinite(consumedMah) ||
+          consumedMah <= 0.0f)
+      {
+        return 0u;
+      }
+      return static_cast<uint32_t>(
+          std::round(std::min(consumedMah, 16777215.0f)));
+    }
 
     Utils::Timer timer;
 };
