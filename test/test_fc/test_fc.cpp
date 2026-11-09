@@ -9225,6 +9225,10 @@ void test_actuator_no_receiver_cannot_activate_aux_mode()
 
 void test_actuator_gps_arming_block_clears_when_feature_disabled()
 {
+  // Do not depend on a clock mock left active by a previous test.
+  ArduinoFakeReset();
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(500000u);
+
   // GPS arming block is intentionally always clear.
   // GPS must never prevent arming regardless of fix or feature state,
   // so that position hold can be added later without blocking takeoff.
@@ -9252,6 +9256,7 @@ void test_actuator_gps_arming_block_clears_when_feature_disabled()
   TEST_ASSERT_FALSE(
       model.getArmingDisabled(
           ARMING_DISABLED_GPS));
+  ArduinoFakeReset();
 }
 
 void test_ppm_only_publishes_complete_stable_frames()
