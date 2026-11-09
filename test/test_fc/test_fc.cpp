@@ -4636,6 +4636,41 @@ void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
 
 
 
+
+void test_land_box_failsafe_qualified_arm_off_remains_authoritative()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 6300000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.config.conditions[0].id = MODE_ARMED;
+  model.config.conditions[0].ch = AXIS_AUX_1;
+  model.config.conditions[0].min = 1250;
+  model.config.conditions[0].max = 1750;
+  model.config.failsafe.procedure = FAILSAFE_PROCEDURE_AUTO_LAND;
+  model.state.input.channelCount = AXIS_AUX_1 + 1;
+  model.state.input.channelsValid = true;
+  model.state.input.us[AXIS_AUX_1] = 1500;
+  model.state.input.us[AXIS_THRUST] = 1100;
+  model.state.input.buffer[AXIS_AUX_1] = 1000.0f;
+  model.state.input.buffer[AXIS_THRUST] = 2000.0f;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.failsafe.landingRequested = true;
+  model.updateSwitchActive(uint32_t{1} << MODE_FAILSAFE);
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  TelemetryManager telemetry(model);
+  Input input(model, telemetry);
+  TEST_ASSERT_TRUE(input.failsafe(INPUT_RECEIVED));
+  TEST_ASSERT_EQUAL_INT(1000, model.state.input.us[AXIS_AUX_1]);
+  TEST_ASSERT_EQUAL_INT(1100, model.state.input.us[AXIS_THRUST]);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  Actuator actuator(model);
+  actuator.updateModeMask();
+  TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
+  ArduinoFakeReset();
+}
+
 void test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover()
 {
   ArduinoFakeReset();
@@ -4670,8 +4705,9 @@ void test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover()
   // First, recovered pilot sticks alone cannot revoke LAND control.
   model.state.input.buffer[AXIS_AUX_1] = 1500.0f;
   model.state.input.buffer[AXIS_THRUST] = 2000.0f;
-  TEST_ASSERT_FALSE(input.failsafe(INPUT_RECEIVED));
-  input.filterInputs(INPUT_RECEIVED);
+  TEST_ASSERT_TRUE(input.failsafe(INPUT_RECEIVED));
+  TEST_ASSERT_EQUAL_INT(1000, model.state.input.us[AXIS_THRUST]);
+  TEST_ASSERT_EQUAL_INT(1500, model.state.input.us[AXIS_AUX_1]);
   TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
   TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.25f,
                            model.state.output.ch[AXIS_THRUST]);
@@ -4679,7 +4715,9 @@ void test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover()
   // A deliberate pilot ARM OFF must actually propagate, even while the
   // LAND supervisor holds vertical authority.
   model.state.input.buffer[AXIS_AUX_1] = 1000.0f;
-  input.filterInputs(INPUT_RECEIVED);
+  TEST_ASSERT_TRUE(input.failsafe(INPUT_RECEIVED));
+  TEST_ASSERT_EQUAL_INT(1000, model.state.input.us[AXIS_AUX_1]);
+  TEST_ASSERT_EQUAL_INT(1000, model.state.input.us[AXIS_THRUST]);
   actuator.updateModeMask();
   TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
   actuator.updateFailsafeLand();
@@ -9674,6 +9712,7 @@ RUN_TEST(test_land_v2_fault_bypasses_motor_stop_feature);
 
 RUN_TEST(
     test_failsafe_land_v2_touchdown_dwell_disarms);
+RUN_TEST(test_land_box_failsafe_qualified_arm_off_remains_authoritative);
 RUN_TEST(test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover);
 RUN_TEST(test_land_full_actuator_gyro_loss_aborts_without_false_landed);
 RUN_TEST(test_land_disarm_and_recovery_cannot_reuse_touchdown_history);

@@ -6,6 +6,7 @@
 #include "Utils/Filter.h"
 #include "Utils/Math.hpp"
 #include "Utils/MemoryHelper.h"
+#include <cmath>
 
 namespace Espfc {
 
@@ -428,8 +429,29 @@ bool FAST_CODE_ATTR Input::failsafe(
   auto& input =
       _model.state.input;
 
-  const uint32_t now =
-      micros();
+  const uint32_t now = micros();
+
+  // During a terminal failsafe LAND, only the physical ARM switch is
+  // published from qualified receiver snapshots. RPY/throttle and unrelated
+  // AUX channels stay frozen, so resumed RF cannot seize automatic control.
+  // All arm-condition rows are handled without assuming a fixed AUX channel.
+  const auto publishArmSwitchOnly = [&]() {
+    for (const auto& c : _model.config.conditions)
+    {
+      if (c.id != MODE_ARMED || c.min >= c.max ||
+          c.ch < AXIS_AUX_1 || c.ch >= AXIS_COUNT ||
+          static_cast<size_t>(c.ch) >= input.channelCount)
+      {
+        continue;
+      }
+      const float value = input.buffer[c.ch];
+      if (std::isfinite(value) &&
+          value >= PWM_RANGE_MIN && value <= PWM_RANGE_MAX)
+      {
+        setInput(static_cast<Axis>(c.ch), value, true, true);
+      }
+    }
+  };
 
     // =====================================================
   // MANUALLY REQUESTED FAILSAFE / BOXFAILSAFE
@@ -448,9 +470,17 @@ bool FAST_CODE_ATTR Input::failsafe(
 
     failsafeStage2();
 
-    // A BOXFAILSAFE request is authoritative even when the RF link itself is
-    // still healthy. Do not continue filtering pilot sticks into the control
-    // path after Stage 2 has taken ownership (especially AUTO_LAND).
+#if defined(ESPFC_LAND_V2_ACTIVE)
+    // BOXFAILSAFE deliberately runs before normal receiver recovery. A
+    // fresh, structurally valid frame may still command ARM OFF; nothing
+    // else from that frame is copied into the flight-control inputs.
+    if (status == INPUT_RECEIVED && input.channelsValid &&
+        failsafe.phase == FC_FAILSAFE_LANDING &&
+        failsafe.landingRequested)
+    {
+      publishArmSwitchOnly();
+    }
+#endif
     return true;
   }
 
@@ -557,13 +587,12 @@ bool FAST_CODE_ATTR Input::failsafe(
           return true;
         }
 
-        // Receiver is requalified: process its AUX/ARM switch so a pilot can
-        // deliberately DISARM a malfunctioning LAND. The terminal LAND
-        // controller (or fault thrust hold) continues owning throttle and
-        // attitude outputs; merely decoding RX does not transfer authority.
+        // Requalified receiver is allowed to publish ARM switch positions
+        // only. The caller must NOT filter all RPY/throttle channels here.
+        publishArmSwitchOnly();
         input.rxLoss = false;
         input.rxFailSafe = false;
-        return false;
+        return true;
       }
 #endif
 
