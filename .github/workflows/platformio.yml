@@ -145,8 +145,32 @@ jobs:
           echo "build_name=${VAR_NAME}" >> $GITHUB_ENV
 
       - name: Build Target
+        shell: bash
         run: |
-          platformio run -e ${{ matrix.target.name }}
+          # RP toolchains are fetched from GitHub Release assets by PlatformIO.
+          # Transient upstream HTTP 504 responses should not masquerade as
+          # firmware compiler regressions. Never skip a target or report a
+          # passing build unless PlatformIO itself exits successfully.
+          target='${{ matrix.target.name }}'
+          attempts=1
+          if [[ "$target" == rp2040 || "$target" == rp2350 ]]; then
+            attempts=4
+          fi
+          built=0
+          for ((i=1; i<=attempts; ++i)); do
+            if platformio run -e "$target"; then
+              built=1
+              break
+            fi
+            if ((i < attempts)); then
+              echo "::warning::PlatformIO $target attempt $i failed; retrying cached dependencies"
+              sleep 15
+            fi
+          done
+          if ((built != 1)); then
+            echo "::error::PlatformIO $target failed after $attempts attempt(s)"
+            exit 1
+          fi
           mv .pio/build/${{ matrix.target.name }}/firmware.bin .pio/build/${{ env.build_name }}.bin
         env:
           PLATFORMIO_BUILD_FLAGS: -DESPFC_REVISION=${{ env.build_rev }} -DESPFC_VERSION=${{ env.build_ver }}
