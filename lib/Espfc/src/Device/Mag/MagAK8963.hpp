@@ -22,7 +22,7 @@ public:
 private:
   uint8_t _mode;
   VectorFloat _scale;
-  uint8_t _buffer[7];
+  uint8_t _buffer[8]{};
 };
 
 } // namespace Espfc::Device::Mag

@@ -3,7 +3,9 @@
 
 #define AK8963_ADDRESS_FIRST 0x0C  // this device only has one address
 #define AK8963_ADDRESS_SECOND 0x0D // 0x0E and 0x0F also possible
+#define AK8963_ST1 0x02
 #define AK8963_HXL 0x03
+#define AK8963_ST2 0x09
 #define AK8963_CNTL1 0x0A
 #define AK8963_PWR_DOWN 0x00
 #define AK8963_CNT_MEAS1 0x12
@@ -56,21 +58,27 @@ int MagAK8963::begin(BusDevice* bus, uint8_t addr)
   _bus->writeByte(_addr, AK8963_CNTL1, AK8963_CNT_MEAS2);
   delay(AK8963_INIT_DELAY);
 
-  // instruct master to get 7 bytes of data from the AK8963 at the sample rate
-  _bus->read(_addr, AK8963_HXL, 7, _buffer);
+  // Preconfigure BUS_SLV's fast external sensor window: ST1, XYZ, ST2.
+  if (_bus->read(_addr, AK8963_ST1, 8, _buffer) != 8) return 0;
 
   return 1;
 }
 
 int MagAK8963::readMag(VectorInt16& v)
 {
-  if (_bus->readFast(_addr, AK8963_HXL, 7, _buffer) != 7) return 0;
-
-  // align CW90_FLIP (swap X Y, invert Z)
-  v.y = ((((int16_t)_buffer[1]) << 8) | _buffer[0]);
-  v.x = ((((int16_t)_buffer[3]) << 8) | _buffer[2]);
-  v.z = -((((int16_t)_buffer[5]) << 8) | _buffer[4]);
-
+  if (_bus->readFast(_addr, AK8963_ST1, 8, _buffer) != 8) return 0;
+  // No fresh conversion or ST2 magnetic overflow: revoke heading authority.
+  if (!(_buffer[0] & 0x01u) || (_buffer[7] & 0x08u)) return 0;
+  const auto axis = [&](size_t i) {
+    return static_cast<int16_t>(
+        (static_cast<uint16_t>(_buffer[i + 1]) << 8) | _buffer[i]);
+  };
+  // align CW90_FLIP (swap X/Y, invert Z).
+  v.y = axis(1);
+  v.x = axis(3);
+  const int16_t z = axis(5);
+  if (z == INT16_MIN) return 0;
+  v.z = static_cast<int16_t>(-static_cast<int32_t>(z));
   return 1;
 }
 

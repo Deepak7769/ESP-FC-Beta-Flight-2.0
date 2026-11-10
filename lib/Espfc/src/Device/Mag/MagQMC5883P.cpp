@@ -84,12 +84,22 @@ int MagQMC5883P::begin(BusDevice* bus, uint8_t addr)
 
 int MagQMC5883P::readMag(VectorInt16& v)
 {
-  if (_bus->readFast(_addr, QMC5883P_REG_XOUT_LSB, 6, _buffer) != 6) return 0;
-
-  v.x = (((int16_t)_buffer[1]) << 8) | _buffer[0];
-  v.y = (((int16_t)_buffer[3]) << 8) | _buffer[2];
-  v.z = (((int16_t)_buffer[5]) << 8) | _buffer[4];
-
+  // P status is at 0x09; status-read clears DRDY but not XYZ data.
+  uint8_t status = 0;
+  if (_bus->read(_addr, QMC5883P_REG_STATUS, 1, &status) != 1)
+    return 0;
+  if (!(status & 0x01u) || (status & 0x02u)) return 0;
+  const int count = _bus->getType() == BUS_SLV
+      ? _bus->read(_addr, QMC5883P_REG_XOUT_LSB, 6, _buffer)
+      : _bus->readFast(_addr, QMC5883P_REG_XOUT_LSB, 6, _buffer);
+  if (count != 6) return 0;
+  const auto axis = [&](size_t i) {
+    return static_cast<int16_t>(
+        (static_cast<uint16_t>(_buffer[i + 1]) << 8) | _buffer[i]);
+  };
+  v.x = axis(0);
+  v.y = axis(2);
+  v.z = axis(4);
   return 1;
 }
 

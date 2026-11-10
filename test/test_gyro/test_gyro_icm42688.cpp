@@ -8,6 +8,9 @@
 #include "Device/Gyro/GyroICM20602.hpp"
 #include "Device/GyroDevice.hpp"
 #include "Device/Mag/MagHMC5883L.hpp"
+#include "Device/Mag/MagAK8963.hpp"
+#include "Device/Mag/MagQMC5883L.hpp"
+#include "Device/Mag/MagQMC5883P.hpp"
 #include <ArduinoFake.h>
 #include <platform.h>
 #include <unity.h>
@@ -30,10 +33,13 @@ public:
   int failReadReg = -1;
   int failWriteReg = -1;
   bool mirrorWritesToRead = false;
+  BusType busType = BUS_SPI;
+  uint8_t primedWindowStart = 0xffu;
+  uint8_t primedWindowLength = 0u;
 
   BusType getType() const override
   {
-    return BUS_SPI;
+    return busType;
   }
 
   int8_t read(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint8_t* data) override
@@ -44,6 +50,11 @@ public:
       return 0;
     }
 
+    if (busType == BUS_SLV)
+    {
+      primedWindowStart = regAddr;
+      primedWindowLength = length;
+    }
     for (uint8_t i = 0; i < length; i++)
       data[i] = readRegs[(regAddr + i) & 0xFF];
     return length;
@@ -51,6 +62,13 @@ public:
 
   int8_t readFast(uint8_t devAddr, uint8_t regAddr, uint8_t length, uint8_t* data) override
   {
+    if (busType == BUS_SLV)
+    {
+      if (length > primedWindowLength) return 0;
+      for (uint8_t i = 0; i < length; i++)
+        data[i] = readRegs[(primedWindowStart + i) & 0xFF];
+      return length;
+    }
     return read(devAddr, regAddr, length, data);
   }
 
@@ -577,6 +595,73 @@ void test_name_table()
   TEST_ASSERT_EQUAL_STRING("ICM42688", name);
 }
 
+
+void test_ak8963_requires_status_in_slave_window_and_recovers()
+{
+  MockBusDevice bus;
+  bus.busType = BUS_SLV;
+  bus.readRegs[0x00] = 0x48;
+  bus.readRegs[0x10] = 128; bus.readRegs[0x11] = 128;
+  bus.readRegs[0x12] = 128;
+  MagAK8963 mag;
+  TEST_ASSERT_EQUAL_INT(1, mag.begin(&bus, 0x0c));
+  TEST_ASSERT_EQUAL_HEX8(0x02u, bus.primedWindowStart);
+  TEST_ASSERT_EQUAL_UINT8(8u, bus.primedWindowLength);
+  VectorInt16 v;
+  bus.readRegs[0x02] = 0;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+  bus.readRegs[0x02] = 1;
+  bus.readRegs[0x03] = 1; bus.readRegs[0x05] = 2;
+  bus.readRegs[0x07] = 3;
+  bus.readRegs[0x09] = 8;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+  bus.readRegs[0x09] = 0;
+  TEST_ASSERT_EQUAL_INT(1, mag.readMag(v));
+  TEST_ASSERT_EQUAL_INT16(2, v.x);
+  TEST_ASSERT_EQUAL_INT16(1, v.y);
+  TEST_ASSERT_EQUAL_INT16(-3, v.z);
+}
+
+void test_qmc5883l_requires_ready_and_no_overflow()
+{
+  MockBusDevice bus;
+  bus.busType = BUS_I2C;
+  bus.readRegs[0x0d] = 0xff;
+  MagQMC5883L mag;
+  TEST_ASSERT_EQUAL_INT(1, mag.begin(&bus, 0x0d));
+  VectorInt16 v;
+  bus.readRegs[0x06] = 0;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+  bus.readRegs[0x06] = 3;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+  bus.readRegs[0x06] = 1;
+  bus.readRegs[0x00] = 5;
+  TEST_ASSERT_EQUAL_INT(1, mag.readMag(v));
+  TEST_ASSERT_EQUAL_INT16(5, v.x);
+  bus.failReadReg = 0x06;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+}
+
+void test_qmc5883p_requires_ready_and_no_overflow()
+{
+  MockBusDevice bus;
+  bus.busType = BUS_I2C;
+  bus.readRegs[0x00] = 0x80;
+  MagQMC5883P mag;
+  TEST_ASSERT_EQUAL_INT(1, mag.begin(&bus, 0x2c));
+  VectorInt16 v;
+  bus.readRegs[0x09] = 0;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+  bus.readRegs[0x09] = 3;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+  bus.readRegs[0x09] = 1;
+  bus.readRegs[0x01] = 7;
+  TEST_ASSERT_EQUAL_INT(1, mag.readMag(v));
+  TEST_ASSERT_EQUAL_INT16(7, v.x);
+  bus.failReadReg = 0x09;
+  TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -596,6 +681,9 @@ int main(int argc, char** argv)
   RUN_TEST(test_mag_hmc5883l_uses_first_id_byte);
   RUN_TEST(test_mag_hmc5883l_begin_rejects_config_write_failure);
   RUN_TEST(test_mag_hmc5883l_rejects_overflow_sample);
+  RUN_TEST(test_ak8963_requires_status_in_slave_window_and_recovers);
+  RUN_TEST(test_qmc5883l_requires_ready_and_no_overflow);
+  RUN_TEST(test_qmc5883p_requires_ready_and_no_overflow);
   RUN_TEST(test_baro_bmp280_caches_whoami);
   RUN_TEST(test_baro_bmp280_begin_rejects_calibration_read_failure);
   RUN_TEST(test_baro_bmp280_begin_rejects_blank_calibration);
