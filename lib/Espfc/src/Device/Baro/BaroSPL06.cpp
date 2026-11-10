@@ -54,7 +54,7 @@ namespace Espfc::Device::Baro {
 #define SPL06_OVERSAMP_128 (0x07)
 
 #define P_MEASURE_RATE SPL06_MWASURE_16
-#define P_OVERSAMP_RATE SPL06_OVERSAMP_64
+#define P_OVERSAMP_RATE SPL06_OVERSAMP_8
 #define SPL06_PRESSURE_CFG (P_MEASURE_RATE << 4 | P_OVERSAMP_RATE)
 
 #define T_MEASURE_RATE SPL06_MWASURE_16
@@ -84,7 +84,15 @@ int BaroSPL06::begin(BusDevice* bus, uint8_t addr)
   if (!testConnection()) return 0;
 
   if (writeReg(SPL06_RESET_REG, SPL06_RESET_VAL) != 1) return 0; // device reset
-  delay(50);
+  bool coefficientsReady = false;
+  for (unsigned attempt = 0; attempt < 25; ++attempt)
+  {
+    uint8_t status = 0;
+    if (_bus->read(_addr, SPL06_MODE_CFG_REG, 1, &status) != 1) return 0;
+    if ((status & 0xc0u) == 0xc0u) { coefficientsReady = true; break; }
+    delay(2);
+  }
+  if (!coefficientsReady) return 0;
 
   kt = 0;
 
@@ -111,14 +119,21 @@ int BaroSPL06::begin(BusDevice* bus, uint8_t addr)
   _cal.c21 = (int16_t)buffer[14] << 8 | buffer[15];
   _cal.c30 = (int16_t)buffer[16] << 8 | buffer[17];
 
-  kp = scaleFactor[SPL06_OVERSAMP_64];
-  if (writeReg(SPL06_PRESSURE_CFG_REG, SPL06_MWASURE_16 << 4 | SPL06_OVERSAMP_64) != 1) return 0;
-
-  kt = scaleFactor[SPL06_OVERSAMP_64];
-  if (writeReg(SPL06_TEMPERATURE_CFG_REG,
-               SPL06_MWASURE_16 << 4 | SPL06_OVERSAMP_64 | 0x80) != 1) return 0;
-  if (writeReg(SPL06_INT_FIFO_CFG_REG, 0x04 | 0x08) != 1) return 0;
-  if (writeReg(SPL06_MODE_CFG_REG, SPL06_MODE) != 1) return 0; // sampling mode
+  // Goertek SPL06-001: 8x pressure and temperature each take 14.8ms.
+  // At 16Hz the combined budget is 473.6ms/s, below the 1s/s limit.
+  kp = scaleFactor[P_OVERSAMP_RATE];
+  kt = scaleFactor[T_OVERSAMP_RATE];
+  const uint8_t registers[] = {SPL06_PRESSURE_CFG_REG,
+      SPL06_TEMPERATURE_CFG_REG, SPL06_INT_FIFO_CFG_REG, SPL06_MODE_CFG_REG};
+  const uint8_t values[] = {SPL06_PRESSURE_CFG, SPL06_TEMPERATURE_CFG, 0, SPL06_MODE};
+  const uint8_t masks[] = {0x77, 0xf7, 0x0c, 0x07};
+  for (unsigned i = 0; i < 4; ++i)
+  {
+    uint8_t readback = 0;
+    if (writeReg(registers[i], values[i]) != 1 ||
+        _bus->read(_addr, registers[i], 1, &readback) != 1 ||
+        (readback & masks[i]) != (values[i] & masks[i])) return 0;
+  }
 
   delay(20);
 
@@ -174,9 +189,7 @@ int BaroSPL06::getDelay(BaroDeviceMode mode) const
     case BARO_MODE_TEMP:
       return 0;
     default:
-      // return 5500; // if sapling X1
-      // return 7500; // if sampling X2
-      return 11500; // if sampling X4
+      return 62500; // Continuous pressure+temperature at 16Hz.
   }
 }
 
@@ -196,7 +209,7 @@ bool BaroSPL06::readMesurment()
   // not re-publish the last sample and refresh the altitude estimator.
   uint8_t status = 0;
   if (_bus->read(_addr, SPL06_MODE_CFG_REG, 1, &status) != 1 ||
-      (status & SPL06_PRESSURE_READY) == 0)
+      (status & 0x30u) != 0x30u)
     return false;
 
   uint8_t buffer[6] = {};

@@ -257,13 +257,15 @@ void test_mpu_derivatives_invalidate_failed_accel_filter_register()
 void test_spl06_requires_new_pressure_conversion_and_rejects_bus_failures()
 {
   MockBusDevice bus;
-  bus.readRegs[0x0d] = 0x10; // SPL06 product ID
+  bus.readRegs[0x0d] = 0x10;
+  bus.readRegs[0x08] = 0xc0;
+  bus.mirrorWritesToRead = true; // SPL06 product ID
   BaroSPL06 baro;
   TEST_ASSERT_EQUAL_INT(1, baro.begin(&bus, 0x76));
   TEST_ASSERT_TRUE(std::isnan(baro.readTemperature()));
   TEST_ASSERT_TRUE(std::isnan(baro.readPressure())); // PRS_RDY is clear
 
-  bus.readRegs[0x08] = 0x10; // PRS_RDY asserted
+  bus.readRegs[0x08] = 0x30; // PRS_RDY asserted
   TEST_ASSERT_TRUE(std::isfinite(baro.readPressure()));
   TEST_ASSERT_TRUE(std::isfinite(baro.readTemperature()));
 
@@ -271,7 +273,7 @@ void test_spl06_requires_new_pressure_conversion_and_rejects_bus_failures()
   bus.readRegs[0x08] = 0u;
   TEST_ASSERT_TRUE(std::isnan(baro.readPressure()));
 
-  bus.readRegs[0x08] = 0x10;
+  bus.readRegs[0x08] = 0x30;
   bus.failReadReg = 0x00; // data read fails even if ready
   TEST_ASSERT_TRUE(std::isnan(baro.readPressure()));
   bus.failReadReg = 0x08; // status read fails
@@ -282,6 +284,8 @@ void test_spl06_rejects_missing_calibration_and_configuration_writes()
 {
   MockBusDevice bus;
   bus.readRegs[0x0d] = 0x10;
+  bus.readRegs[0x08] = 0xc0;
+  bus.mirrorWritesToRead = true;
   bus.failReadReg = 0x10;
   BaroSPL06 badCalibration;
   TEST_ASSERT_EQUAL_INT(0, badCalibration.begin(&bus, 0x76));

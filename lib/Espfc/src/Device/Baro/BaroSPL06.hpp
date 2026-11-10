@@ -38,14 +38,14 @@ protected:
   bool readMesurment();
   int8_t writeReg(uint8_t reg, uint8_t val);
 
-  int8_t _mode;
-  int32_t _t_fine;
+  int8_t _mode{0};
+  int32_t _t_fine{0};
   int32_t _raw_temp{0};
   int32_t _raw_pressure{0};
   bool _hasMeasurement{false};
-  CalibrationData _cal;
-  int32_t kp;
-  int32_t kt;
+  CalibrationData _cal{};
+  int32_t kp{0};
+  int32_t kt{0};
 };
 
 } // namespace Espfc::Device::Baro
