@@ -20,6 +20,9 @@ Blackbox::Blackbox(Model& model): _model(model) {}
 
 int Blackbox::begin()
 {
+  _initialized = _servicePrimed = false;
+  _serial = nullptr;
+  _model.state.blackboxClosing = false;
   initBlackboxModel(&_model);
 
 #ifdef USE_FLASHFS
@@ -41,6 +44,7 @@ int Blackbox::begin()
 
   gyro.sampleLooptime = _model.state.gyro.timer.interval;
   targetPidLooptime = _model.state.loopTimer.interval;
+  if (!targetPidLooptime) return 0;
   activePidLoopDenom = _model.config.loopSync;
 
   systemConfigMutable()->pidProfileIndex = 0;
@@ -260,8 +264,33 @@ int Blackbox::begin()
                  (_model.state.mode.maskPresent & (uint32_t{1} << MODE_ANTI_GRAVITY)) != 0);
 
   blackboxInit();
+  _initialized = true;
 
   return 1;
+}
+
+void Blackbox::serviceLifecycle(uint32_t nowUs)
+{
+  if (!_initialized) return;
+  if (_servicePrimed &&
+      static_cast<uint32_t>(nowUs - _lastServiceUs) < 1000u) return;
+  _servicePrimed = true;
+  _lastServiceUs = nowUs;
+  updateArmed(nowUs);
+  _model.state.blackboxClosing = _stopPending || blackboxIsShuttingDown();
+  if (!_stopPending && !blackboxIsShuttingDown()) return;
+  // The ESP flash backend calls synchronous partition writes. Never add
+  // those operations to this mandatory service while actuators are armed.
+  if (_model.config.blackbox.dev == BLACKBOX_DEV_FLASH && _model.isModeActive(MODE_ARMED)) return;
+  if (_serial) _buffer.flushSome(32u);
+  const bool pending = _serial && !_buffer.isTxFifoEmpty();
+  if (blackboxServiceShutdown() && (pending || blackboxShutdownWasTruncated()))
+  {
+    _model.state.blackboxTruncated = true;
+    _model.state.blackboxUnsentBytes += _buffer._idx;
+    _buffer._idx = 0;
+  }
+  _model.state.blackboxClosing = _stopPending || blackboxIsShuttingDown();
 }
 
 int FAST_CODE_ATTR Blackbox::update()
@@ -272,7 +301,6 @@ int FAST_CODE_ATTR Blackbox::update()
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_BLACKBOX);
 
   uint32_t startTime = micros();
-  updateArmed();
   updateMode();
   if (blackboxShouldLogIFrame() || blackboxShouldLogPFrame())
   {
@@ -368,10 +396,8 @@ void FAST_CODE_ATTR Blackbox::updateData()
   }
 }
 
-void FAST_CODE_ATTR Blackbox::updateArmed()
+void FAST_CODE_ATTR Blackbox::updateArmed(uint32_t now)
 {
-  const uint32_t now =
-      _model.state.loopTimer.last;
 
   const bool armed =
       _model.isModeActive(MODE_ARMED);

@@ -83,6 +83,9 @@ uint16_t blackboxGetPRatio(void);
 uint8_t blackboxCalculateSampleRate(uint16_t pRatio);
 void blackboxValidateConfig(void);
 void blackboxFinish(void);
+bool blackboxIsShuttingDown(void);
+bool blackboxServiceShutdown(void);
+bool blackboxShutdownWasTruncated(void);
 bool blackboxMayEditConfig(void);
 #ifdef UNIT_TEST
 STATIC_UNIT_TESTED void blackboxLogIteration(timeUs_t currentTimeUs);

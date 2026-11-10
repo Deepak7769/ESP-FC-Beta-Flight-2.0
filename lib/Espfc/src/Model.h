@@ -200,7 +200,8 @@ class Model
      return
     state.mode.armingDisabledFlags != 0 ||
     state.pinConflict ||
-    state.currentMixer.count == 0;
+    state.currentMixer.count == 0 ||
+    state.blackboxClosing;
 #endif
     }
 

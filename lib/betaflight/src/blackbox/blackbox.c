@@ -425,6 +425,7 @@ typedef struct blackboxSlowState_s {
 extern boxBitmask_t rcModeActivationMask;
 
 static blackboxState_e blackboxState = BLACKBOX_STATE_DISABLED;
+static bool shutdownTruncated = false;
 
 static uint32_t blackboxLastArmingBeep = 0;
 static uint32_t blackboxLastFlightModeFlags = 0; // New event tracking of flight modes
@@ -631,6 +632,7 @@ static void blackboxSetState(blackboxState_e newState)
     //Perform initial setup required for the new state
     switch (newState) {
     case BLACKBOX_STATE_PREPARE_LOG_FILE:
+        shutdownTruncated = false;
         blackboxLoggedAnyFrames = false;
         break;
     case BLACKBOX_STATE_SEND_HEADER:
@@ -1169,6 +1171,32 @@ void blackboxFinish(void)
     default:
         blackboxSetState(BLACKBOX_STATE_SHUTTING_DOWN);
     }
+}
+
+// This service never encodes flight samples. It is safe to call while
+// optional logging is suppressed or no valid gyro sample is available.
+bool blackboxIsShuttingDown(void)
+{
+    return blackboxState == BLACKBOX_STATE_SHUTTING_DOWN;
+}
+
+bool blackboxShutdownWasTruncated(void)
+{
+    return shutdownTruncated;
+}
+
+bool blackboxServiceShutdown(void)
+{
+    if (!blackboxIsShuttingDown()) return false;
+    const bool timedOut = (uint32_t)(millis() - xmitState.u.startTime) >=
+                          BLACKBOX_SHUTDOWN_TIMEOUT_MILLIS;
+    const bool drained = blackboxDeviceEndLog(blackboxLoggedAnyFrames) &&
+                         blackboxDeviceFlushForce();
+    if (!timedOut && !drained) return false;
+    shutdownTruncated = !drained;
+    blackboxDeviceClose();
+    blackboxSetState(BLACKBOX_STATE_STOPPED);
+    return true;
 }
 
 /**
@@ -2221,17 +2249,7 @@ void blackboxUpdate(timeUs_t currentTimeUs)
         blackboxAdvanceIterationTimers();
         break;
     case BLACKBOX_STATE_SHUTTING_DOWN:
-        //On entry of this state, startTime is set
-        /*
-         * Wait for the log we've transmitted to make its way to the logger before we release the serial port,
-         * since releasing the port clears the Tx buffer.
-         *
-         * Don't wait longer than it could possibly take if something funky happens.
-         */
-        if (blackboxDeviceEndLog(blackboxLoggedAnyFrames) && (millis() > xmitState.u.startTime + BLACKBOX_SHUTDOWN_TIMEOUT_MILLIS || blackboxDeviceFlushForce())) {
-            blackboxDeviceClose();
-            blackboxSetState(BLACKBOX_STATE_STOPPED);
-        }
+        blackboxServiceShutdown();
         break;
 #ifdef USE_FLASHFS
     case BLACKBOX_STATE_START_ERASE:

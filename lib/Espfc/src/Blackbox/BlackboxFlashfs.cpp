@@ -129,10 +129,11 @@ int flashfsInit(void)
 
 bool IRAM_ATTR flashfsFlushAsync(bool force)
 {
-    if(!flashfsLogStarted()) flashfsLogBegin();
-
     auto buffer = reinterpret_cast<BufferType*>(flashfs.buffer);
+    if (!flashfs.partition || !buffer) return false;
     const size_t size = buffer->size();
+    if (!size) return true; // Empty means drained; do not create an empty log.
+    if(!flashfsLogStarted()) flashfsLogBegin();
     if(flashfs.partition && size > 0)
     {
         //uint32_t newAddress = force ? (flashfs.address + size) : Espfc::Utils::alignAddressToWrite(flashfs.address, size, FLASHFS_FLUSH_BUFFER_SIZE);

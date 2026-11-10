@@ -67,7 +67,9 @@ void wrap(
       return 1;
     }
 
-    void flush() override
+    void flush() override { flushSome(SIZE); }
+
+    void flushSome(size_t budget)
     {
       if (!_dev || !_data || _idx == 0) return;
       // The transport may enqueue fewer bytes than requested. Keep the
@@ -75,7 +77,7 @@ void wrap(
       const int available = _dev->availableForWrite();
       if (available <= 0) return;
       const size_t requested =
-          std::min(_idx, static_cast<size_t>(available));
+          std::min(std::min(_idx, budget), static_cast<size_t>(available));
       const size_t sent =
           std::min(_dev->write(_data, requested), requested);
       if (sent == 0) return;

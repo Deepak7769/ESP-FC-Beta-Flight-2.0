@@ -913,6 +913,9 @@ Target::Queue appQueue;
 
 bool pinConflict = false;
 bool rebootRequired = false;
+bool blackboxTruncated = false;
+bool blackboxClosing = false;
+uint32_t blackboxUnsentBytes = 0;
 };
 
 }
