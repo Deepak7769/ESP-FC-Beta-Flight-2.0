@@ -10918,6 +10918,41 @@ void test_msp_versioned_setters_accept_full_configurator_payloads()
   }
 }
 
+
+void test_msp_battery_state_reports_pack_presence_and_warning_threshold()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  auto status = [&]() -> uint8_t {
+    Connect::MspMessage query;
+    query.version = Connect::MSP_V2;
+    query.cmd = MSP_BATTERY_STATE;
+    Connect::MspResponse response;
+    processor.processCommand(query, response, serial);
+    TEST_ASSERT_EQUAL_INT(1, response.result);
+    TEST_ASSERT_EQUAL_UINT16(11u, response.len);
+    return response.data[8]; // Betaflight batteryState_e byte
+  };
+
+  model.state.battery.cells = 0;
+  model.state.battery.voltage = 0.0f;
+  TEST_ASSERT_EQUAL_UINT8(3u, status()); // not present
+
+  model.state.battery.cells = 4;
+  model.state.battery.voltage = 16.4f;
+  model.config.vbat.cellWarning = 350; // 3.50V/cell
+  TEST_ASSERT_EQUAL_UINT8(0u, status()); // healthy
+  model.state.battery.voltage = 13.6f;
+  TEST_ASSERT_EQUAL_UINT8(1u, status()); // 3.40V/cell, warning
+  model.config.vbat.cellWarning = 330; // configurable threshold
+  TEST_ASSERT_EQUAL_UINT8(0u, status());
+
+  // A detected pack with no valid voltage reading cannot be called healthy.
+  model.state.battery.voltage = 0.0f;
+  TEST_ASSERT_EQUAL_UINT8(4u, status()); // measurement unavailable
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10983,6 +11018,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_msp_versioned_setters_reject_partial_optional_groups);
   RUN_TEST(test_msp_rejects_out_of_range_airmode_and_motor_values_atomically);
   RUN_TEST(test_msp_versioned_setters_accept_full_configurator_payloads);
+  RUN_TEST(test_msp_battery_state_reports_pack_presence_and_warning_threshold);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);

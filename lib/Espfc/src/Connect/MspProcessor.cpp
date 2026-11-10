@@ -7,6 +7,7 @@
 #include "ModelConfig.h"
 #include "Stream/Printer.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <platform.h>
@@ -194,6 +195,26 @@ static bool mspMutatorValuesValid(const Espfc::Connect::MspMessage& m)
       return false;
   }
   return true;
+}
+
+// MSP uses Betaflight batteryState_e values. This is a display-only
+// warning: a missing pack or configured low-cell threshold should not be
+// reported as an unrestricted healthy battery. Critical voltage and
+// per-cell chemistry settings are not yet modeled by ESP-FC.
+static uint8_t mspBatteryState(const Espfc::Model& model)
+{
+  const auto& battery = model.state.battery;
+  if (battery.cells == 0) return 3u; // BATTERY_NOT_PRESENT
+  if (!std::isfinite(battery.voltage) || battery.voltage <= 0.0f)
+    return 4u; // BATTERY_INIT / measurement unavailable
+
+  const int16_t warningCellCentivolts = model.config.vbat.cellWarning;
+  if (warningCellCentivolts > 0 &&
+      battery.voltage * 100.0f <
+        static_cast<float>(battery.cells) * warningCellCentivolts)
+    return 1u; // BATTERY_WARNING
+
+  return 0u; // BATTERY_OK
 }
 
 enum SerialSpeedIndex
@@ -747,8 +768,9 @@ case MSP_BUILD_INFO:
           std::min<uint32_t>(_model.state.battery.reportedConsumedMah(), 65535u))); // mAh drawn
       r.writeU16(toIbatCurrent(_model.state.battery.current));      // send current in 0.01 A steps, range is -320A to 320A
 
-      // battery alerts
-      r.writeU8(0);
+      // Battery status uses the configured warning voltage and the
+      // detected cell count rather than unconditionally reporting "OK".
+      r.writeU8(mspBatteryState(_model));
       r.writeU16(toVbatVoltage(_model.state.battery.voltage)); // in 0.01 steps
       break;
 
