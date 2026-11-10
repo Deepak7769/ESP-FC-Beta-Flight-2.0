@@ -10275,6 +10275,7 @@ void test_gps_rescue_heading_loss_keeps_request_until_land()
   in.headingHealthy = false;
   for (int i = 0; i < 40; ++i)
   {
+    in.nowUs += 5000u;
     const auto out = rescue.update(in, params);
     TEST_ASSERT_TRUE(out.active);
     TEST_ASSERT_FALSE(out.controlling);
@@ -10284,11 +10285,12 @@ void test_gps_rescue_heading_loss_keeps_request_until_land()
                       Espfc::Control::GPS_RESCUE_FAULT_HEADING) != 0);
   }
 
-  // Float accumulation can cross 0.25 s on update 50 or 51.
-  // Assert bounded confirmation without requiring exact float equality.
+  // Confirmation uses real elapsed microseconds, not accumulated dt.
+  // The first fault was observed at nowUs=5000.
   bool requestedLand = false;
   for (int i = 0; i < 12 && !requestedLand; ++i)
   {
+    in.nowUs += 5000u;
     const auto out = rescue.update(in, params);
     TEST_ASSERT_TRUE(out.active);
     TEST_ASSERT_FALSE(out.controlling);
@@ -10330,6 +10332,7 @@ void test_gps_rescue_transient_heading_loss_clears_before_land()
   in.headingHealthy = false;
   for (int i = 0; i < 20; ++i)
   {
+    in.nowUs += 5000u;
     const auto pending = rescue.update(in, params);
     TEST_ASSERT_TRUE(pending.faultEvaluationPending);
   }
