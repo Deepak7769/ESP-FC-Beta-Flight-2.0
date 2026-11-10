@@ -671,8 +671,8 @@ void setOutputSaturation(
         config.rangefinder.echoPin, Hal::Gpio::Input);
     if (!triggerSupported || !echoSupported)
     {
-      logger.err().log("HCSR04 PIN CAPABILITY").logln(
-          static_cast<int>(config.rangefinder.triggerPin));
+      // sanitize() also validates before logger.begin(); record the
+      // pre-arm conflict without dereferencing an uninitialized sink.
       conflict = true;
     }
     reservePin(config.rangefinder.triggerPin);
