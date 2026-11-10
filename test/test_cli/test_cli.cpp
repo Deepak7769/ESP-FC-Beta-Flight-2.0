@@ -337,6 +337,81 @@ void test_cli_redacts_wifi_password_in_get_dump_and_set_echo()
   TEST_ASSERT_TRUE(output.find("set wifi_pass") == std::string::npos);
 }
 
+
+void test_cli_rejects_invalid_numeric_and_sparse_enum_values()
+{
+  Model model;
+  Cli cli{model};
+  CliCmd cmd{};
+  auto command = [&](const std::string& value) {
+    stream.flush();
+    for (char c : value) cli.process(c, cmd, printer);
+  };
+
+  model.config.vbat.scale = 100;
+  command("set vbat_scale 300\n");
+  TEST_ASSERT_EQUAL_UINT8(100, model.config.vbat.scale);
+  TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
+
+  command("set mixer_type NOT_A_MIXER\n");
+  TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
+
+  command("set ibat_source MSP\n");
+  TEST_ASSERT_EQUAL_INT(Espfc::CURRENT_METER_MSP, model.config.ibat.source);
+  command("get ibat_source\n");
+  TEST_ASSERT_TRUE(stream.str().find("set ibat_source MSP") != std::string::npos);
+
+  command("set ibat_source VIRTUAL\n");
+  TEST_ASSERT_EQUAL_INT(Espfc::CURRENT_METER_MSP, model.config.ibat.source);
+  TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
+  command("set ibat_source 3\n");
+  TEST_ASSERT_EQUAL_INT(Espfc::CURRENT_METER_MSP, model.config.ibat.source);
+
+  command("set failsafe_procedure GPS-RESCUE\n");
+  TEST_ASSERT_EQUAL_INT(Espfc::FAILSAFE_PROCEDURE_GPS_RESCUE,
+                        model.config.failsafe.procedure);
+  command("set failsafe_procedure unknown\n");
+  TEST_ASSERT_EQUAL_INT(Espfc::FAILSAFE_PROCEDURE_GPS_RESCUE,
+                        model.config.failsafe.procedure);
+
+  const float original = model.config.pid[Espfc::FC_PID_VEL].P;
+  command("set pid_althold_vel_p nan\n");
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, original,
+                           model.config.pid[Espfc::FC_PID_VEL].P);
+  TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
+}
+
+void test_cli_composite_updates_are_transactional()
+{
+  Model model;
+  Cli cli{model};
+  CliCmd cmd{};
+  auto command = [&](const std::string& value) {
+    stream.flush();
+    for (char c : value) cli.process(c, cmd, printer);
+  };
+
+  const auto initial = model.config.output.channel[0];
+  command("set output_0 S R 1000 invalid 2000\n");
+  TEST_ASSERT_EQUAL_INT16(initial.min, model.config.output.channel[0].min);
+  TEST_ASSERT_EQUAL_INT16(initial.neutral, model.config.output.channel[0].neutral);
+  TEST_ASSERT_EQUAL_INT16(initial.max, model.config.output.channel[0].max);
+  TEST_ASSERT_EQUAL(initial.servo, model.config.output.channel[0].servo);
+  TEST_ASSERT_EQUAL(initial.reverse, model.config.output.channel[0].reverse);
+  TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
+
+  command("set output_0 S R 1000 1500 2000\n");
+  TEST_ASSERT_TRUE(model.config.output.channel[0].servo);
+  TEST_ASSERT_TRUE(model.config.output.channel[0].reverse);
+
+  const auto oldCondition = model.config.conditions[0];
+  command("set mode_0 2 7 1000 2000 junk 0\n");
+  TEST_ASSERT_EQUAL_UINT8(oldCondition.id, model.config.conditions[0].id);
+  TEST_ASSERT_EQUAL_UINT8(oldCondition.ch, model.config.conditions[0].ch);
+  TEST_ASSERT_EQUAL_INT16(oldCondition.min, model.config.conditions[0].min);
+  TEST_ASSERT_EQUAL_INT16(oldCondition.max, model.config.conditions[0].max);
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -354,5 +429,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_cli_bf_get_mag_calibration);
   RUN_TEST(test_cli_bf_sensor_hardware);
   RUN_TEST(test_cli_redacts_wifi_password_in_get_dump_and_set_echo);
+  RUN_TEST(test_cli_rejects_invalid_numeric_and_sparse_enum_values);
+  RUN_TEST(test_cli_composite_updates_are_transactional);
   return UNITY_END();
 }

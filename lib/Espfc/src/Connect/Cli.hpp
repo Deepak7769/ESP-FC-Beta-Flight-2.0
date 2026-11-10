@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Model.h"
+#include <optional>
 
 namespace Espfc::Connect {
 
@@ -73,14 +74,14 @@ public:
     void print(Stream::Printer& stream, const SerialPortConfig& sc) const;
     void print(Stream::Printer& stream, int32_t v) const;
 
-    void update(const char** args) const;
+    bool update(const char** args) const;
 
-    void write(OutputChannelConfig& och, const char** args) const;
-    void write(InputChannelConfig& ich, const char** args) const;
-    void write(ScalerConfig& sc, const char** args) const;
-    void write(ActuatorCondition& ac, const char** args) const;
-    void write(MixerEntry& ac, const char** args) const;
-    void write(SerialPortConfig& sc, const char** args) const;
+    bool write(OutputChannelConfig& och, const char** args) const;
+    bool write(InputChannelConfig& ich, const char** args) const;
+    bool write(ScalerConfig& sc, const char** args) const;
+    bool write(ActuatorCondition& ac, const char** args) const;
+    bool write(MixerEntry& ac, const char** args) const;
+    bool write(SerialPortConfig& sc, const char** args) const;
 
     template<typename T>
     void write(const T v) const
@@ -89,7 +90,8 @@ public:
     }
 
     void write(const char* v) const;
-    int32_t parse(const char* v) const;
+    std::optional<int32_t> parse(const char* v) const;
+    int32_t choiceValue(size_t index) const;
 
     const char* name;
     ParamType type;

@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <cmath>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <platform.h>
@@ -60,9 +62,27 @@ static std::optional<float> toFloat(const char* str)
   errno = 0;
   float value = std::strtof(str, &end);
 
-  if (end == str || *end != '\0' || errno == ERANGE) return std::nullopt;
+  if (end == str || *end != '\0' || errno == ERANGE ||
+      !std::isfinite(value)) return std::nullopt;
 
   return value;
+}
+
+// Parse an optional composite field without implicit narrowing or mutation.
+template<typename T>
+static bool assignCliNumber(T& field, const char* input)
+{
+  if (!input) return true;
+  const auto parsed = toNumber(input);
+  if (!parsed) return false;
+  const int64_t value = *parsed;
+  if (value < static_cast<int64_t>(std::numeric_limits<T>::lowest()) ||
+      value > static_cast<int64_t>(std::numeric_limits<T>::max()))
+  {
+    return false;
+  }
+  field = static_cast<T>(value);
+  return true;
 }
 
 } // namespace
@@ -204,7 +224,7 @@ void Cli::Param::print(Stream::Printer& stream, int32_t v) const
   {
     for (int32_t i = 0; choices[i]; i++)
     {
-      if (i == v)
+      if (choiceValue(static_cast<size_t>(i)) == v)
       {
         stream.print(choices[i]);
         return;
@@ -214,147 +234,238 @@ void Cli::Param::print(Stream::Printer& stream, int32_t v) const
   stream.print(v);
 }
 
-void Cli::Param::update(const char** args) const
+bool Cli::Param::update(const char** args) const
 {
   const char* v = args[2];
-  if (!addr) return;
+  if (!addr) return false;
   switch (type)
   {
     case PARAM_BOOL:
-      if (!v) return;
-      if (*v == '0') *addr = 0;
-      if (*v == '1') *addr = 1;
-      break;
+      if (!v || v[1] != '\0' || (v[0] != '0' && v[0] != '1'))
+        return false;
+      *addr = v[0] == '1';
+      return true;
+
     case PARAM_BYTE:
-      if (!v) return;
-      write((int8_t)parse(v));
-      break;
+    {
+      const auto n = parse(v);
+      if (!n || *n < INT8_MIN || *n > INT8_MAX) return false;
+      write(static_cast<int8_t>(*n));
+      return true;
+    }
     case PARAM_BYTE_U:
-      if (!v) return;
-      write((uint8_t)parse(v));
-      break;
+    {
+      const auto n = parse(v);
+      if (!n || *n < 0 || *n > UINT8_MAX) return false;
+      write(static_cast<uint8_t>(*n));
+      return true;
+    }
     case PARAM_SHORT:
-      if (!v) return;
-      write((int16_t)parse(v));
-      break;
+    {
+      const auto n = parse(v);
+      if (!n || *n < INT16_MIN || *n > INT16_MAX) return false;
+      write(static_cast<int16_t>(*n));
+      return true;
+    }
     case PARAM_INT:
-      if (!v) return;
-      write((int32_t)parse(v));
-      break;
+    {
+      const auto n = parse(v);
+      if (!n) return false;
+      write(static_cast<int32_t>(*n));
+      return true;
+    }
     case PARAM_FLOAT:
-      if (!v) return;
-      write(toFloat(v).value_or(0.0f));
-      break;
+    {
+      const auto n = toFloat(v);
+      if (!n) return false;
+      write(*n);
+      return true;
+    }
     case PARAM_STRING:
-      write(v ? v : "");
-      break;
+      if (!v || maxLen == 0 || std::strlen(v) >= maxLen)
+        return false;
+      write(v);
+      return true;
+
     case PARAM_BITMASK:
-      if (!v) return;
-      if (*v == '0')
-      {
-        *reinterpret_cast<int32_t*>(addr) &= ~(1ul << maxLen);
-      }
-      if (*v == '1')
-      {
-        *reinterpret_cast<int32_t*>(addr) |= (1ul << maxLen);
-      }
-      break;
+      if (!v || v[1] != '\0' ||
+          (v[0] != '0' && v[0] != '1') ||
+          maxLen >= 32) return false;
+      if (v[0] == '0')
+        *reinterpret_cast<uint32_t*>(addr) &= ~(uint32_t{1} << maxLen);
+      else
+        *reinterpret_cast<uint32_t*>(addr) |= uint32_t{1} << maxLen;
+      return true;
+
     case PARAM_OUTPUT_CHANNEL:
-      if (!v) return;
-      write(*reinterpret_cast<OutputChannelConfig*>(addr), args);
-      break;
+    {
+      auto next = *reinterpret_cast<OutputChannelConfig*>(addr);
+      if (!write(next, args)) return false;
+      write(next);
+      return true;
+    }
     case PARAM_INPUT_CHANNEL:
-      if (!v) return;
-      write(*reinterpret_cast<InputChannelConfig*>(addr), args);
-      break;
+    {
+      auto next = *reinterpret_cast<InputChannelConfig*>(addr);
+      if (!write(next, args)) return false;
+      write(next);
+      return true;
+    }
     case PARAM_SCALER:
-      if (!v) return;
-      write(*reinterpret_cast<ScalerConfig*>(addr), args);
-      break;
+    {
+      auto next = *reinterpret_cast<ScalerConfig*>(addr);
+      if (!write(next, args)) return false;
+      write(next);
+      return true;
+    }
     case PARAM_MODE:
-      if (!v) return;
-      write(*reinterpret_cast<ActuatorCondition*>(addr), args);
-      break;
+    {
+      auto next = *reinterpret_cast<ActuatorCondition*>(addr);
+      if (!write(next, args)) return false;
+      write(next);
+      return true;
+    }
     case PARAM_MIXER:
-      if (!v) return;
-      write(*reinterpret_cast<MixerEntry*>(addr), args);
-      break;
+    {
+      auto next = *reinterpret_cast<MixerEntry*>(addr);
+      if (!write(next, args)) return false;
+      write(next);
+      return true;
+    }
     case PARAM_SERIAL:
-      if (!v) return;
-      write(*reinterpret_cast<SerialPortConfig*>(addr), args);
-      break;
+    {
+      auto next = *reinterpret_cast<SerialPortConfig*>(addr);
+      if (!write(next, args)) return false;
+      write(next);
+      return true;
+    }
     case PARAM_NONE:
-      break;
+    default:
+      return false;
   }
 }
 
-void Cli::Param::write(OutputChannelConfig& och, const char** args) const
+bool Cli::Param::write(OutputChannelConfig& och, const char** args) const
 {
-  if (args[2]) och.servo = *args[2] == 'S';
-  if (args[3]) och.reverse = *args[3] == 'R';
-  if (args[4]) och.min = toNumber(args[4]).value_or(och.min);
-  if (args[5]) och.neutral = toNumber(args[5]).value_or(och.neutral);
-  if (args[6]) och.max = toNumber(args[6]).value_or(och.max);
+  if (args[2])
+  {
+    if (std::strcmp(args[2], "S") != 0 &&
+        std::strcmp(args[2], "M") != 0) return false;
+    och.servo = *args[2] == 'S';
+  }
+  if (args[3])
+  {
+    if (std::strcmp(args[3], "R") != 0 &&
+        std::strcmp(args[3], "N") != 0) return false;
+    och.reverse = *args[3] == 'R';
+  }
+  if (!assignCliNumber(och.min, args[4]) ||
+      !assignCliNumber(och.neutral, args[5]) ||
+      !assignCliNumber(och.max, args[6]))
+    return false;
+  return och.min >= 750 && och.max <= 2250 &&
+         och.min <= och.neutral && och.neutral <= och.max;
 }
 
-void Cli::Param::write(InputChannelConfig& ich, const char** args) const
+bool Cli::Param::write(InputChannelConfig& ich, const char** args) const
 {
-  if (args[2]) ich.map = toNumber(args[2]).value_or(ich.map);
-  if (args[3]) ich.min = toNumber(args[3]).value_or(ich.min);
-  if (args[4]) ich.neutral = toNumber(args[4]).value_or(ich.neutral);
-  if (args[5]) ich.max = toNumber(args[5]).value_or(ich.max);
-  if (args[6]) ich.fsMode = *args[6] == 'A' ? 0 : (*args[6] == 'H' ? 1 : (*args[6] == 'S' ? 2 : 0));
-  if (args[7]) ich.fsValue = toNumber(args[7]).value_or(ich.fsValue);
+  if (!assignCliNumber(ich.map, args[2]) ||
+      !assignCliNumber(ich.min, args[3]) ||
+      !assignCliNumber(ich.neutral, args[4]) ||
+      !assignCliNumber(ich.max, args[5]))
+    return false;
+  if (args[6])
+  {
+    if (std::strcmp(args[6], "A") == 0) ich.fsMode = 0;
+    else if (std::strcmp(args[6], "H") == 0) ich.fsMode = 1;
+    else if (std::strcmp(args[6], "S") == 0) ich.fsMode = 2;
+    else return false;
+  }
+  if (!assignCliNumber(ich.fsValue, args[7])) return false;
+  return ich.map >= 0 && ich.map < INPUT_CHANNELS &&
+         ich.min >= 750 && ich.max <= 2250 &&
+         ich.min <= ich.neutral && ich.neutral <= ich.max;
 }
 
-void Cli::Param::write(ScalerConfig& sc, const char** args) const
+bool Cli::Param::write(ScalerConfig& sc, const char** args) const
 {
-  if (args[2]) sc.dimension = (ScalerDimension)toNumber(args[2]).value_or(sc.dimension);
-  if (args[3]) sc.channel = toNumber(args[3]).value_or(sc.channel);
-  if (args[4]) sc.minScale = toNumber(args[4]).value_or(sc.minScale);
-  if (args[5]) sc.maxScale = toNumber(args[5]).value_or(sc.maxScale);
+  if (!assignCliNumber(sc.dimension, args[2]) ||
+      !assignCliNumber(sc.channel, args[3]) ||
+      !assignCliNumber(sc.minScale, args[4]) ||
+      !assignCliNumber(sc.maxScale, args[5]))
+    return false;
+  return sc.channel >= 0 && sc.channel < AXIS_COUNT &&
+         sc.minScale <= sc.maxScale;
 }
 
-void Cli::Param::write(ActuatorCondition& ac, const char** args) const
+bool Cli::Param::write(ActuatorCondition& ac, const char** args) const
 {
-  if (args[2]) ac.id = toNumber(args[2]).value_or(ac.id);
-  if (args[3]) ac.ch = toNumber(args[3]).value_or(ac.ch);
-  if (args[4]) ac.min = toNumber(args[4]).value_or(ac.min);
-  if (args[5]) ac.max = toNumber(args[5]).value_or(ac.max);
-  if (args[6]) ac.logicMode = toNumber(args[6]).value_or(ac.logicMode);
-  if (args[7]) ac.linkId = toNumber(args[7]).value_or(ac.linkId);
+  if (!assignCliNumber(ac.id, args[2]) ||
+      !assignCliNumber(ac.ch, args[3]) ||
+      !assignCliNumber(ac.min, args[4]) ||
+      !assignCliNumber(ac.max, args[5]) ||
+      !assignCliNumber(ac.logicMode, args[6]) ||
+      !assignCliNumber(ac.linkId, args[7]))
+    return false;
+  return ac.id < MODE_COUNT && ac.ch >= AXIS_AUX_1 &&
+         ac.ch < AXIS_COUNT && ac.min >= 900 && ac.max <= 2100 &&
+         ac.min <= ac.max && ac.logicMode <= 1;
 }
 
-void Cli::Param::write(MixerEntry& ac, const char** args) const
+bool Cli::Param::write(MixerEntry& ac, const char** args) const
 {
-  if (args[2]) ac.src = std::clamp<int>(toNumber(args[2]).value_or(ac.src), 0, MIXER_SOURCE_MAX - 1);
-  if (args[3]) ac.dst = std::clamp<int>(toNumber(args[3]).value_or(ac.dst), 0, (int)(OUTPUT_CHANNELS - 1));
-  if (args[4]) ac.rate = std::clamp<int>(toNumber(args[4]).value_or(ac.rate), -1000, 1000);
+  if (!assignCliNumber(ac.src, args[2]) ||
+      !assignCliNumber(ac.dst, args[3]) ||
+      !assignCliNumber(ac.rate, args[4]))
+    return false;
+  return ac.src >= 0 && ac.src < MIXER_SOURCE_MAX &&
+         ac.dst >= 0 && ac.dst < OUTPUT_CHANNELS &&
+         ac.rate >= -1000 && ac.rate <= 1000;
 }
 
-void Cli::Param::write(SerialPortConfig& sc, const char** args) const
+bool Cli::Param::write(SerialPortConfig& sc, const char** args) const
 {
-  if (args[2]) sc.functionMask = toNumber(args[2]).value_or(sc.functionMask);
-  if (args[3]) sc.baud = toNumber(args[3]).value_or(sc.baud);
-  if (args[4]) sc.blackboxBaud = toNumber(args[4]).value_or(sc.blackboxBaud);
+  return assignCliNumber(sc.functionMask, args[2]) &&
+         assignCliNumber(sc.baud, args[3]) &&
+         assignCliNumber(sc.blackboxBaud, args[4]);
 }
 
 void Cli::Param::write(const char* v) const
 {
-  *addr = 0;
-  std::strncat(addr, v, maxLen);
+  // update() has already checked maxLen and will not truncate secrets or
+  // other string settings into an unintended value.
+  std::memset(addr, 0, maxLen);
+  std::memcpy(addr, v, std::strlen(v));
 }
 
-int32_t Cli::Param::parse(const char* v) const
+int32_t Cli::Param::choiceValue(size_t index) const
 {
+  // Betaflight's CURRENT_METER_MSP is 4, not the third ordinal.
+  if (name && std::strcmp(name, "ibat_source") == 0 && index == 2)
+    return CURRENT_METER_MSP;
+  return static_cast<int32_t>(index);
+}
+
+std::optional<int32_t> Cli::Param::parse(const char* v) const
+{
+  if (!v) return std::nullopt;
   if (choices)
   {
-    for (size_t i = 0; choices[i]; i++)
+    for (size_t i = 0; choices[i]; ++i)
     {
-      if (strcasecmp(v, choices[i]) == 0) return i;
+      if (strcasecmp(v, choices[i]) == 0) return choiceValue(i);
     }
   }
-  return toNumber(v).value_or(0);
+  const auto numeric = toNumber(v);
+  if (!numeric) return std::nullopt;
+  if (choices)
+  {
+    // Numeric enum inputs must also name an advertised supported value.
+    for (size_t i = 0; choices[i]; ++i)
+      if (choiceValue(i) == *numeric) return *numeric;
+    return std::nullopt;
+  }
+  return numeric;
 }
 
 Cli::Cli(Model& model): _model(model), _ignore(false), _active(false), _interactive(false)
@@ -402,7 +513,7 @@ const Cli::Param* Cli::initialize(ModelConfig& c)
   static const char* inputItermRelaxChoices[] = { "OFF", "RP", "RPY", "RP_INC", "RPY_INC", nullptr };
 
   static const char* voltageSourceChoices[] = { "NONE", "ADC", nullptr };
-  static const char* currentSourceChoices[] = { "NONE", "ADC", nullptr };
+  static const char* currentSourceChoices[] = { "NONE", "ADC", "MSP", nullptr };
   static const char* blackboxDevChoices[] = { "NONE", "FLASH", "SD_CARD", "SERIAL", nullptr };
   static const char* blackboxModeChoices[] = { "NORMAL", "TEST", "ALWAYS", nullptr };
   static const char* ledTypeChoices[] = { "SIMPLE", "STRIP", nullptr };
@@ -412,6 +523,7 @@ static const char*
 failsafeProcedureChoices[] = {
     "AUTO-LAND",
     "DROP",
+    "GPS-RESCUE",
     nullptr
 };
 
@@ -1173,8 +1285,10 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       if (std::strcmp(cmd.args[1], _params[i].name) == 0)
       {
         const Param bound = bindParam(_params[i]);
-        bound.update(cmd.args);
-        print(bound, s);
+        if (bound.update(cmd.args))
+          print(bound, s);
+        else
+          s.println("ERROR: invalid parameter value");
         found = true;
         break;
       }
