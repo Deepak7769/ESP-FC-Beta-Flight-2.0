@@ -17,6 +17,7 @@
 #include "Blackbox/BlackboxSerialBuffer.h"
 #include "Utils/Timer.h"
 #include "msp/msp_protocol.h"
+#include "msp/msp_protocol_v2_common.h"
 
 #include <ArduinoFake.h>
 #include <Gps.hpp>
@@ -10370,6 +10371,126 @@ void test_committed_land_ignores_subsequent_stage1_and_stage2()
   ArduinoFakeReset();
 }
 
+
+void test_battery_cells_stay_fixed_while_armed_during_detection_window()
+{
+  Model model;
+  Sensor::VoltageSensor sensor(model);
+  sensor.begin();
+  auto& battery = model.state.battery;
+  battery.voltage = 12.1f;
+  sensor.updatePackDetection();
+  TEST_ASSERT_EQUAL_INT(3, battery.cells);
+  TEST_ASSERT_EQUAL_INT(49, battery.samples);
+
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  for (int i = 0; i < 60; ++i)
+  {
+    battery.voltage = 16.8f;
+    sensor.updatePackDetection();
+  }
+  TEST_ASSERT_EQUAL_INT(3, battery.cells);
+  TEST_ASSERT_EQUAL_INT(49, battery.samples);
+
+  model.updateModes(0);
+  sensor.updatePackDetection();
+  TEST_ASSERT_EQUAL_INT(4, battery.cells);
+  TEST_ASSERT_EQUAL_INT(48, battery.samples);
+}
+
+void test_custom_msp_config_rejects_malformed_payload_sizes()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  const uint8_t hoverBefore = model.config.altHold.hoverThrottle;
+  const uint8_t rateBefore = model.config.gpsRescue.climbRateDmS;
+  for (int size = 1; size <= 25; ++size)
+  {
+    if (size != 10 && size != 22)
+    {
+      Connect::MspMessage msg;
+      msg.cmd = Connect::MSP2_ESPFC_ALTHOLD_CONFIG;
+      msg.version = Connect::MSP_V2;
+      msg.received = static_cast<uint16_t>(size);
+      Connect::MspResponse response;
+      processor.processCommand(msg, response, serial);
+      TEST_ASSERT_EQUAL_INT(-1, response.result);
+      TEST_ASSERT_EQUAL_UINT8(hoverBefore, model.config.altHold.hoverThrottle);
+    }
+    if (size != 18)
+    {
+      Connect::MspMessage msg;
+      msg.cmd = Connect::MSP2_ESPFC_GPS_RESCUE_CONFIG;
+      msg.version = Connect::MSP_V2;
+      msg.received = static_cast<uint16_t>(size);
+      Connect::MspResponse response;
+      processor.processCommand(msg, response, serial);
+      TEST_ASSERT_EQUAL_INT(-1, response.result);
+      TEST_ASSERT_EQUAL_UINT8(rateBefore, model.config.gpsRescue.climbRateDmS);
+    }
+  }
+}
+
+void test_msp_armed_policy_rejects_writes_but_allows_config_reads()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  const uint16_t blocked[] = {
+      MSP_SET_FEATURE_CONFIG,
+      MSP_SET_CF_SERIAL_CONFIG,
+      MSP_SET_MOTOR,
+      MSP_SET_GPS_CONFIG,
+      MSP_DATAFLASH_ERASE,
+      MSP_EEPROM_WRITE,
+      MSP_REBOOT,
+      MSP_ACC_CALIBRATION,
+      MSP2_COMMON_SET_SERIAL_CONFIG
+  };
+  for (uint16_t command : blocked)
+  {
+    Connect::MspMessage msg;
+    msg.cmd = command;
+    msg.version = Connect::MSP_V2;
+    msg.received = 4;
+    Connect::MspResponse response;
+    processor.processCommand(msg, response, serial);
+    TEST_ASSERT_EQUAL_INT(-1, response.result);
+  }
+  const uint16_t customCommands[] = {
+      Connect::MSP2_ESPFC_ALTHOLD_CONFIG,
+      Connect::MSP2_ESPFC_GPS_RESCUE_CONFIG
+  };
+  for (uint16_t command : customCommands)
+  {
+    Connect::MspMessage write;
+    write.cmd = command;
+    write.version = Connect::MSP_V2;
+    write.received = 22;
+    Connect::MspResponse rejected;
+    processor.processCommand(write, rejected, serial);
+    TEST_ASSERT_EQUAL_INT(-1, rejected.result);
+
+    Connect::MspMessage read;
+    read.cmd = command;
+    read.version = Connect::MSP_V2;
+    Connect::MspResponse allowed;
+    processor.processCommand(read, allowed, serial);
+    TEST_ASSERT_EQUAL_INT(1, allowed.result);
+    TEST_ASSERT_EQUAL_UINT16(
+        command == Connect::MSP2_ESPFC_ALTHOLD_CONFIG ? 22 : 18,
+        allowed.len);
+  }
+  Connect::MspMessage query;
+  query.cmd = MSP_API_VERSION;
+  Connect::MspResponse reply;
+  processor.processCommand(query, reply, serial);
+  TEST_ASSERT_EQUAL_INT(1, reply.result);
+  TEST_ASSERT_TRUE(reply.len > 0);
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10422,6 +10543,9 @@ int main(int argc, char** argv)
   RUN_TEST(test_gps_rescue_heading_loss_keeps_request_until_land);
   RUN_TEST(test_gps_rescue_transient_heading_loss_clears_before_land);
   RUN_TEST(test_committed_land_ignores_subsequent_stage1_and_stage2);
+  RUN_TEST(test_battery_cells_stay_fixed_while_armed_during_detection_window);
+  RUN_TEST(test_custom_msp_config_rejects_malformed_payload_sizes);
+  RUN_TEST(test_msp_armed_policy_rejects_writes_but_allows_config_reads);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);

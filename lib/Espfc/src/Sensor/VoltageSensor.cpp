@@ -113,6 +113,14 @@ void VoltageSensor::updatePackDetection()
     return;
   }
 
+  // Once armed, never revise the selected cell count even if the initial
+  // disarmed detection window has not yet completed.
+  if (_model.isModeActive(MODE_ARMED))
+  {
+    _packAbsentReads = 0;
+    return;
+  }
+
   // At least 2.5 V allows a discharged 1S pack while excluding most
   // open-input noise. The original 50-reading cell estimate starts only
   // after a plausible voltage is actually observed.
@@ -131,8 +139,7 @@ void VoltageSensor::updatePackDetection()
   }
 
   // Never interpret an in-flight voltage sag as a pack replacement.
-  if (_model.isModeActive(MODE_ARMED) ||
-      battery.cells == 0 || volts >= 2.0f)
+  if (battery.cells == 0 || volts >= 2.0f)
   {
     _packAbsentReads = 0;
     return;

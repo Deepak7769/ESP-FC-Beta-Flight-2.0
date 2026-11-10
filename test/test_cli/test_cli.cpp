@@ -322,6 +322,21 @@ void test_cli_bf_sensor_hardware()
   TEST_ASSERT_NOT_EQUAL(std::string::npos, result.find("mag: AUTO,"));
 }
 
+
+void test_cli_redacts_wifi_password_in_get_dump_and_set_echo()
+{
+  Model model;
+  Cli cli{model};
+  char secret[] = "invisible-example-password";
+  Cli::Param param("wifi_pass", Cli::PARAM_STRING, secret, nullptr,
+                   sizeof(secret) - 1u);
+  cli.print(param, printer);
+  const auto output = stream.str();
+  TEST_ASSERT_TRUE(output.find("# wifi_pass omitted") != std::string::npos);
+  TEST_ASSERT_TRUE(output.find(secret) == std::string::npos);
+  TEST_ASSERT_TRUE(output.find("set wifi_pass") == std::string::npos);
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -338,5 +353,6 @@ int main(int argc, char** argv)
   RUN_TEST(test_cli_independent_instances_bind_config_addresses);
   RUN_TEST(test_cli_bf_get_mag_calibration);
   RUN_TEST(test_cli_bf_sensor_hardware);
+  RUN_TEST(test_cli_redacts_wifi_password_in_get_dump_and_set_echo);
   return UNITY_END();
 }

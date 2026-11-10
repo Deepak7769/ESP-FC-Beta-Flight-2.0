@@ -1814,6 +1814,14 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
 
 void Cli::print(const Param& param, Stream::Printer& s) const
 {
+  // Never echo a secret during get, dump or the set acknowledgement.
+  // A comment (not a redacted 'set' command) is safe to replay.
+  if (std::strcmp(param.name, "wifi_pass") == 0)
+  {
+    s.println("# wifi_pass omitted");
+    return;
+  }
+
   s.print("set ");
   s.print(param.name);
   s.print(' ');

@@ -30,6 +30,69 @@ bool blackboxMayEditConfig(void);
 
 namespace {
 
+// Configuration writes, maintenance and actuator tests are never permitted
+// from MSP during an armed flight. Custom dual-use GET/SET commands keep
+// their zero-length telemetry reads available.
+static bool mspCommandRequiresDisarmed(uint16_t cmd, int payloadSize)
+{
+  switch (cmd)
+  {
+    case MSP_SET_NAME:
+    case MSP2_SET_TEXT:
+    case MSP_SET_MODE_RANGE:
+    case MSP_SET_FEATURE_CONFIG:
+    case MSP_SET_BATTERY_CONFIG:
+    case MSP_SET_VOLTAGE_METER_CONFIG:
+    case MSP_SET_CURRENT_METER_CONFIG:
+    case MSP_DATAFLASH_ERASE:
+    case MSP_SET_ACC_TRIM:
+    case MSP_SET_MIXER_CONFIG:
+    case MSP_SET_SENSOR_CONFIG:
+    case MSP_SET_SENSOR_ALIGNMENT:
+    case MSP_SET_CF_SERIAL_CONFIG:
+    case MSP2_COMMON_SET_SERIAL_CONFIG:
+    case MSP_SET_BLACKBOX_CONFIG:
+    case MSP_SET_BEEPER_CONFIG:
+    case MSP_SET_BOARD_ALIGNMENT_CONFIG:
+    case MSP_SET_RX_MAP:
+    case MSP_SET_RSSI_CONFIG:
+    case MSP_SET_MOTOR_CONFIG:
+    case MSP_SET_ARMING_CONFIG:
+    case MSP_SET_RC_DEADBAND:
+    case MSP_SET_RX_CONFIG:
+    case MSP_SET_FAILSAFE_CONFIG:
+    case MSP_SET_RXFAIL_CONFIG:
+    case MSP_SET_RC_TUNING:
+    case MSP_SET_ADVANCED_CONFIG:
+    case MSP_SET_COMPASS_CONFIG:
+    case MSP_SET_FILTER_CONFIG:
+    case MSP_SET_PID_CONTROLLER:
+    case MSP_SET_PID:
+    case MSP_SET_PID_ADVANCED:
+    case MSP_SET_SIMPLIFIED_TUNING:
+    case MSP_SET_MOTOR:
+    case MSP_SET_SERVO_CONFIGURATION:
+    case MSP_ACC_CALIBRATION:
+    case MSP_MAG_CALIBRATION:
+    case MSP_SET_VTX_CONFIG:
+    case MSP_SET_ARMING_DISABLED:
+    case MSP_SET_PASSTHROUGH:
+    case MSP_SET_GPS_CONFIG:
+    case MSP_EEPROM_WRITE:
+    case MSP_RESET_CONF:
+    case MSP_REBOOT:
+    case MSP_SET_RTC:
+      return true;
+
+    case Espfc::Connect::MSP2_ESPFC_ALTHOLD_CONFIG:
+    case Espfc::Connect::MSP2_ESPFC_GPS_RESCUE_CONFIG:
+      return payloadSize != 0;
+
+    default:
+      return false;
+  }
+}
+
 enum SerialSpeedIndex
 {
   SERIAL_SPEED_INDEX_AUTO = 0,
@@ -256,6 +319,12 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
   r.cmd = m.cmd;
   r.version = m.version;
   r.result = 1;
+  if (_model.isModeActive(MODE_ARMED) &&
+      mspCommandRequiresDisarmed(m.cmd, m.remain()))
+  {
+    r.result = -1;
+    return;
+  }
   switch (m.cmd)
   {
     case MSP_API_VERSION:
@@ -2242,6 +2311,12 @@ constexpr int REQUIRED_PID_BYTES =
       break;
 
     case MSP2_ESPFC_ALTHOLD_CONFIG: {
+      const int payloadSize = m.remain();
+      if (payloadSize != 0 && payloadSize != 10 && payloadSize != 22)
+      {
+        r.result = -1;
+        break;
+      }
       auto& a = _model.config.altHold;
       auto& rf = _model.config.rangefinder;
 
@@ -2286,7 +2361,7 @@ constexpr int REQUIRED_PID_BYTES =
         _model.sanitize();
         _model.setRebootRequired();
       }
-      else if (m.remain() >= 22)
+      else if (m.remain() == 22)
       {
         a.itermCenter = m.readU8();
         a.itermRange = m.readU8();
@@ -2379,6 +2454,12 @@ constexpr int REQUIRED_PID_BYTES =
     }
 
     case MSP2_ESPFC_GPS_RESCUE_CONFIG: {
+      const int payloadSize = m.remain();
+      if (payloadSize != 0 && payloadSize != 18)
+      {
+        r.result = -1;
+        break;
+      }
       const auto& c = _model.config.gpsRescue;
       if (m.remain() == 0)
       {
@@ -2400,7 +2481,7 @@ constexpr int REQUIRED_PID_BYTES =
         r.writeU8(c.maxHorizontalAccuracyM);
         r.writeU16(c.maxAccelerationCms2);
       }
-      else if (m.remain() >= 18)
+      else if (m.remain() == 18)
       {
         auto& cfg = _model.config.gpsRescue;
         cfg.altitudeMode = m.readU8();
