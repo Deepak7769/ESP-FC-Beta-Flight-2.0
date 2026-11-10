@@ -282,6 +282,7 @@ void test_gps_rescue_state_machine_reaches_return()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
@@ -328,6 +329,7 @@ void test_gps_rescue_falls_back_to_land_on_gps_loss()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
@@ -386,6 +388,7 @@ void test_gps_rescue_limits_horizontal_command()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
@@ -419,6 +422,7 @@ void test_gps_rescue_climb_holds_horizontal_position()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
@@ -453,6 +457,7 @@ void test_gps_rescue_stops_return_after_no_progress()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
@@ -497,6 +502,7 @@ void test_gps_rescue_inside_min_distance_skips_return_leg()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
