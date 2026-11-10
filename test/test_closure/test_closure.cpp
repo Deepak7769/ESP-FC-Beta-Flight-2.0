@@ -10,6 +10,8 @@
 #include "Control/RescueSettings.hpp"
 #include "Control/GpsRescue.h"
 #include "Sensor/VoltageSensor.hpp"
+#include "Sensor/GyroSensor.hpp"
+#include "Device/InputPPM.h"
 #include "msp/msp_protocol.h"
 #include "Utils/Crc.hpp"
 #include <ArduinoFake.h>
@@ -404,7 +406,168 @@ void test_msp_motor_range_cannot_silently_reduce_existing_idle()
   TEST_ASSERT_EQUAL_INT(500, model.config.output.motorIdle);
 }
 
+
+class ClosureMockSpiBus : public Device::BusDevice
+{
+public:
+  BusType getType() const override { return BUS_SPI; }
+  int8_t read(uint8_t, uint8_t, uint8_t, uint8_t*) override { return 0; }
+  int8_t readFast(uint8_t, uint8_t, uint8_t, uint8_t*) override { return 0; }
+  bool write(uint8_t, uint8_t, uint8_t, const uint8_t*) override { return true; }
+};
+
+class ClosureMockGyro : public Device::GyroDevice
+{
+public:
+  bool connected{true};
+  int samples{0};
+  int checks{0};
+  int begin(Device::BusDevice* bus) override { setBus(bus, 0); return 1; }
+  int begin(Device::BusDevice* bus, uint8_t address) override { setBus(bus, address); return 1; }
+  DeviceType getType() const override { return GYRO_MPU6500; }
+  int readGyro(VectorInt16& v) override { ++samples; v = VectorInt16(0, 0, 0); return 1; }
+  int readAccel(VectorInt16& v) override { v = VectorInt16(0, 0, 0); return 1; }
+  void setDLPFMode(uint8_t) override {}
+  int getRate() const override { return 4000; }
+  void setRate(int) override {}
+  bool testConnection() override { ++checks; return connected; }
+};
+
+void test_gyro_spi_identity_fault_latches_until_disarmed_begin()
+{
+  Model m;
+  m.logger.begin();
+  m.config.gyro.dev = GYRO_MPU6500;
+  m.state.loopTimer.rate = 4000;
+  m.state.loopTimer.interval = 250;
+  m.state.gyro.timer.rate = 4000;
+  m.state.gyro.timer.interval = 250;
+  m.state.gyro.present = true;
+  ClosureMockSpiBus bus;
+  ClosureMockGyro device;
+  device.setBus(&bus, 0x68);
+  m.state.gyro.dev = &device;
+  Sensor::GyroSensor gyro(m);
+  device.connected = false;
+  TEST_ASSERT_EQUAL_INT(0, gyro.begin());
+  TEST_ASSERT_FALSE(m.state.gyro.sampleValid);
+  const int count = device.samples;
+  TEST_ASSERT_EQUAL_INT(0, gyro.read());
+  TEST_ASSERT_EQUAL_INT(count, device.samples);
+  device.connected = true;
+  m.updateModes(1u << MODE_ARMED);
+  TEST_ASSERT_EQUAL_INT(0, gyro.begin());
+  TEST_ASSERT_EQUAL_INT(0, gyro.read());
+  m.updateModes(0);
+  TEST_ASSERT_EQUAL_INT(1, gyro.begin());
+  TEST_ASSERT_EQUAL_INT(1, gyro.read());
+  TEST_ASSERT_TRUE(m.state.gyro.sampleValid);
+  TEST_ASSERT_EQUAL_INT(count + 1, device.samples);
+  // Periodic SPI WHO_AM_I failure must also lock out subsequent zero reads.
+  clockUs += 100000;
+  device.connected = false;
+  TEST_ASSERT_EQUAL_INT(0, gyro.read());
+  TEST_ASSERT_FALSE(m.state.gyro.sampleValid);
+  device.connected = true;
+  TEST_ASSERT_EQUAL_INT(0, gyro.read());
+  TEST_ASSERT_EQUAL_INT(1, gyro.begin());
+  TEST_ASSERT_EQUAL_INT(1, gyro.read());
+}
+
+void test_ppm_publishes_complete_immutable_receiver_snapshots()
+{
+  Device::InputPPM ppm;
+  ppm.begin(-1);
+  auto pulse = [&](uint32_t us) { clockUs += us; ppm.handle(); };
+  pulse(4000);
+  for (int frame = 0; frame < 3; ++frame)
+  {
+    for (uint32_t us : {1300u + 100u * uint32_t(frame), 1400u, 1100u, 1600u}) pulse(us);
+    pulse(4000);
+  }
+  TEST_ASSERT_EQUAL_INT(INPUT_RECEIVED, ppm.update());
+  TEST_ASSERT_EQUAL_UINT(4, ppm.getChannelCount());
+  TEST_ASSERT_EQUAL_UINT16(1500, ppm.get(0));
+  TEST_ASSERT_EQUAL_UINT16(1100, ppm.get(2));
+  pulse(1700); pulse(1200);
+  TEST_ASSERT_EQUAL_INT(INPUT_IDLE, ppm.update());
+  TEST_ASSERT_EQUAL_UINT16(1500, ppm.get(0));
+  TEST_ASSERT_EQUAL_UINT16(1400, ppm.get(1));
+  pulse(1050); pulse(1800); pulse(4000);
+  TEST_ASSERT_EQUAL_INT(INPUT_RECEIVED, ppm.update());
+  TEST_ASSERT_EQUAL_UINT16(1700, ppm.get(0));
+  TEST_ASSERT_EQUAL_UINT16(1200, ppm.get(1));
+  TEST_ASSERT_EQUAL_UINT16(1050, ppm.get(2));
+  uint16_t batch[4]{};
+  ppm.get(batch, 4);
+  TEST_ASSERT_EQUAL_UINT16(1800, batch[3]);
+}
+
+void test_rate_type_and_msp_rate_limits_reject_invalid_atomic_writes()
+{
+  ModelConfig config;
+  config.input.rateType = 5;
+  TEST_ASSERT_FALSE(Utils::configurationValid(config));
+  config.input.rateType = 3;
+  for (int channel = 0; channel < 3; ++channel)
+  {
+    for (int bad : {0, 1999, 32767})
+    {
+      config.input.rateLimit[channel] = bad;
+      TEST_ASSERT_FALSE(Utils::configurationValid(config));
+      config.input.rateLimit[channel] = 1998;
+    }
+  }
+  Model model;
+  const ModelConfig before = model.config;
+  const auto reply = process(model, MSP_RC_TUNING);
+  TEST_ASSERT_EQUAL_INT(1, reply.result);
+  TEST_ASSERT_EQUAL_UINT(23, reply.len);
+  const std::vector<uint8_t> baseline(reply.data, reply.data + reply.len);
+  for (int offset : {16, 18, 20})
+  {
+    auto request = baseline;
+    request[offset] = 0xff;
+    request[offset + 1] = 0xff;
+    TEST_ASSERT_EQUAL_INT(-1, process(model, MSP_SET_RC_TUNING, request).result);
+    TEST_ASSERT_EQUAL_MEMORY(&before, &model.config, sizeof(before));
+  }
+  auto badAlgorithm = baseline;
+  badAlgorithm[22] = 5;
+  TEST_ASSERT_EQUAL_INT(-1, process(model, MSP_SET_RC_TUNING, badAlgorithm).result);
+  TEST_ASSERT_EQUAL_MEMORY(&before, &model.config, sizeof(before));
+}
+
+void test_mixer_rule_validator_checks_all_rules_and_terminator()
+{
+  auto builtin = Output::Mixers::getMixer(FC_MIXER_QUADX, MixerConfig{});
+  TEST_ASSERT_TRUE(mixerConfigValid(builtin, 4));
+  MixerEntry rules[MIXER_RULE_MAX]{};
+  rules[0] = MixerEntry(MIXER_SOURCE_ROLL, 0, 100);
+  TEST_ASSERT_TRUE(mixerConfigValid(MixerConfig(4, rules), 4));
+  rules[0] = MixerEntry(MIXER_SOURCE_ROLL, 4, 100);
+  TEST_ASSERT_FALSE(mixerConfigValid(MixerConfig(4, rules), 4));
+  rules[0] = MixerEntry(MIXER_SOURCE_ROLL, 0, 1001);
+  TEST_ASSERT_FALSE(mixerConfigValid(MixerConfig(4, rules), 4));
+  rules[0] = MixerEntry(MIXER_SOURCE_ROLL, 0, 100);
+  TEST_ASSERT_FALSE(mixerConfigValid(MixerConfig(5, rules), 4));
+  for (size_t i = 0; i < MIXER_RULE_MAX; ++i)
+    rules[i] = MixerEntry(MIXER_SOURCE_ROLL, 0, 100);
+  TEST_ASSERT_FALSE(mixerConfigValid(MixerConfig(4, rules), 4));
+  ModelConfig config;
+  config.mixer.type = FC_MIXER_CUSTOM;
+  config.customMixerCount = 4;
+  config.customMixes[0] = MixerEntry(MIXER_SOURCE_ROLL, 4, 100);
+  TEST_ASSERT_FALSE(Utils::configurationValid(config));
+  config.customMixes[0] = MixerEntry(MIXER_SOURCE_ROLL, 0, 100);
+  TEST_ASSERT_TRUE(Utils::configurationValid(config));
+}
+
 int main(){UNITY_BEGIN();
+ RUN_TEST(test_gyro_spi_identity_fault_latches_until_disarmed_begin);
+ RUN_TEST(test_ppm_publishes_complete_immutable_receiver_snapshots);
+ RUN_TEST(test_rate_type_and_msp_rate_limits_reject_invalid_atomic_writes);
+ RUN_TEST(test_mixer_rule_validator_checks_all_rules_and_terminator);
  RUN_TEST(test_cli_output_change_requires_reboot_after_cancel);
  RUN_TEST(test_cli_invalid_idle_and_unknown_parameter_preserve_readiness);
  RUN_TEST(test_cli_noninteractive_configuration_cannot_bypass_reboot_gate);
