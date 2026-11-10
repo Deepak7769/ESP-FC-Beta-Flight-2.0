@@ -1,8 +1,15 @@
 #if defined(UNIT_TEST)
 
 #include "Hal/Gpio.hpp"
+#include "Hal/PinCapabilities.hpp"
 
 namespace Espfc::Hal {
+
+bool Gpio::supportsPin(int pin, Gpio::PinMode mode)
+{
+  return supportsSonarGpio(PinBoard::Native, pin,
+                           mode == Gpio::Output);
+}
 
 void Gpio::digitalWrite(uint8_t pin, Gpio::PinStatus val)
 {

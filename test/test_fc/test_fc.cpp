@@ -14,6 +14,8 @@
 #include "Sensor/BaroSensor.hpp"
 #include "Sensor/VoltageSensor.hpp"
 #include "Sensor/RangefinderSensor.hpp"
+#include "Hal/PinCapabilities.hpp"
+#include "Device/Rangefinder/Hcsr04.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
 #include "Blackbox/BlackboxSerialBuffer.h"
@@ -11032,6 +11034,49 @@ void test_external_arduino_rangefinder_is_not_falsely_advertised()
   ArduinoFakeReset();
 }
 
+
+void test_hcsr04_rejects_reserved_and_input_only_pins_by_target()
+{
+  using Espfc::Hal::PinBoard;
+  using Espfc::Hal::supportsSonarGpio;
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32, 6, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32, 10, false));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32, 35, true));
+  TEST_ASSERT_TRUE(supportsSonarGpio(PinBoard::Esp32, 35, false));
+  TEST_ASSERT_TRUE(supportsSonarGpio(PinBoard::Esp32, 18, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32S3, 26, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32S3, 20, false));
+  TEST_ASSERT_TRUE(supportsSonarGpio(PinBoard::Esp32S3, 21, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32C3, 13, false));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp32C3, 19, true));
+  TEST_ASSERT_TRUE(supportsSonarGpio(PinBoard::Esp32C3, 10, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp8266, 9, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::Esp8266, 2, false));
+  TEST_ASSERT_TRUE(supportsSonarGpio(PinBoard::Esp8266, 4, true));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::RpPico, 24, true));
+  TEST_ASSERT_TRUE(supportsSonarGpio(PinBoard::RpPico, 26, false));
+  TEST_ASSERT_FALSE(supportsSonarGpio(PinBoard::RpPico, 45, true));
+}
+
+void test_direct_hcsr04_rejects_invalid_pins_before_gpio_configuration()
+{
+  Espfc::Device::Hcsr04Rangefinder sonar;
+  RangefinderConfig config{};
+  config.type = RANGEFINDER_HCSR04;
+  config.triggerPin = 4;
+  config.echoPin = 4;
+  TEST_ASSERT_EQUAL_INT(0, sonar.begin(config));
+  TEST_ASSERT_FALSE(sonar.present());
+  config.triggerPin = -1;
+  config.echoPin = 5;
+  TEST_ASSERT_EQUAL_INT(0, sonar.begin(config));
+  TEST_ASSERT_FALSE(sonar.present());
+  config.triggerPin = 4;
+  config.echoPin = 64;
+  TEST_ASSERT_EQUAL_INT(0, sonar.begin(config));
+  TEST_ASSERT_FALSE(sonar.present());
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -11051,6 +11096,8 @@ int main(int argc, char** argv)
   RUN_TEST(test_altitude_range_reference_preserves_local_height_on_acquisition);
   RUN_TEST(test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts);
   RUN_TEST(test_external_arduino_rangefinder_is_not_falsely_advertised);
+  RUN_TEST(test_hcsr04_rejects_reserved_and_input_only_pins_by_target);
+  RUN_TEST(test_direct_hcsr04_rejects_invalid_pins_before_gpio_configuration);
   RUN_TEST(test_msp_armed_policy_rejects_writes_but_allows_config_reads);
   RUN_TEST(test_msp_rejects_truncated_standard_config_without_partial_mutation);
   RUN_TEST(test_msp_rejects_invalid_meter_and_mode_payload_atomically);

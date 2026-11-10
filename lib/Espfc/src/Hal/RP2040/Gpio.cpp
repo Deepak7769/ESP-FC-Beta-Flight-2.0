@@ -1,9 +1,16 @@
 #if defined(ARCH_RP2040)
 
 #include "Hal/Gpio.hpp"
+#include "Hal/PinCapabilities.hpp"
 #include <Arduino.h>
 
 namespace Espfc::Hal {
+
+bool Gpio::supportsPin(int pin, Gpio::PinMode mode)
+{
+  return supportsSonarGpio(PinBoard::RpPico, pin,
+                           mode == Gpio::Output);
+}
 
 void Gpio::digitalWrite(uint8_t pin, Gpio::PinStatus val)
 {

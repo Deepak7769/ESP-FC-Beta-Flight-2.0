@@ -1,11 +1,24 @@
 #if defined(ESP32)
 
 #include "Hal/Gpio.hpp"
+#include "Hal/PinCapabilities.hpp"
 #include "Utils/MemoryHelper.h"
 #include "hal/gpio_ll.h"
 #include <Arduino.h>
 
 namespace Espfc::Hal {
+
+bool Gpio::supportsPin(int pin, Gpio::PinMode mode)
+{
+#if defined(ESP32C3)
+  constexpr auto board = PinBoard::Esp32C3;
+#elif defined(ESP32S3)
+  constexpr auto board = PinBoard::Esp32S3;
+#else
+  constexpr auto board = PinBoard::Esp32;
+#endif
+  return supportsSonarGpio(board, pin, mode == Gpio::Output);
+}
 
 void FAST_CODE_ATTR Gpio::digitalWrite(uint8_t pin, Gpio::PinStatus val)
 {

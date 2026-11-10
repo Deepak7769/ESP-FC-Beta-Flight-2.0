@@ -19,6 +19,7 @@ public:
     Output = 10,
   };
 
+  static bool supportsPin(int pin, PinMode mode);
   static void digitalWrite(uint8_t pin, PinStatus val);
   static PinStatus digitalRead(uint8_t pin);
   static void pinMode(uint8_t pin, PinMode mode);

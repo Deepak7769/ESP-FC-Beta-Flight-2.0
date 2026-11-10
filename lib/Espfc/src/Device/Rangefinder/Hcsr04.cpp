@@ -42,8 +42,11 @@ int Hcsr04Rangefinder::begin(
   if (config.type != RANGEFINDER_HCSR04 ||
       _triggerPin < 0 ||
       _echoPin < 0 ||
-      _triggerPin == _echoPin)
+      _triggerPin == _echoPin ||
+      !Hal::Gpio::supportsPin(_triggerPin, Hal::Gpio::Output) ||
+      !Hal::Gpio::supportsPin(_echoPin, Hal::Gpio::Input))
   {
+    // No pinMode/digitalWrite side effects on unsupported or reserved pins.
     return 0;
   }
 

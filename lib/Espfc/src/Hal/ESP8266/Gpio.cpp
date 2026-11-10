@@ -1,10 +1,17 @@
 #if defined(ESP8266)
 
 #include "Hal/Gpio.hpp"
+#include "Hal/PinCapabilities.hpp"
 #include "Utils/MemoryHelper.h"
 #include <Arduino.h>
 
 namespace Espfc::Hal {
+
+bool Gpio::supportsPin(int pin, Gpio::PinMode mode)
+{
+  return supportsSonarGpio(PinBoard::Esp8266, pin,
+                           mode == Gpio::Output);
+}
 
 void FAST_CODE_ATTR Gpio::digitalWrite(uint8_t pin, Gpio::PinStatus val)
 {

@@ -9,6 +9,7 @@
 #include "ModelConfig.h"
 #include "ModelState.h"
 #include "Hal/Time.hpp"
+#include "Hal/Gpio.hpp"
 #include "Stream/ReadWritable.hpp"
 #include "Utils/Storage.h"
 #include "Utils/Logger.hpp"
@@ -662,8 +663,18 @@ void setOutputSaturation(
 
   if (config.rangefinder.type == RANGEFINDER_HCSR04)
   {
-    // Detect reuse of an enabled motor/UART/bus pin. Target-specific
-    // input/capture/output capability checks still require a HAL policy.
+    // Reject flash/PSRAM, input-only trigger pins, and board-reserved
+    // pins before HCSR04.begin() can configure hardware.
+    const bool triggerSupported = Hal::Gpio::supportsPin(
+        config.rangefinder.triggerPin, Hal::Gpio::Output);
+    const bool echoSupported = Hal::Gpio::supportsPin(
+        config.rangefinder.echoPin, Hal::Gpio::Input);
+    if (!triggerSupported || !echoSupported)
+    {
+      logger.err().log("HCSR04 PIN CAPABILITY").logln(
+          static_cast<int>(config.rangefinder.triggerPin));
+      conflict = true;
+    }
     reservePin(config.rangefinder.triggerPin);
     reservePin(config.rangefinder.echoPin);
   }
