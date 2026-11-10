@@ -1,3 +1,4 @@
+#include "Control/RescueSettings.hpp"
 #include "Control/Controller.h"
 #include "Control/AssistedModeV2.h"
 #include "Hal/Time.hpp"
@@ -100,6 +101,8 @@ int Controller::begin()
           -0.80f,
           0.80f);
   _hoverThrustInitialized = true;
+  _rescuePeakAltitude = 0;
+  _stockRescueVerticalWasActive = false;
 
 _angleV2WasActive =
     false;
@@ -708,6 +711,15 @@ constexpr bool groundIdleAuthority = false;
 #endif
 if (!groundIdleAuthority) _landGroundIdleWasActive = false;
 
+const bool stockRescueVertical = _model.config.extension.stockRescueEnabled &&
+    _model.state.gpsRescue.active && !landingV2RequestedForOutput;
+const float verticalHover = stockRescueVertical
+    ? (_model.config.extension.stockRescue.throttleHover - 1000.0f) * 0.002f - 1.0f
+    : _hoverThrust;
+if (stockRescueVertical != _stockRescueVerticalWasActive)
+  _altHoldV2OutputWasActive = false; // seed I and preserve existing collective
+_stockRescueVerticalWasActive = stockRescueVertical;
+
 if (altHoldV2OutputActive)
 {
   _manualThrottleHandoffActive = false;
@@ -784,7 +796,7 @@ if (altHoldV2OutputActive)
     verticalPid.iTerm =
         std::clamp(
             levelEquivalentEntryThrust -
-                _hoverThrust -
+                verticalHover -
                 entryP -
                 entryF,
             verticalPid.iLimitLow,
@@ -808,7 +820,7 @@ if (altHoldV2OutputActive)
 
     const float desiredLevelThrust =
         std::clamp(
-            _hoverThrust +
+            verticalHover +
             pidCorrection,
             -1.0f,
             1.0f);
@@ -830,7 +842,7 @@ if (altHoldV2OutputActive)
             verticalPid.oLimitLow,
             verticalPid.oLimitHigh);
 
-    if (!landingV2RequestedForOutput &&
+    if (!stockRescueVertical && !landingV2RequestedForOutput &&
         altitude.healthy &&
         std::fabs(altitude.vario) < 0.15f &&
         std::fabs(altitude.acceleration) < 0.50f &&
@@ -875,6 +887,14 @@ if (altHoldV2OutputActive)
               -0.80f,
               0.80f);
     }
+  }
+
+  if (stockRescueVertical)
+  {
+    const auto& stock = _model.config.extension.stockRescue;
+    output.ch[AXIS_THRUST] = std::clamp(output.ch[AXIS_THRUST],
+        (stock.throttleMin - 1000.0f) * 0.002f - 1.0f,
+        (stock.throttleMax - 1000.0f) * 0.002f - 1.0f);
   }
 
   if (groundIdleAuthority &&
@@ -1963,6 +1983,29 @@ rescueParams.maxHorizontalAccuracy =
     static_cast<float>(
         rescueConfig.maxHorizontalAccuracyM);
 
+rescueParams.minSats = Control::rescueMinimumSatellites(_model.config);
+if (_model.config.extension.stockRescueEnabled)
+{
+  const auto& stock = _model.config.extension.stockRescue;
+  static constexpr uint8_t modes[] = {Control::GPS_RESCUE_ALT_TRACKED_MAX,
+      Control::GPS_RESCUE_ALT_FIXED, Control::GPS_RESCUE_ALT_CURRENT_MARGIN};
+  rescueParams.altitudeMode = modes[std::min<unsigned>(stock.altitudeMode, 2u)];
+  rescueParams.altitudeMargin = stock.initialClimbM;
+  rescueParams.fixedAltitude = stock.returnAltitudeM;
+  rescueParams.maxAltitude = std::max({rescueParams.maxAltitude,
+      float(stock.returnAltitudeM), _rescuePeakAltitude + stock.initialClimbM});
+  rescueParams.climbRate = stock.ascendRateCms * 0.01f;
+  rescueParams.descentRate = stock.descendRateCms * 0.01f;
+  rescueParams.maxSpeed = stock.groundSpeedCms * 0.01f;
+  rescueParams.approachSpeed = std::min(rescueParams.approachSpeed, rescueParams.maxSpeed);
+  rescueParams.maxAngle = stock.angle * Control::Navigation::DEG_TO_RAD_FC;
+  rescueParams.approachDistance = stock.descentDistanceM;
+  rescueParams.minDistance = stock.minStartDistanceM;
+  rescueParams.sanityChecks = stock.sanityChecks == 1 ||
+      (stock.sanityChecks == 2 && _model.state.input.rxFailSafe);
+  rescueParams.stockCompatibility = true;
+}
+
 Control::GpsRescueInput rescueIn{};
 rescueIn.requested =
     gpsRescueRequested &&
@@ -1992,6 +2035,10 @@ rescueIn.velocityEast =
     navigation.velocityEast;
 rescueIn.altitudeAboveHome =
     navigation.altitudeAboveHome;
+if (!_model.isModeActive(MODE_ARMED) && !_model.config.gps.setHomeOnce) _rescuePeakAltitude = 0;
+else if (_model.isModeActive(MODE_ARMED) && altitudeValid && gps.isHomeValid())
+  _rescuePeakAltitude = std::max(_rescuePeakAltitude, rescueIn.altitudeAboveHome);
+rescueIn.maximumAltitude = _rescuePeakAltitude;
 rescueIn.verticalRate = altitude.vario;
 rescueIn.yawHeading =
     Navigation::headingTrueNorth(
@@ -2029,7 +2076,7 @@ gpsRescueState.ready =
     navigationIn.altitudeValid &&
     navigation.positionValid &&
     navigation.velocityValid &&
-    gps.numSats >= 4 &&
+    gps.numSats >= rescueParams.minSats &&
     navigation.horizontalAccuracy > 0.0f &&
     navigation.horizontalAccuracy <=
         rescueParams.maxHorizontalAccuracy &&
@@ -2078,7 +2125,7 @@ gpsRescueState.gpsHealthy =
     navigationIn.gpsValid &&
     rescueIn.gpsAgeS <=
         rescueParams.gpsStaleS &&
-    rescueIn.sats >= 4 &&
+    rescueIn.sats >= rescueParams.minSats &&
     rescueIn.horizontalAccuracy > 0.0f &&
     rescueIn.horizontalAccuracy <=
         rescueParams.maxHorizontalAccuracy;

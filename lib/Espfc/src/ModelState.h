@@ -355,6 +355,8 @@ struct InputState
 
 struct MixerState
 {
+  bool outputReady{false};
+  bool nonActuating{false};
   Utils::Timer timer;
   float minThrottle;
   float maxThrottle;
@@ -674,6 +676,12 @@ struct GpsRescueState
 struct VtxState
 {
   uint8_t active = false;
+  bool ready = false;
+  bool configurationRejected = false;
+  bool pitMode = false, frequencyMode = false;
+  uint16_t frequency = 0;
+  uint8_t version = 0, appliedBand = 0, appliedChannel = 0, appliedPower = 0, powerLevels = 0;
+  uint32_t retries = 0, crcErrors = 0;
 };
 
 enum GpsDeviceVersion
@@ -912,6 +920,8 @@ struct ModelState
 Target::Queue appQueue;
 
 bool pinConflict = false;
+bool serialConfigurationValid = true;
+bool storageHealthy = true;
 bool rebootRequired = false;
 bool blackboxTruncated = false;
 bool blackboxClosing = false;

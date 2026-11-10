@@ -15,6 +15,7 @@ public:
     PARAM_BYTE,           // 8 bit int
     PARAM_BYTE_U,         // 8 bit uint
     PARAM_SHORT,          // 16 bit int
+    PARAM_SHORT_U,        // 16 bit uint
     PARAM_INT,            // 32 bit int
     PARAM_FLOAT,          // 32 bit float
     PARAM_INPUT_CHANNEL,  //  input channel config
@@ -42,6 +43,7 @@ public:
     Param(const char* n, int8_t* a): Param(n, PARAM_BYTE, reinterpret_cast<char*>(a), nullptr) {}
     Param(const char* n, uint8_t* a): Param(n, PARAM_BYTE_U, reinterpret_cast<char*>(a), nullptr) {}
     Param(const char* n, int16_t* a): Param(n, PARAM_SHORT, reinterpret_cast<char*>(a), nullptr) {}
+    Param(const char* n, uint16_t* a): Param(n, PARAM_SHORT_U, reinterpret_cast<char*>(a), nullptr) {}
     Param(const char* n, int32_t* a): Param(n, PARAM_INT, reinterpret_cast<char*>(a), nullptr) {}
 
     Param(const char* n, int8_t* a, const char* const* c): Param(n, PARAM_BYTE, reinterpret_cast<char*>(a), c) {}

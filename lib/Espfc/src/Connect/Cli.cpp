@@ -1,4 +1,5 @@
 #include "Connect/Cli.hpp"
+#include "Utils/ConfigValidation.hpp"
 #include "Device/GyroDevice.hpp"
 #include "Hardware.h"
 #include "ModelConfig.h"
@@ -112,6 +113,9 @@ void Cli::Param::print(Stream::Printer& stream) const
       break;
     case PARAM_SHORT:
       print(stream, *reinterpret_cast<int16_t*>(addr));
+      break;
+    case PARAM_SHORT_U:
+      print(stream, *reinterpret_cast<uint16_t*>(addr));
       break;
     case PARAM_INT:
       print(stream, *reinterpret_cast<int32_t*>(addr));
@@ -265,6 +269,13 @@ bool Cli::Param::update(const char** args) const
       const auto n = parse(v);
       if (!n || *n < INT16_MIN || *n > INT16_MAX) return false;
       write(static_cast<int16_t>(*n));
+      return true;
+    }
+    case PARAM_SHORT_U:
+    {
+      const auto n = parse(v);
+      if (!n || *n < 0 || *n > UINT16_MAX) return false;
+      write(static_cast<uint16_t>(*n));
       return true;
     }
     case PARAM_INT:
@@ -629,6 +640,9 @@ failsafeProcedureChoices[] = {
       Param("vbat_mul", &c.vbat.resMult),
       Param("vbat_div", &c.vbat.resDiv),
       Param("vbat_cell_warn", &c.vbat.cellWarning),
+      Param("vbat_cell_min", &c.extension.cellMinimum),
+      Param("vbat_cell_max", &c.extension.cellMaximum),
+      Param("battery_capacity", &c.extension.capacityMah),
 
       Param("ibat_source", &c.ibat.source, currentSourceChoices),
       Param("ibat_scale", &c.ibat.scale),
@@ -903,6 +917,23 @@ Param(
       Param("i2c_speed", &c.i2cSpeed),
 #endif
       Param("rescue_config_delay", &c.rescueConfigDelay),
+      Param("stock_rescue_enabled", &c.extension.stockRescueEnabled),
+      Param("stock_rescue_angle", &c.extension.stockRescue.angle),
+      Param("stock_rescue_return_altitude_m", &c.extension.stockRescue.returnAltitudeM),
+      Param("stock_rescue_descent_distance_m", &c.extension.stockRescue.descentDistanceM),
+      Param("stock_rescue_ground_speed_cms", &c.extension.stockRescue.groundSpeedCms),
+      Param("stock_rescue_throttle_min", &c.extension.stockRescue.throttleMin),
+      Param("stock_rescue_throttle_max", &c.extension.stockRescue.throttleMax),
+      Param("stock_rescue_throttle_hover", &c.extension.stockRescue.throttleHover),
+      Param("stock_rescue_sanity_checks", &c.extension.stockRescue.sanityChecks),
+      Param("stock_rescue_min_sats", &c.extension.stockRescue.minSats),
+      Param("stock_rescue_ascend_rate_cms", &c.extension.stockRescue.ascendRateCms),
+      Param("stock_rescue_descend_rate_cms", &c.extension.stockRescue.descendRateCms),
+      Param("stock_rescue_allow_arming_without_fix", &c.extension.stockRescue.allowArmingWithoutFix),
+      Param("stock_rescue_altitude_mode", &c.extension.stockRescue.altitudeMode),
+      Param("stock_rescue_min_start_distance_m", &c.extension.stockRescue.minStartDistanceM),
+      Param("stock_rescue_initial_climb_m", &c.extension.stockRescue.initialClimbM),
+
 
       // Param("telemetry", &c.telemetry),
       Param("telemetry_interval", &c.telemetryInterval),
@@ -1285,10 +1316,14 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       if (std::strcmp(cmd.args[1], _params[i].name) == 0)
       {
         const Param bound = bindParam(_params[i]);
-        if (bound.update(cmd.args))
+        const ModelConfig before = _model.config;
+        if (bound.update(cmd.args) && Utils::configurationValid(_model.config))
           print(bound, s);
         else
+        {
+          _model.config = before;
           s.println("ERROR: invalid parameter value");
+        }
         found = true;
         break;
       }
@@ -1515,13 +1550,11 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
   }
   else if (std::strcmp(cmd.args[0], "load") == 0)
   {
-    _model.load();
-    s.println("OK");
+    s.println(_model.load() ? "OK" : "ERROR: configuration load failed");
   }
   else if (std::strcmp(cmd.args[0], "save") == 0)
   {
-    _model.save();
-    s.println("# Saved, type reboot to apply changes");
+    s.println(_model.save() ? "# Saved, type reboot to apply changes" : "ERROR: configuration save failed");
     s.println();
   }
   else if (std::strcmp(cmd.args[0], "eeprom") == 0)
@@ -1698,6 +1731,10 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       }
     }
     s.println();
+    s.print("storage healthy: "); s.println(_model.state.storageHealthy);
+    s.print("outputs ready: "); s.println(_model.state.mixer.outputReady);
+    s.print("blackbox truncated: "); s.println(_model.state.blackboxTruncated);
+    s.print("blackbox unsent bytes: "); s.println(_model.state.blackboxUnsentBytes);
     s.print(" rescue mode: ");
     s.print(_model.state.mode.rescueConfigMode);
     s.println();

@@ -2,6 +2,8 @@
 
 #include "Hal/Serial.hpp"
 #include <Arduino.h>
+#include <driver/uart.h>
+#include <driver/gpio.h>
 
 namespace {
 
@@ -114,7 +116,14 @@ void SerialUart::begin(const SerialDeviceConfig& conf)
   uint32_t sc = targetSerialConfigFlags(conf);
   getPort(_index).end();
   getPort(_index).setTxBufferSize(targetSerialTxBufferSize());
-  getPort(_index).begin(conf.baud, sc, conf.rx_pin, conf.tx_pin, conf.inverted);
+  _oneWirePin = conf.halfDuplex ? conf.tx_pin : -1;
+  getPort(_index).begin(conf.baud, sc, _oneWirePin >= 0 ? _oneWirePin : conf.rx_pin,
+                        conf.tx_pin, conf.inverted);
+  if (_oneWirePin >= 0)
+  {
+    gpio_set_pull_mode((gpio_num_t)_oneWirePin, GPIO_FLOATING);
+    gpio_set_direction((gpio_num_t)_oneWirePin, GPIO_MODE_INPUT);
+  }
 }
 
 void SerialUart::updateBaudRate(int baud)
@@ -146,11 +155,13 @@ void SerialUart::flush() {}
 
 size_t SerialUart::write(uint8_t c)
 {
+  if (_oneWirePin >= 0) gpio_set_direction((gpio_num_t)_oneWirePin, GPIO_MODE_INPUT_OUTPUT);
   return getPort(_index).write(c);
 }
 
 size_t SerialUart::write(const uint8_t* c, size_t l)
 {
+  if (_oneWirePin >= 0) gpio_set_direction((gpio_num_t)_oneWirePin, GPIO_MODE_INPUT_OUTPUT);
   return getPort(_index).write(c, l);
 }
 
@@ -161,7 +172,9 @@ int SerialUart::availableForWrite()
 
 bool SerialUart::isTxFifoEmpty()
 {
-  return getPort(_index).availableForWrite() >= 0xff;
+  const bool empty = uart_wait_tx_done((uart_port_t)_index, 0) == ESP_OK;
+  if (empty && _oneWirePin >= 0) gpio_set_direction((gpio_num_t)_oneWirePin, GPIO_MODE_INPUT);
+  return empty;
 }
 
 #if ARDUINO_USB_CDC_ON_BOOT

@@ -12,7 +12,9 @@ int VoltageSensor::begin()
   _model.state.battery.timer.setRate(100);
   _model.state.battery.samples = 50;
   _model.state.battery.cells = 0;
-  _packAbsentReads = 0;
+  _packAbsentReads = _packStableReads = 0;
+  _packCandidateCells = 0;
+  _packReferenceVoltage = 0.0f;
 
   _model.state.battery.mspCurrentCentiAmps = 0;
   _model.state.battery.mspMahDrawn = 0;
@@ -88,7 +90,12 @@ int VoltageSensor::readVbat()
 
   _model.state.battery.cellVoltage = _model.state.battery.voltage / std::clamp<int>(_model.state.battery.cells, 1, 6);
   _model.state.battery.percentage =
-      std::clamp(Utils::map(_model.state.battery.cellVoltage, 3.4f, 4.2f, 0.0f, 100.0f), 0.0f, 100.0f);
+      std::clamp(Utils::map(_model.state.battery.cellVoltage,
+          _model.config.extension.cellMinimum * 0.01f,
+          _model.config.extension.cellMaximum * 0.01f, 0.0f, 100.0f), 0.0f, 100.0f);
+  if (_model.config.extension.capacityMah && _model.state.battery.consumedMahValid)
+    _model.state.battery.percentage = std::clamp(100.0f *
+        (1.0f - _model.state.battery.consumedMah / _model.config.extension.capacityMah), 0.0f, 100.0f);
 
   if (_model.config.debug.mode == DEBUG_BATTERY)
   {
@@ -105,7 +112,7 @@ int VoltageSensor::readVbat()
 void VoltageSensor::updatePackDetection()
 {
   auto& battery = _model.state.battery;
-  const float volts = battery.voltage;
+  const float volts = battery.voltageUnfiltered;
 
   if (!std::isfinite(volts) || volts < 0.0f)
   {
@@ -121,22 +128,28 @@ void VoltageSensor::updatePackDetection()
     return;
   }
 
-  // At least 2.5 V allows a discharged 1S pack while excluding most
-  // open-input noise. The original 50-reading cell estimate starts only
-  // after a plausible voltage is actually observed.
   if (volts >= 2.5f)
   {
     _packAbsentReads = 0;
-    if (battery.samples > 0)
+    if (battery.cells > 0) return; // fixed until a confirmed disconnect
+    const int8_t candidate = static_cast<int8_t>(std::clamp<int>(
+        static_cast<int>(std::ceil(volts / (_model.config.extension.cellMaximum * 0.01f))), 1, 6));
+    if (candidate != _packCandidateCells || std::fabs(volts - _packReferenceVoltage) > 0.15f)
     {
-      battery.cells = static_cast<int8_t>(
-          std::clamp<int>(
-              static_cast<int>(std::ceil(volts / 4.2f)),
-              1, 6));
-      --battery.samples;
+      _packCandidateCells = candidate;
+      _packReferenceVoltage = volts;
+      _packStableReads = 1;
+    }
+    else if (_packStableReads < 8) ++_packStableReads;
+    if (_packStableReads >= 8)
+    {
+      battery.cells = candidate;
+      battery.samples = 0;
     }
     return;
   }
+  _packStableReads = 0;
+  _packCandidateCells = 0;
 
   // Never interpret an in-flight voltage sag as a pack replacement.
   if (battery.cells == 0 || volts >= 2.0f)

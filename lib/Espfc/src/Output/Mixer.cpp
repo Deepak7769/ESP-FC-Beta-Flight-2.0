@@ -10,132 +10,109 @@ Mixer::Mixer(Model& model): _model(model), _motor(nullptr), _servo(nullptr) {}
 
 int Mixer::begin()
 {
-#ifndef ESPFC_SAFE_BENCH_BUILD
-
-  EscConfig motorConf = {
-      .timer = ESC_DRIVER_MOTOR_TIMER,
-      .protocol =
-          (EscProtocol)_model.config.output.protocol,
-      .rate =
-          _model.config.output.rate,
-      .async =
-          !!_model.config.output.async,
-      .dshotTelemetry =
-          !!_model.config.output.dshotTelemetry,
-  };
-
-  escMotor.begin(motorConf);
-
-  _model.state.mixer.escMotor =
-      _motor = &escMotor;
-
-#else
-
-  _model.state.mixer.escMotor = nullptr;
-  _motor = nullptr;
-
-#endif
-  _model.logger.info()
-      .log("MOTOR")
-      .log(EscDriver::getProtocolName((EscProtocol)_model.config.output.protocol))
-      .log(_model.config.output.async)
-      .log(_model.config.output.rate)
-      .log(_model.config.output.dshotTelemetry)
-      .logln(ESC_DRIVER_MOTOR_TIMER);
-
- if (_model.config.output.servoRate)
- {
-#ifndef ESPFC_SAFE_BENCH_BUILD
-
-    EscConfig servoConf = {
-        .timer = ESC_DRIVER_SERVO_TIMER,
-        .protocol = ESC_PROTOCOL_PWM,
-        .rate = _model.config.output.servoRate,
-        .async = true,
-        .dshotTelemetry = false,
-    };
-
-    escServo.begin(servoConf);
-
-    _model.state.mixer.escServo =
-        _servo = &escServo;
-
-#else
-
-    _model.state.mixer.escServo = nullptr;
-    _servo = nullptr;
-
-#endif
-    _model.logger.info()
-        .log("SERVO")
-        .log(EscDriver::getProtocolName(ESC_PROTOCOL_PWM))
-        .log(true)
-        .logln(_model.config.output.servoRate)
-        .logln(ESC_DRIVER_SERVO_TIMER);
-  }
-  _erpmToHz = EscDriver::getErpmToHzRatio(_model.config.output.motorPoles);
-  _statsCounterMax = _model.state.mixer.timer.rate / 2;
-  _statsCounter = 0;
-
-  for (size_t i = 0; i < OUTPUT_CHANNELS; ++i)
+  auto& state = _model.state;
+  state.mixer.outputReady = false;
+  state.mixer.nonActuating = false;
+  _motor = _servo = nullptr;
+  state.mixer.escMotor = state.mixer.escServo = nullptr;
+  if (!Control::outputTimingValid(_model.config)) return 0;
+  state.currentMixer = Mixers::getMixer(
+      static_cast<MixerType>(_model.config.mixer.type), state.customMixer);
+  const auto& mix = state.currentMixer;
+  if (!mix.count || mix.count > OUTPUT_CHANNELS ||
+      mix.count > ESC_CHANNEL_COUNT || !mix.mixes) return 0;
+  size_t rules = 0;
+  for (; rules < MIXER_RULE_MAX && mix.mixes[rules].src != MIXER_SOURCE_NULL; ++rules)
   {
-    const OutputChannelConfig& occ = _model.config.output.channel[i];
-    if (occ.servo)
+    const auto& rule = mix.mixes[rules];
+    if (rule.src <= MIXER_SOURCE_NULL || rule.src >= MIXER_SOURCE_MAX ||
+        rule.dst < 0 || rule.dst >= mix.count ||
+        rule.rate < -1000 || rule.rate > 1000) return 0;
+  }
+  if (!rules || rules == MIXER_RULE_MAX) return 0;
+  if (_model.config.mixer.type == FC_MIXER_TRI)
+  {
+    for (size_t i = 0; i < mix.count; ++i)
+      if (_model.config.output.channel[i].servo != (i == 3)) return 0;
+  }
+  if (_model.config.mixer.type == FC_MIXER_QUADX ||
+      _model.config.mixer.type == FC_MIXER_QUADX_1234)
+    for (size_t i = 0; i < mix.count; ++i)
+      if (_model.config.output.channel[i].servo) return 0;
+  bool needsMotor = false, needsServo = false;
+  for (size_t i = 0; i < mix.count; ++i)
+  {
+    const auto& channel = _model.config.output.channel[i];
+    needsServo |= channel.servo;
+    needsMotor |= !channel.servo;
+#ifndef ESPFC_SAFE_BENCH_BUILD
+    const int pin = _model.config.pin[PIN_OUTPUT_0 + i];
+    if (pin < 0) return 0;
+    for (size_t j = 0; j < i; ++j)
     {
-      if (_servo)
-      {
-        _servo->attach(i, _model.config.pin[PIN_OUTPUT_0 + i], 1500);
-        _model.logger.info().log("SERVO").log(i).logln(_model.config.pin[PIN_OUTPUT_0 + i]);
-      }
+      const int other = _model.config.pin[PIN_OUTPUT_0 + j];
+      if (pin == other) return 0;
+#if defined(ARCH_RP2040)
+      // GPIO aliases share the same PWM slice/channel. A slice also shares
+      // one clock/wrap, so motor and servo rates cannot differ on that slice.
+      if (((pin >> 1) & 7) == ((other >> 1) & 7) &&
+          (((pin & 1) == (other & 1)) ||
+           channel.servo != _model.config.output.channel[j].servo)) return 0;
+#endif
     }
-else
-{
-  if (_motor)
+#endif
+  }
+  if (needsServo && !_model.config.output.servoRate) return 0;
+#ifndef ESPFC_SAFE_BENCH_BUILD
+  const auto protocol = static_cast<EscProtocol>(_model.config.output.protocol);
+  if (needsMotor && !Control::outputProtocolSupported(protocol)) return 0;
+  EscConfig motorConf{ESC_DRIVER_MOTOR_TIMER, protocol,
+      _model.config.output.rate, !!_model.config.output.async,
+      !!_model.config.output.dshotTelemetry};
+  EscConfig servoConf{ESC_DRIVER_SERVO_TIMER, ESC_PROTOCOL_PWM,
+      _model.config.output.servoRate, true, false};
+  if (needsMotor && escMotor.begin(motorConf) != 1) return 0;
+  if (needsServo && escServo.begin(servoConf) != 1)
   {
-    _motor->attach(
-        i,
-        _model.config.pin[PIN_OUTPUT_0 + i],
-        1000);
-
-    _model.logger.info()
-        .log("MOTOR")
-        .log(i)
-        .logln(
-            _model.config.pin[PIN_OUTPUT_0 + i]);
+    if (needsMotor) escMotor.end();
+    return 0;
   }
-}
-    _model.state.output.telemetry.errors[i] = 0;
-    _model.state.output.telemetry.errorsSum[i] = 0;
-    _model.state.output.telemetry.errorsCount[i] = 0;
-    _model.state.output.telemetry.temperature[i] = 0;
-    _model.state.output.telemetry.current[i] = 0;
-    _model.state.output.telemetry.voltage[i] = 0;
-    _model.state.output.telemetry.erpm[i] = 0;
-    _model.state.output.telemetry.rpm[i] = 0;
-    _model.state.output.telemetry.freq[i] = 0;
-  }
-  if (_motor)
-{
-  motorInitEscDevice(_motor);
-}
-
-  _model.state.mixer.minThrottle = _model.config.output.minCommand + _model.config.output.motorIdle * 0.1f;
-  _model.state.mixer.maxThrottle = _model.config.output.maxThrottle;
-  _model.state.mixer.digitalOutput = _model.config.output.protocol >= ESC_PROTOCOL_DSHOT150;
-  if (_model.state.mixer.digitalOutput)
+  for (size_t i = 0; i < mix.count; ++i)
   {
-    // pwm to dshot mapping: (pwm - 1000) * 2 + 47
-    // so we want to skip command range
-    // 1000->0(disarmed), 1001->49, 2000->2047
-    _model.state.mixer.minThrottle = (_model.config.output.motorIdle * 0.1f) + 1001.f;
-    _model.state.mixer.maxThrottle = 2000.f;
+    const bool servo = _model.config.output.channel[i].servo;
+    auto& driver = servo ? escServo : escMotor;
+    if (driver.attach(i, _model.config.pin[PIN_OUTPUT_0 + i],
+                      servo ? 1500 : _model.config.output.minCommand) != 1)
+    {
+      if (needsMotor) escMotor.end();
+      if (needsServo) escServo.end();
+      return 0;
+    }
   }
-  _model.state.currentMixer = Mixers::getMixer((MixerType)_model.config.mixer.type, _model.state.customMixer);
+  if (needsMotor) state.mixer.escMotor = _motor = &escMotor;
+  if (needsServo) state.mixer.escServo = _servo = &escServo;
+#else
+  state.mixer.nonActuating = true;
+#endif
+  _erpmToHz = EscDriver::getErpmToHzRatio(_model.config.output.motorPoles);
+  _statsCounterMax = state.mixer.timer.rate / 2;
+  _statsCounter = 0;
+  state.mixer.minThrottle = _model.config.output.minCommand + _model.config.output.motorIdle * 0.1f;
+  state.mixer.maxThrottle = _model.config.output.maxThrottle;
+  state.mixer.digitalOutput = _model.config.output.protocol >= ESC_PROTOCOL_DSHOT150;
+  if (state.mixer.digitalOutput)
+  {
+    state.mixer.minThrottle = 1001.0f + _model.config.output.motorIdle * 0.1f;
+    state.mixer.maxThrottle = 2000.0f;
+  }
+  if (_motor) motorInitEscDevice(_motor);
+  state.mixer.outputReady = true;
   return 1;
 }
 
 int FAST_CODE_ATTR Mixer::update()
 {
+  if (!_model.state.mixer.outputReady) return 0;
   uint32_t startTime = micros();
 
   float outputs[OUTPUT_CHANNELS];

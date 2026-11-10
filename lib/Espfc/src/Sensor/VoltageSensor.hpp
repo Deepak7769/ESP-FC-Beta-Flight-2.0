@@ -61,6 +61,9 @@ private:
   uint32_t _lastAdcSampleUs{0};
   int8_t _lastConsumedSource{CURRENT_METER_NONE};
   uint8_t _packAbsentReads{0};
+  uint8_t _packStableReads{0};
+  int8_t _packCandidateCells{0};
+  float _packReferenceVoltage{0.0f};
 };
 
 } // namespace Espfc::Sensor

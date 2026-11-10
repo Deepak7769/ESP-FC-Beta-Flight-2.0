@@ -1,3 +1,5 @@
+#include "Control/Capabilities.hpp"
+#include "Control/RescueSettings.hpp"
 #include "Control/Actuator.h"
 #include "Control/AssistedModeV2.h"
 #include "Hal/Time.hpp"
@@ -275,7 +277,7 @@ int Actuator::begin()
     const auto& c =
         _model.config.conditions[i];
 
-    if (c.id >= MODE_COUNT)
+    if (!Control::modeSupported(c.id))
     {
       continue;
     }
@@ -545,10 +547,12 @@ void Actuator::updateArmingDisabled()
   _model.setArmingDisabled(ARMING_DISABLED_RX_FAILSAFE, _model.state.input.rxLoss || _model.state.input.rxFailSafe);
   _model.setArmingDisabled(ARMING_DISABLED_THROTTLE, !_model.isThrottleLow());
   _model.setArmingDisabled(ARMING_DISABLED_CALIBRATING, _model.calibrationActive());
-  _model.setArmingDisabled(ARMING_DISABLED_MOTOR_PROTOCOL, _model.config.output.protocol == ESC_PROTOCOL_DISABLED);
+  _model.setArmingDisabled(ARMING_DISABLED_MOTOR_PROTOCOL,
+      _model.config.output.protocol == ESC_PROTOCOL_DISABLED || !_model.state.mixer.outputReady);
   _model.setArmingDisabled(
     ARMING_DISABLED_REBOOT_REQUIRED,
-    _model.getRebootRequired() ||
+    _model.getRebootRequired() || !_model.state.storageHealthy ||
+        !_model.state.serialConfigurationValid ||
         _model.state.mode.rescueConfigMode == RESCUE_CONFIG_ACTIVE);
 
   // Check small angle - prevent arming if tilted beyond configured angle
@@ -601,11 +605,17 @@ else
       ARMING_DISABLED_ANGLE,
       false);
 }
-  // GPS arming check intentionally disabled.
-  // GPS is used for position hold but must never block arming.
-  _model.setArmingDisabled(
-      ARMING_DISABLED_GPS,
-      false);
+  // Legacy profiles allow arming without GPS. The stock-compatible profile
+  // can explicitly require a fresh fix when Rescue is configured.
+  const bool requireGps = _model.config.extension.stockRescueEnabled &&
+      !_model.config.extension.stockRescue.allowArmingWithoutFix &&
+      (_model.config.failsafe.procedure == FAILSAFE_PROCEDURE_GPS_RESCUE ||
+       (_model.state.mode.maskPresent & (uint32_t{1} << MODE_GPS_RESCUE)));
+  const auto& gps = _model.state.gps;
+  const bool gpsReady = gps.present && gps.fix && gps.fixType >= 3 &&
+      gps.numSats >= Control::rescueMinimumSatellites(_model.config) &&
+      static_cast<uint32_t>(micros() - gps.lastMsgTs) < 500000u;
+  _model.setArmingDisabled(ARMING_DISABLED_GPS, requireGps && !gpsReady);
 }
 
 void Actuator::updateModeMask()
@@ -1600,7 +1610,7 @@ bool Actuator::gpsRescueEligible() const
       !gps.present ||
       !gps.fix ||
       gps.fixType < 3 ||
-      gps.numSats < _model.config.gps.minSats ||
+      gps.numSats < Control::rescueMinimumSatellites(_model.config) ||
       gps.lastMsgTs == 0)
   {
     return false;
@@ -1623,7 +1633,9 @@ bool Actuator::gpsRescueEligible() const
   // Failsafe falls back to the existing LAND supervisor instead.
   if (gps.distanceToHome <
       static_cast<float>(
-          _model.config.gpsRescue.minDistanceM))
+          _model.config.extension.stockRescueEnabled
+              ? _model.config.extension.stockRescue.minStartDistanceM
+              : _model.config.gpsRescue.minDistanceM))
   {
     return false;
   }
@@ -1752,6 +1764,7 @@ void Actuator::handleGpsRescueSupervisor(uint32_t& newMask)
 bool Actuator::canActivateMode(
     FlightMode mode)
 {
+  if (!Control::modeSupported(mode)) return false;
   switch (mode)
   {
     case MODE_ARMED:

@@ -26,6 +26,7 @@ struct SerialDeviceConfig
   int8_t rx_pin = -1;
   int8_t tx_pin = -1;
   bool inverted = false;
+  bool halfDuplex = false;
   int8_t data_bits = 8;
   SerialDeviceConfigParity parity = SDC_SERIAL_PARITY_NONE;
   SerialDeviceConfigStopBits stop_bits = SDC_SERIAL_STOP_BITS_1;
@@ -49,6 +50,7 @@ public:
 
 private:
   int _index;
+  int _oneWirePin = -1;
 };
 
 SerialUart* getSerialUart(int index);

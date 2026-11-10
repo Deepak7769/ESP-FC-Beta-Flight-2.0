@@ -1,4 +1,7 @@
 #include "Connect/MspProcessor.hpp"
+#include "Utils/ConfigValidation.hpp"
+#include "Control/RescueSettings.hpp"
+#include <memory>
 #include "Connect/MspBoxMapping.hpp"
 #include "Control/AssistedModeV2.h"
 #include "Hardware.h"
@@ -79,6 +82,7 @@ static bool mspCommandRequiresDisarmed(uint16_t cmd, int payloadSize)
     case MSP_SET_VTX_CONFIG:
     case MSP_SET_ARMING_DISABLED:
     case MSP_SET_PASSTHROUGH:
+    case MSP_SET_GPS_RESCUE:
     case MSP_SET_GPS_CONFIG:
     case MSP_EEPROM_WRITE:
     case MSP_RESET_CONF:
@@ -92,6 +96,19 @@ static bool mspCommandRequiresDisarmed(uint16_t cmd, int payloadSize)
 
     default:
       return false;
+  }
+}
+
+static bool mspConfigurationWrite(uint16_t cmd, int size)
+{
+  if (!mspCommandRequiresDisarmed(cmd, size)) return false;
+  switch (cmd)
+  {
+    case MSP_DATAFLASH_ERASE: case MSP_SET_MOTOR: case MSP_SET_ARMING_DISABLED:
+    case MSP_SET_PASSTHROUGH: case MSP_ACC_CALIBRATION: case MSP_MAG_CALIBRATION:
+    case MSP_EEPROM_WRITE: case MSP_RESET_CONF: case MSP_REBOOT: case MSP_SET_RTC:
+      return false;
+    default: return true;
   }
 }
 
@@ -124,7 +141,7 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
       return size == 6;
 
     case MSP_SET_RX_MAP:
-      return size == 8 || size == Espfc::INPUT_CHANNELS;
+      return size == 8;
 
     case MSP_SET_RSSI_CONFIG:
     case MSP_SET_PID_CONTROLLER:
@@ -146,11 +163,11 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
     case MSP_SET_RX_CONFIG:
       return size == 12 || size == 16 || size == 22 ||
              size == 23 || size == 29 || size == 30 ||
-             size == 31 || size == 32 || size == 38 || size == 39;
+             size == 31 || size == 32 || size == 38;
     case MSP_SET_RC_TUNING:
       return size == 10 || size == 11 || size == 12 ||
              size == 13 || size == 14 || size == 16 ||
-             size == 22 || size == 23 || size == 24;
+             size == 22 || size == 23;
     case MSP_SET_ADVANCED_CONFIG:
       return size == 6 || size == 8 || size == 9 ||
              size == 10 || size == 18 || size == 19 ||
@@ -158,8 +175,17 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
     case MSP_SET_FILTER_CONFIG:
       return size == 5 || size == 13 || size == 17 ||
              size == 18 || size == 28 || size == 37 ||
-             size == 45 || size == 47 || size == 49 || size == 56;
+             size == 45 || size == 47 || size == 49;
 
+    case MSP_SET_GPS_RESCUE: return size == 26;
+    case MSP_SET_BLACKBOX_CONFIG: return size == 3 || size == 5 || size == 6 || size == 10;
+    case MSP_SET_VTX_CONFIG: return size == 2 || size == 4 || size == 5 || size == 7 || size == 11;
+    case MSP_SET_RTC: return size == 6;
+    case MSP_ACC_CALIBRATION: case MSP_MAG_CALIBRATION: case MSP_EEPROM_WRITE:
+    case MSP_RESET_CONF: case MSP_DATAFLASH_ERASE: return size == 0;
+    case MSP_REBOOT: return size == 0 || size == 1;
+    case MSP_SET_PASSTHROUGH: return size == 0 || size == 2;
+    case MSP_SET_ARMING_DISABLED: return size == 1 || size == 2;
     default:
       return true; // Other setters have their own variable-length contracts.
   }
@@ -177,6 +203,7 @@ static uint16_t mspPayloadU16(const Espfc::Connect::MspMessage& m,
 
 static bool mspMutatorValuesValid(const Espfc::Connect::MspMessage& m)
 {
+  if (m.cmd == MSP_SET_PID_ADVANCED && m.remain() >= 23 && mspPayloadU16(m, 21) > 250) return false;
   if (m.cmd == MSP_SET_RX_CONFIG && m.remain() >= 16)
   {
     // Airmode threshold is supplied in microseconds; never let a value
@@ -204,7 +231,7 @@ static bool mspMutatorValuesValid(const Espfc::Connect::MspMessage& m)
 static uint8_t mspBatteryState(const Espfc::Model& model)
 {
   const auto& battery = model.state.battery;
-  if (battery.cells == 0) return 3u; // BATTERY_NOT_PRESENT
+  if (battery.cells == 0) return battery.voltageUnfiltered >= 2.5f ? 4u : 3u; // BATTERY_NOT_PRESENT
   if (!std::isfinite(battery.voltage) || battery.voltage <= 0.0f)
     return 4u; // BATTERY_INIT / measurement unavailable
 
@@ -350,11 +377,10 @@ static uint16_t toIbatCurrent(float current)
 
 constexpr uint8_t MSP_PASSTHROUGH_ESC_4WAY = 0xff;
 
-// FC version reported over MSP, mirrors Betaflight 2026.6 CalVer for configurator compatibility
+// ESP-FC project version in the three-byte MSP version envelope.
 constexpr uint8_t MSP_FC_VERSION_YEAR = 2026 - 2000;
 constexpr uint8_t MSP_FC_VERSION_MONTH = 6;
-constexpr uint8_t MSP_FC_VERSION_PATCH = 0;
-constexpr char MSP_FC_VERSION_STRING[] = "2026.6.0";
+constexpr uint8_t MSP_FC_VERSION_PATCH = FC_VERSION_PATCH_LEVEL;
 
 // MCU type id sentinel telling the configurator the name follows as a string
 constexpr uint8_t MCU_TYPE_ID_PROVIDED_BY_NAME = 255;
@@ -443,6 +469,8 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
   r.cmd = m.cmd;
   r.version = m.version;
   r.result = 1;
+  r.len = 0;
+  if (m.received > MSP_BUF_SIZE || m.read > m.received) { r.result = -1; return; }
   if (!mspMutatorPayloadSizeValid(m.cmd, m.remain()) ||
       !mspMutatorValuesValid(m))
   {
@@ -455,6 +483,12 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
     r.result = -1;
     return;
   }
+  const bool configWrite = mspConfigurationWrite(m.cmd, m.remain());
+  std::unique_ptr<ModelConfig> staged;
+  if (configWrite) staged.reset(new ModelConfig(_model.config));
+  ModelConfig& config = staged ? *staged : _model.config;
+  bool needsReload = false, needsReboot = false, needsSanitize = false;
+  bool events[5]{};
   switch (m.cmd)
   {
     case MSP_API_VERSION:
@@ -471,7 +505,6 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
       r.writeU8(MSP_FC_VERSION_YEAR);
       r.writeU8(MSP_FC_VERSION_MONTH);
       r.writeU8(MSP_FC_VERSION_PATCH);
-      r.writePString(MSP_FC_VERSION_STRING);
       break;
 
     case MSP2_MCU_INFO:
@@ -510,7 +543,7 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
         {
           problems |= 1 << 0; // acc calibration required
         }
-        if (_model.config.output.protocol == ESC_PROTOCOL_DISABLED)
+        if (config.output.protocol == ESC_PROTOCOL_DISABLED)
         {
           problems |= 1 << 1; // no motor protocol
         }
@@ -538,9 +571,11 @@ case MSP_BUILD_INFO:
   #if defined(ESPFC_ALTHOLD_V2_ACTIVE)
   r.writeU16(16422); // USE_ALTITUDE_HOLD only with authority
   #endif
-  r.writeU16(16423); // USE_SOFTSERIAL
-  r.writeU16(16421); // USE_VTX
+  if (Control::softSerialSupported()) r.writeU16(16423); // USE_SOFTSERIAL
+  if (Control::vtxSupported()) r.writeU16(16421); // USE_VTX
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE) && defined(ESPFC_LAND_V2_ACTIVE)
   r.writeU16(16425); // USE_POSITION_HOLD
+#endif
   r.writeU16(8230);  // USE_BRUSHED
   r.writeU16(8231);  // USE_DSHOT
   r.writeU16(8232);  // USE_MULTISHOT
@@ -578,26 +613,32 @@ case MSP_BUILD_INFO:
       // flight mode flags (above 32 bits)
       r.writeU8(0); // count + rest of flags
       // Write arming disable flags
-      r.writeU8(ARMING_DISABLED_FLAGS_COUNT);            // 1 byte, flag count
-      r.writeU32(_model.state.mode.armingDisabledFlags); // 4 bytes, flags
+      r.writeU8(26); // Betaflight 4.5 / API 1.46 arming flag count
+      {
+        const uint32_t internal = _model.state.mode.armingDisabledFlags;
+        uint32_t wire = internal & ((uint32_t{1} << 25) - 1u);
+        // Newer private flags have no API 1.46 names. Expose their inhibit
+        // through REBOOT_REQUIRED and remap ARM_SWITCH from internal bit 29.
+        if (internal & (ARMING_DISABLED_CRASHFLIP | ARMING_DISABLED_ALTHOLD |
+                        ARMING_DISABLED_POSHOLD | ARMING_DISABLED_AUTOPILOT))
+          wire |= ARMING_DISABLED_REBOOT_REQUIRED;
+        if (internal & ARMING_DISABLED_ARM_SWITCH) wire |= uint32_t{1} << 25;
+        r.writeU32(wire);
+      }
       r.writeU8(_model.getRebootRequired());             // reboot required
       // 1.46
       r.writeU16(0); // getCoreTemperatureCelsius() // cpu temperature
-      r.writeU8(1);  // CONTROL_RATE_PROFILE_COUNT
-      // 1.48
-      r.writeU8(1); // BATTERY_PROFILE_COUNT
-      r.writeU8(0); // getCurrentBatteryProfileIndex
       break;
 
     case MSP_NAME:
-      r.writeString(_model.config.modelName);
+      r.writeString(config.modelName);
       break;
 
     case MSP_SET_NAME:
-      std::fill_n(&_model.config.modelName[0], MODEL_NAME_LEN + 1, 0);
+      std::fill_n(&config.modelName[0], MODEL_NAME_LEN + 1, 0);
       for (size_t i = 0; i < std::min((size_t)m.received, MODEL_NAME_LEN); i++)
       {
-        _model.config.modelName[i] = m.readU8();
+        config.modelName[i] = m.readU8();
       }
       break;
 
@@ -607,7 +648,7 @@ case MSP_BUILD_INFO:
       switch (textType)
       {
         case MSP2TEXT_CRAFT_NAME:
-          r.writePString(_model.config.modelName);
+          r.writePString(config.modelName);
           break;
         default:
           r.writePString(""); // unsupported text types reported as empty
@@ -619,13 +660,15 @@ case MSP_BUILD_INFO:
     case MSP2_SET_TEXT: {
       const uint8_t textType = m.readU8();
       const uint8_t textLength = m.readU8();
+      if (m.decodeError || m.remain() != textLength || textType != MSP2TEXT_CRAFT_NAME || textLength > MODEL_NAME_LEN)
+      { r.result = -1; break; }
       if (textType == MSP2TEXT_CRAFT_NAME)
       {
-        std::fill_n(&_model.config.modelName[0], MODEL_NAME_LEN + 1, 0);
+        std::fill_n(&config.modelName[0], MODEL_NAME_LEN + 1, 0);
         for (size_t i = 0; i < textLength; i++)
         {
           const uint8_t c = m.readU8();
-          if (i < MODEL_NAME_LEN) _model.config.modelName[i] = c;
+          if (i < MODEL_NAME_LEN) config.modelName[i] = c;
         }
       }
       else
@@ -636,21 +679,28 @@ case MSP_BUILD_INFO:
     }
 
     case MSP_BOXNAMES:
-      r.writeString("ARM;AIR MODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOX ERASE;ANTI GRAVITY;POS HOLD;GPS RESCUE;");
+      for (uint8_t mode = 0; mode < MODE_COUNT; ++mode)
+      {
+        if (!Control::modeSupported(mode)) continue;
+        static const char* names[] = {"ARM", "AIR MODE", "ANGLE", "ALTHOLD", "BEEPER",
+            "FAILSAFE", "BLACKBOX", "BLACKBOX ERASE", "ANTI GRAVITY", "POS HOLD", "GPS RESCUE"};
+        r.writeString(names[mode]);
+        r.writeU8(';');
+      }
       break;
 
     case MSP_BOXIDS:
-      for (const uint8_t id : MspBoxMapping::permanentIds)
-        r.writeU8(id);
+      for (uint8_t mode = 0; mode < MODE_COUNT; ++mode)
+        if (Control::modeSupported(mode)) r.writeU8(MspBoxMapping::encode(mode));
       break;
 
     case MSP_MODE_RANGES:
       for (size_t i = 0; i < ACTUATOR_CONDITIONS; i++)
       {
-        r.writeU8(MspBoxMapping::encode(_model.config.conditions[i].id));
-        r.writeU8(_model.config.conditions[i].ch - AXIS_AUX_1);
-        r.writeU8((_model.config.conditions[i].min - 900) / 25);
-        r.writeU8((_model.config.conditions[i].max - 900) / 25);
+        r.writeU8(MspBoxMapping::encode(config.conditions[i].id));
+        r.writeU8(config.conditions[i].ch - AXIS_AUX_1);
+        r.writeU8((config.conditions[i].min - 900) / 25);
+        r.writeU8((config.conditions[i].max - 900) / 25);
       }
       break;
 
@@ -658,9 +708,9 @@ case MSP_BUILD_INFO:
       r.writeU8(3); // bytes per entry: permanentId, logicMode, linkedPermanentId
       for (size_t i = 0; i < ACTUATOR_CONDITIONS; i++)
       {
-        r.writeU8(MspBoxMapping::encode(_model.config.conditions[i].id));
-        r.writeU8(_model.config.conditions[i].logicMode);
-        r.writeU8(_model.config.conditions[i].linkId == 0 ? 0 : MspBoxMapping::encode(_model.config.conditions[i].linkId));
+        r.writeU8(MspBoxMapping::encode(config.conditions[i].id));
+        r.writeU8(config.conditions[i].logicMode);
+        r.writeU8(config.conditions[i].linkId == 0 ? 0 : MspBoxMapping::encode(config.conditions[i].linkId));
       }
       break;
 
@@ -672,7 +722,7 @@ case MSP_BUILD_INFO:
         break;
       }
       // Retain optional link and logic fields for legacy 5-byte updates.
-      ActuatorCondition candidate = _model.config.conditions[i];
+      ActuatorCondition candidate = config.conditions[i];
       const int internalMode = MspBoxMapping::decode(m.readU8());
       const int channel = static_cast<int>(m.readU8()) + AXIS_AUX_1;
       candidate.min = static_cast<int16_t>(m.readU8() * 25 + 900);
@@ -698,7 +748,7 @@ case MSP_BUILD_INFO:
       if (m.received == 7)
         candidate.linkId = static_cast<uint8_t>(internalLink);
       candidate.ch = static_cast<uint8_t>(channel);
-      _model.config.conditions[i] = candidate;
+      config.conditions[i] = candidate;
     }
     break;
 
@@ -712,25 +762,25 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_FEATURE_CONFIG:
-      r.writeU32(_model.config.featureMask);
+      r.writeU32(config.featureMask);
       break;
 
     case MSP_SET_FEATURE_CONFIG:
-      _model.config.featureMask = m.readU32();
-      _model.reload();
-      _model.setRebootRequired();
+      config.featureMask = m.readU32();
+      needsReload = true;
+      needsReboot = true;
       break;
 
     case MSP_BATTERY_CONFIG:
-      r.writeU8(34);                                        // vbatmincellvoltage
-      r.writeU8(42);                                        // vbatmaxcellvoltage
-      r.writeU8((_model.config.vbat.cellWarning + 5) / 10); // vbatwarningcellvoltage
-      r.writeU16(0);                                        // batteryCapacity
-      r.writeU8(_model.config.vbat.source);                 // voltageMeterSource
-      r.writeU8(_model.config.ibat.source);                 // currentMeterSource
-      r.writeU16(340);                                      // vbatmincellvoltage
-      r.writeU16(420);                                      // vbatmaxcellvoltage
-      r.writeU16(_model.config.vbat.cellWarning);           // vbatwarningcellvoltage
+      r.writeU8((config.extension.cellMinimum + 5) / 10); // vbatmincellvoltage
+      r.writeU8((config.extension.cellMaximum + 5) / 10); // vbatmaxcellvoltage
+      r.writeU8((config.vbat.cellWarning + 5) / 10); // vbatwarningcellvoltage
+      r.writeU16(config.extension.capacityMah); // batteryCapacity
+      r.writeU8(config.vbat.source);                 // voltageMeterSource
+      r.writeU8(config.ibat.source);                 // currentMeterSource
+      r.writeU16(config.extension.cellMinimum); // vbatmincellvoltage
+      r.writeU16(config.extension.cellMaximum); // vbatmaxcellvoltage
+      r.writeU16(config.vbat.cellWarning);           // vbatwarningcellvoltage
       break;
 
     case MSP_SET_BATTERY_CONFIG:
@@ -743,24 +793,24 @@ case MSP_BUILD_INFO:
         r.result = -1;
         break;
       }
-      m.readU8();                                           // vbatmincellvoltage
-      m.readU8();                                           // vbatmaxcellvoltage
-      _model.config.vbat.cellWarning = m.readU8() * 10;     // vbatwarningcellvoltage
-      m.readU16();                                          // batteryCapacity
-      _model.config.vbat.source = toVbatSource(m.readU8()); // voltageMeterSource
-      _model.config.ibat.source = toIbatSource(m.readU8()); // currentMeterSource
+      config.extension.cellMinimum = m.readU8() * 10;
+      config.extension.cellMaximum = m.readU8() * 10;
+      config.vbat.cellWarning = m.readU8() * 10;     // vbatwarningcellvoltage
+      config.extension.capacityMah = m.readU16();
+      config.vbat.source = toVbatSource(m.readU8()); // voltageMeterSource
+      config.ibat.source = toIbatSource(m.readU8()); // currentMeterSource
       if (m.remain() >= 6)
       {
-        m.readU16(); // vbatmincellvoltage
-        m.readU16(); // vbatmaxcellvoltage
-        _model.config.vbat.cellWarning = m.readU16();
+        config.extension.cellMinimum = m.readU16();
+        config.extension.cellMaximum = m.readU16();
+        config.vbat.cellWarning = m.readU16();
       }
       break;
 
     case MSP_BATTERY_STATE:
       // battery characteristics
       r.writeU8(_model.state.battery.cells); // cell count, 0 indicates battery not detected.
-      r.writeU16(0);                         // capacity in mAh
+      r.writeU16(config.extension.capacityMah); // capacity in mAh
 
       // battery state
       r.writeU8(toVbatVoltageLegacy(_model.state.battery.voltage)); // in 0.1V steps
@@ -785,7 +835,7 @@ case MSP_BUILD_INFO:
     case MSP_CURRENT_METERS:
     {
       const bool mspSource =
-          _model.config.ibat.source ==
+          config.ibat.source ==
           CURRENT_METER_MSP;
 
       // Betaflight reserves 10..19 for battery ADC current meters and 90..99
@@ -820,9 +870,9 @@ case MSP_BUILD_INFO:
         r.writeU8(5);                          // frame size (5)
         r.writeU8(i + 10);                     // id (10-19 vbat adc)
         r.writeU8(0);                          // type resistor divider
-        r.writeU8(_model.config.vbat.scale);   // scale
-        r.writeU8(_model.config.vbat.resDiv);  // resdivval
-        r.writeU8(_model.config.vbat.resMult); // resdivmultiplier
+        r.writeU8(config.vbat.scale);   // scale
+        r.writeU8(config.vbat.resDiv);  // resdivval
+        r.writeU8(config.vbat.resMult); // resdivmultiplier
       }
       break;
 
@@ -836,9 +886,9 @@ case MSP_BUILD_INFO:
         r.result = -1;
         break;
       }
-      _model.config.vbat.scale = scale;
-      _model.config.vbat.resDiv = divisor;
-      _model.config.vbat.resMult = multiplier;
+      config.vbat.scale = scale;
+      config.vbat.resDiv = divisor;
+      config.vbat.resMult = multiplier;
     }
     break;
 
@@ -849,8 +899,8 @@ case MSP_BUILD_INFO:
         r.writeU8(6);                          // frame size (6)
         r.writeU8(i + 10);                     // id (10-19 ibat adc)
         r.writeU8(1);                          // type adc
-        r.writeU16(_model.config.ibat.scale);  // scale
-        r.writeU16(_model.config.ibat.offset); // offset
+        r.writeU16(config.ibat.scale);  // scale
+        r.writeU16(config.ibat.offset); // offset
       }
       break;
 
@@ -863,8 +913,8 @@ case MSP_BUILD_INFO:
         r.result = -1;
         break;
       }
-      _model.config.ibat.scale = static_cast<int16_t>(scale);
-      _model.config.ibat.offset = static_cast<int16_t>(offset);
+      config.ibat.scale = static_cast<int16_t>(scale);
+      config.ibat.offset = static_cast<int16_t>(offset);
     }
     break;
 
@@ -921,39 +971,39 @@ case MSP_BUILD_INFO:
     break;
 
     case MSP_ACC_TRIM:
-      r.writeU16(_model.config.accel.trim[0]); // pitch
-      r.writeU16(_model.config.accel.trim[1]); // roll
+      r.writeU16(config.accel.trim[0]); // pitch
+      r.writeU16(config.accel.trim[1]); // roll
       break;
 
     case MSP_SET_ACC_TRIM:
-      _model.config.accel.trim[0] = std::clamp<int16_t>(m.readU16(), -300, 300); // pitch
-      _model.config.accel.trim[1] = std::clamp<int16_t>(m.readU16(), -300, 300); // roll
-      _model.notifyConfigChange(ModelChangeEvent::MODEL_CHANGE_ACCEL);
+      config.accel.trim[0] = std::clamp<int16_t>(m.readU16(), -300, 300); // pitch
+      config.accel.trim[1] = std::clamp<int16_t>(m.readU16(), -300, 300); // roll
+      events[static_cast<size_t>(ModelChangeEvent::MODEL_CHANGE_ACCEL)] = true;
       break;
 
     case MSP_MIXER_CONFIG:
-      r.writeU8(_model.config.mixer.type);       // mixerMode, QUAD_X
-      r.writeU8(_model.config.mixer.yawReverse); // yaw_motors_reversed
+      r.writeU8(config.mixer.type);       // mixerMode, QUAD_X
+      r.writeU8(config.mixer.yawReverse); // yaw_motors_reversed
       break;
 
     case MSP_SET_MIXER_CONFIG:
-      _model.config.mixer.type = m.readU8();       // mixerMode, QUAD_X
-      _model.config.mixer.yawReverse = m.readU8(); // yaw_motors_reversed
+      config.mixer.type = m.readU8();       // mixerMode, QUAD_X
+      config.mixer.yawReverse = m.readU8(); // yaw_motors_reversed
       break;
 
     case MSP_SENSOR_CONFIG:
-      r.writeU8(toAccHw(_model.config.accel.dev)); // 3 acc mpu6050
-      r.writeU8(_model.config.baro.dev);           // 2 baro bmp085
-      r.writeU8(_model.config.mag.dev);            // 3 mag hmc5883l
+      r.writeU8(toAccHw(config.accel.dev)); // 3 acc mpu6050
+      r.writeU8(config.baro.dev);           // 2 baro bmp085
+      r.writeU8(config.mag.dev);            // 3 mag hmc5883l
       // 1.46
       r.writeU8(0); // rangefinder 0=none
       r.writeU8(0); // opticalflow 0=none
       break;
 
     case MSP_SET_SENSOR_CONFIG:
-      _model.config.accel.dev = fromAccHw(m.readU8()); // 3 acc mpu6050
-      _model.config.baro.dev = m.readU8();             // 2 baro bmp085
-      _model.config.mag.dev = m.readU8();              // 3 mag hmc5883l
+      config.accel.dev = fromAccHw(m.readU8()); // 3 acc mpu6050
+      config.baro.dev = m.readU8();             // 2 baro bmp085
+      config.mag.dev = m.readU8();              // 3 mag hmc5883l
       // 1.46
       if (m.remain() >= 1)
       {
@@ -963,8 +1013,8 @@ case MSP_BUILD_INFO:
       {
         m.readU8(); // opticalflow skip
       }
-      _model.reload();
-      _model.setRebootRequired();
+      needsReload = true;
+      needsReboot = true;
       break;
 
     case MSP2_SENSOR_CONFIG_ACTIVE: {
@@ -986,9 +1036,9 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SENSOR_ALIGNMENT:
-      r.writeU8(_model.config.gyro.align); // gyro align
-      r.writeU8(_model.config.gyro.align); // acc align, Starting with 4.0 gyro and acc alignment are the same
-      r.writeU8(_model.config.mag.align);  // mag align
+      r.writeU8(config.gyro.align); // gyro align
+      r.writeU8(config.gyro.align); // acc align, Starting with 4.0 gyro and acc alignment are the same
+      r.writeU8(config.mag.align);  // mag align
       // 1.41+
       r.writeU8(_model.state.gyro.present ? 1 : 0); // gyro detection mask GYRO_1_MASK
       r.writeU8(_model.state.gyro.present ? 1 : 0); // gyro_enable_mask, was gyro_to_use
@@ -1000,12 +1050,12 @@ case MSP_BUILD_INFO:
     case MSP_SET_SENSOR_ALIGNMENT: {
       uint8_t gyroAlign = m.readU8();       // gyro align
       m.readU8();                           // discard deprecated acc align
-      _model.config.mag.align = m.readU8(); // mag align
+      config.mag.align = m.readU8(); // mag align
       // API >= 1.41 - support the gyro_to_use and alignment for gyros 1 & 2
       if (m.remain() >= 1)
       {
         uint8_t gyroEnableMask = m.readU8(); // gyro_enable_mask
-        _model.config.gyro.dev = gyroEnableMask & 1 ? GYRO_AUTO : GYRO_NONE;
+        config.gyro.dev = gyroEnableMask & 1 ? GYRO_AUTO : GYRO_NONE;
       }
       if (m.remain() >= 6)
       {
@@ -1013,23 +1063,23 @@ case MSP_BUILD_INFO:
         m.readU16(); // gyro 1 pitch
         m.readU16(); // gyro 1 yaw
       }
-      _model.config.gyro.align = gyroAlign;
+      config.gyro.align = gyroAlign;
       break;
     }
 
     case MSP_CF_SERIAL_CONFIG:
       for (int i = 0; i < SERIAL_UART_COUNT; i++)
       {
-        if (_model.config.serial[i].id >= SERIAL_ID_SOFTSERIAL_1 && !_model.isFeatureActive(FEATURE_SOFTSERIAL))
+        if (config.serial[i].id >= SERIAL_ID_SOFTSERIAL_1 && !_model.isFeatureActive(FEATURE_SOFTSERIAL))
         {
           continue;
         }
-        r.writeU8(_model.config.serial[i].id);                        // identifier
-        r.writeU16(_model.config.serial[i].functionMask);             // functionMask
-        r.writeU8(toBaudIndex(_model.config.serial[i].baud));         // msp_baudrateIndex
+        r.writeU8(config.serial[i].id);                        // identifier
+        r.writeU16(config.serial[i].functionMask);             // functionMask
+        r.writeU8(toBaudIndex(config.serial[i].baud));         // msp_baudrateIndex
         r.writeU8(0);                                                 // gps_baudrateIndex
         r.writeU8(0);                                                 // telemetry_baudrateIndex
-        r.writeU8(toBaudIndex(_model.config.serial[i].blackboxBaud)); // blackbox_baudrateIndex
+        r.writeU8(toBaudIndex(config.serial[i].blackboxBaud)); // blackbox_baudrateIndex
       }
       break;
 
@@ -1037,7 +1087,7 @@ case MSP_BUILD_INFO:
       uint8_t count = 0;
       for (int i = 0; i < SERIAL_UART_COUNT; i++)
       {
-        if (_model.config.serial[i].id >= SERIAL_ID_SOFTSERIAL_1 && !_model.isFeatureActive(FEATURE_SOFTSERIAL))
+        if (config.serial[i].id >= SERIAL_ID_SOFTSERIAL_1 && !_model.isFeatureActive(FEATURE_SOFTSERIAL))
         {
           continue;
         }
@@ -1046,16 +1096,16 @@ case MSP_BUILD_INFO:
       r.writeU8(count);
       for (int i = 0; i < SERIAL_UART_COUNT; i++)
       {
-        if (_model.config.serial[i].id >= SERIAL_ID_SOFTSERIAL_1 && !_model.isFeatureActive(FEATURE_SOFTSERIAL))
+        if (config.serial[i].id >= SERIAL_ID_SOFTSERIAL_1 && !_model.isFeatureActive(FEATURE_SOFTSERIAL))
         {
           continue;
         }
-        r.writeU8(_model.config.serial[i].id);                        // identifier
-        r.writeU32(_model.config.serial[i].functionMask);             // functionMask
-        r.writeU8(toBaudIndex(_model.config.serial[i].baud));         // msp_baudrateIndex
+        r.writeU8(config.serial[i].id);                        // identifier
+        r.writeU32(config.serial[i].functionMask);             // functionMask
+        r.writeU8(toBaudIndex(config.serial[i].baud));         // msp_baudrateIndex
         r.writeU8(0);                                                 // gps_baudrateIndex
         r.writeU8(0);                                                 // telemetry_baudrateIndex
-        r.writeU8(toBaudIndex(_model.config.serial[i].blackboxBaud)); // blackbox_baudrateIndex
+        r.writeU8(toBaudIndex(config.serial[i].blackboxBaud)); // blackbox_baudrateIndex
       }
       break;
     }
@@ -1073,24 +1123,26 @@ case MSP_BUILD_INFO:
         int k = _model.getSerialIndex((SerialPortId)id);
         if (k == -1)
         {
-          m.advance(packetSize - 1);
-          continue;
+          r.result = -1;
+          break;
         }
-        _model.config.serial[k].id = id;
-        _model.config.serial[k].functionMask = m.readU16();
-        _model.config.serial[k].baud = fromBaudIndex((SerialSpeedIndex)m.readU8());
+        config.serial[k].id = id;
+        config.serial[k].functionMask = m.readU16();
+        config.serial[k].baud = fromBaudIndex((SerialSpeedIndex)m.readU8());
         m.readU8();
         m.readU8();
-        _model.config.serial[k].blackboxBaud = fromBaudIndex((SerialSpeedIndex)m.readU8());
+        config.serial[k].blackboxBaud = fromBaudIndex((SerialSpeedIndex)m.readU8());
       }
-      _model.reload();
-      _model.setRebootRequired();
+      needsReload = true;
+      needsReboot = true;
       break;
     }
 
     case MSP2_COMMON_SET_SERIAL_CONFIG: {
-      m.readU8(); // was count - ignore
+      const unsigned count = m.readU8();
       const int packetSize = 1 + 4 + 4;
+      if (m.decodeError || m.remain() != static_cast<int>(count) * packetSize)
+      { r.result = -1; break; }
       if (m.remain() % packetSize != 0)
       {
         r.result = -1;
@@ -1102,38 +1154,52 @@ case MSP_BUILD_INFO:
         int k = _model.getSerialIndex((SerialPortId)id);
         if (k == -1)
         {
-          m.advance(packetSize - 1);
-          continue;
+          r.result = -1;
+          break;
         }
-        _model.config.serial[k].id = id;
-        _model.config.serial[k].functionMask = m.readU32();
-        _model.config.serial[k].baud = fromBaudIndex((SerialSpeedIndex)m.readU8());
+        config.serial[k].id = id;
+        config.serial[k].functionMask = m.readU32();
+        config.serial[k].baud = fromBaudIndex((SerialSpeedIndex)m.readU8());
         m.readU8();
         m.readU8();
-        _model.config.serial[k].blackboxBaud = fromBaudIndex((SerialSpeedIndex)m.readU8());
+        config.serial[k].blackboxBaud = fromBaudIndex((SerialSpeedIndex)m.readU8());
       }
-      _model.reload();
-      _model.setRebootRequired();
+      needsReload = true;
+      needsReboot = true;
       break;
     }
 
     case MSP_BLACKBOX_CONFIG:
       r.writeU8(1);                          // Blackbox supported
-      r.writeU8(_model.config.blackbox.dev); // device serial or none
+      r.writeU8(config.blackbox.dev); // device serial or none
       r.writeU8(1);                          // blackboxGetRateNum()); // unused
       r.writeU8(1);                          // blackboxGetRateDenom());
       r.writeU16(0);                         // blackboxGetPRatio()); // p_denom
       // 1.44
-      r.writeU8(_model.config.blackbox.pDenom); // sample_rate
+      r.writeU8(config.blackbox.pDenom); // sample_rate
       // 1.45
-      r.writeU32(~_model.config.blackbox.fieldsMask); // fields mask
+      r.writeU32(~config.blackbox.fieldsMask); // fields mask
       break;
 
     case MSP_SET_BLACKBOX_CONFIG:
+      if (!blackboxMayEditConfig()) { r.result = -1; break; }
+      if (m.remain() < 6)
+      {
+        // Legacy rate conversion divides by both denominator and pRatio.
+        // Logging may be disabled, leaving targetPidLooptime uninitialized.
+        const uint16_t rateNum = m.buffer[m.read + 1];
+        const uint16_t rateDenom = m.buffer[m.read + 2];
+        if (!targetPidLooptime || (m.remain() == 3 && (!rateNum || !rateDenom)))
+        { r.result = -1; break; }
+        const uint32_t ratio = m.remain() == 5 ? mspPayloadU16(m, 3) :
+            (32000u / targetPidLooptime) * rateNum / rateDenom;
+        if (!ratio || uint64_t(targetPidLooptime) * ratio > 32000u)
+        { r.result = -1; break; }
+      }
       // Don't allow config to be updated while Blackbox is logging
       if (blackboxMayEditConfig())
       {
-        _model.config.blackbox.dev = m.readU8();
+        config.blackbox.dev = m.readU8();
         const int rateNum = m.readU8();   // was rate_num
         const int rateDenom = m.readU8(); // was rate_denom
         uint16_t pRatio = 0;
@@ -1152,18 +1218,18 @@ case MSP_BUILD_INFO:
         if (m.remain() >= 1)
         {
           // sample_rate specified, so use it directly
-          _model.config.blackbox.pDenom = m.readU8();
+          config.blackbox.pDenom = m.readU8();
         }
         else
         {
           // sample_rate not specified in MSP, so calculate it from old p_ratio
-          _model.config.blackbox.pDenom = blackboxCalculateSampleRate(pRatio);
+          config.blackbox.pDenom = blackboxCalculateSampleRate(pRatio);
         }
 
         // 1.45
         if (m.remain() >= 4)
         {
-          _model.config.blackbox.fieldsMask = ~m.readU32();
+          config.blackbox.fieldsMask = ~m.readU32();
         }
       }
       break;
@@ -1190,78 +1256,80 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_BEEPER_CONFIG:
-      r.writeU32(~_model.config.buzzer.beeperMask); // beeper mask
+      r.writeU32(~config.buzzer.beeperMask); // beeper mask
       r.writeU8(0);                                 // dshot beacon tone
       r.writeU32(0);                                // dshot beacon off flags
       break;
 
     case MSP_SET_BEEPER_CONFIG:
-      _model.config.buzzer.beeperMask = ~m.readU32(); // beeper mask
+      config.buzzer.beeperMask = ~m.readU32();
+      if (m.remain() == 5 && (m.readU8() != 0 || m.readU32() != 0)) r.result = -1;
       break;
 
     case MSP_BOARD_ALIGNMENT_CONFIG:
-      r.writeU16(_model.config.boardAlignment[0]); // roll
-      r.writeU16(_model.config.boardAlignment[1]); // pitch
-      r.writeU16(_model.config.boardAlignment[2]); // yaw
+      r.writeU16(config.boardAlignment[0]); // roll
+      r.writeU16(config.boardAlignment[1]); // pitch
+      r.writeU16(config.boardAlignment[2]); // yaw
       break;
 
     case MSP_SET_BOARD_ALIGNMENT_CONFIG:
-      _model.config.boardAlignment[0] = m.readU16();
-      _model.config.boardAlignment[1] = m.readU16();
-      _model.config.boardAlignment[2] = m.readU16();
-      _model.notifyConfigChange(ModelChangeEvent::MODEL_CHANGE_ACCEL);
+      config.boardAlignment[0] = m.readU16();
+      config.boardAlignment[1] = m.readU16();
+      config.boardAlignment[2] = m.readU16();
+      events[static_cast<size_t>(ModelChangeEvent::MODEL_CHANGE_ACCEL)] = true;
       break;
 
     case MSP_RX_MAP:
-      for (size_t i = 0; i < INPUT_CHANNELS; i++)
+      for (size_t i = 0; i < 8; i++)
       {
-        r.writeU8(_model.config.input.channel[i].map);
+        r.writeU8(config.input.channel[i].map);
       }
       break;
 
     case MSP_SET_RX_MAP:
       for (size_t i = 0; i < 8; i++)
       {
-        _model.config.input.channel[i].map = m.readU8();
+        config.input.channel[i].map = m.readU8();
       }
       break;
 
     case MSP_RSSI_CONFIG:
-      r.writeU8(_model.config.input.rssiChannel);
+      r.writeU8(config.input.rssiChannel);
       break;
 
     case MSP_SET_RSSI_CONFIG:
-      _model.config.input.rssiChannel = m.readU8();
+      config.input.rssiChannel = m.readU8();
       break;
 
     case MSP_MOTOR_CONFIG:
       r.writeU16(0);                                // minthrottle (dropped in 1.46)
-      r.writeU16(_model.config.output.maxThrottle); // maxthrottle
-      r.writeU16(_model.config.output.minCommand);  // mincommand
+      r.writeU16(config.output.maxThrottle); // maxthrottle
+      r.writeU16(config.output.minCommand);  // mincommand
       r.writeU8(_model.state.currentMixer.count);   // motor count
       // 1.42+
-      r.writeU8(_model.config.output.motorPoles);     // motor pole count
-      r.writeU8(_model.config.output.dshotTelemetry); // dshot telemtery
+      r.writeU8(config.output.motorPoles);     // motor pole count
+      r.writeU8(config.output.dshotTelemetry); // dshot telemtery
       r.writeU8(0);                                   // esc sensor
       break;
 
     case MSP_SET_MOTOR_CONFIG:
       if (m.remain() < 6) { r.result = -1; break; }
       m.readU16();                                    // minthrottle (dropped in 1.46)
-      _model.config.output.maxThrottle = m.readU16(); // maxthrottle
-      _model.config.output.minCommand = m.readU16();  // mincommand
+      config.output.maxThrottle = m.readU16(); // maxthrottle
+      config.output.minCommand = m.readU16();  // mincommand
       if (m.remain() >= 2)
       {
 #ifdef ESPFC_DSHOT_TELEMETRY
-        _model.config.output.motorPoles = m.readU8();
-        _model.config.output.dshotTelemetry = m.readU8();
+        config.output.motorPoles = m.readU8();
+        config.output.dshotTelemetry = m.readU8();
 #else
         m.readU8();
         m.readU8();
 #endif
       }
-      _model.reload();
-      _model.setRebootRequired();
+      if (m.remain() == 1 && m.readU8() != 0) { r.result = -1; break; }
+      needsReload = true;
+      needsReboot = true;
       break;
 
     case MSP_MOTOR_3D_CONFIG:
@@ -1273,80 +1341,78 @@ case MSP_BUILD_INFO:
     case MSP_ARMING_CONFIG:
       r.writeU8(5);                               // auto_disarm delay
       r.writeU8(0);                               // disarm kill switch
-      r.writeU8(_model.config.arming.smallAngle); // small angle
+      r.writeU8(config.arming.smallAngle); // small angle
       r.writeU8(0);                               // gyro_cal_on_first_arm
       break;
 
     case MSP_SET_ARMING_CONFIG:
       m.readU8();                                                           // auto_disarm delay
       m.readU8();                                                           // disarm kill switch
-      _model.config.arming.smallAngle = std::min<uint8_t>(180, m.readU8()); // small angle
+      config.arming.smallAngle = m.readU8(); // checked before commit
       m.readU8();                                                           // gyro_cal_on_first_arm
       break;
 
     case MSP_RC_DEADBAND:
-      r.writeU8(_model.config.input.deadband);
+      r.writeU8(config.input.deadband);
       r.writeU8(0);  // yaw deadband
       r.writeU8(0);  // pos hold deadband
       r.writeU16(0); // deadband 3d throttle
       break;
 
     case MSP_SET_RC_DEADBAND:
-      _model.config.input.deadband = m.readU8();
+      config.input.deadband = m.readU8();
       m.readU8();  // yaw deadband
       m.readU8();  // pos hod deadband
       m.readU16(); // deadband 3d throttle
       break;
 
     case MSP_RX_CONFIG:
-      r.writeU8(_model.config.input.serialRxProvider);                      // serialrx_provider
-      r.writeU16(_model.config.input.maxCheck);                             // maxcheck
-      r.writeU16(_model.config.input.midRc);                                // midrc
-      r.writeU16(_model.config.input.minCheck);                             // mincheck
+      r.writeU8(config.input.serialRxProvider);                      // serialrx_provider
+      r.writeU16(config.input.maxCheck);                             // maxcheck
+      r.writeU16(config.input.midRc);                                // midrc
+      r.writeU16(config.input.minCheck);                             // mincheck
       r.writeU8(0);                                                         // spectrum bind
-      r.writeU16(_model.config.input.minRc);                                // min_us
-      r.writeU16(_model.config.input.maxRc);                                // max_us
+      r.writeU16(config.input.minRc);                                // min_us
+      r.writeU16(config.input.maxRc);                                // max_us
       r.writeU8(0);                                                         // rc interpolation
       r.writeU8(0);                                                         // rc interpolation interval
-      r.writeU16(_model.config.input.airModeActivateThreshold * 10 + 1000); // airmode activate threshold
+      r.writeU16(config.input.airModeActivateThreshold * 10 + 1000); // airmode activate threshold
       r.writeU8(0);                                                         // rx spi prot
       r.writeU32(0);                                                        // rx spi id
       r.writeU8(0);                                                         // rx spi chan count
       r.writeU8(0);                                                         // fpv camera angle
       r.writeU8(2);                                                         // rc iterpolation channels: RPYT
       r.writeU8(0);                                                         // deprecated: rc_smoothing_type
-      r.writeU8(_model.config.input.filter.freq);                           // rc_smoothing_setpoint_cutoff
-      r.writeU8(_model.config.input.filterThrottle.freq);                   // rc_smoothing_throtle_cutoff
-      r.writeU8(_model.config.input.filterAutoThrottleFactor);              // rc_smoothing_auto_factor_throttle
+      r.writeU8(config.input.filter.freq);                           // rc_smoothing_setpoint_cutoff
+      r.writeU8(config.input.filterThrottle.freq);                   // rc_smoothing_throtle_cutoff
+      r.writeU8(config.input.filterAutoThrottleFactor);              // rc_smoothing_auto_factor_throttle
       r.writeU8(0);                                                         // rc_smoothing_derivative_type
       r.writeU8(0);                                                         // usb type
       // 1.42+
-      r.writeU8(_model.config.input.filterAutoFactor); // rc_smoothing_auto_factor
+      r.writeU8(config.input.filterAutoFactor); // rc_smoothing_auto_factor
       // 1.44
-      r.writeU8(_model.config.input.filterEnable); // rc_smoothing
+      r.writeU8(config.input.filterEnable); // rc_smoothing
       // 1.45
       {
         uint8_t uid[6] = {};
         r.writeData((const char*)uid, sizeof(uid)); // elrs uid
       }
-      // 1.47
-      r.writeU8(0); // elrs modelId
       break;
 
     case MSP_SET_RX_CONFIG:
       if (m.remain() < 12) { r.result = -1; break; }
-      _model.config.input.serialRxProvider = m.readU8(); // serialrx_provider
-      _model.config.input.maxCheck = m.readU16();        // maxcheck
-      _model.config.input.midRc = m.readU16();           // midrc
-      _model.config.input.minCheck = m.readU16();        // mincheck
+      config.input.serialRxProvider = m.readU8(); // serialrx_provider
+      config.input.maxCheck = m.readU16();        // maxcheck
+      config.input.midRc = m.readU16();           // midrc
+      config.input.minCheck = m.readU16();        // mincheck
       m.readU8();                                        // spectrum bind
-      _model.config.input.minRc = m.readU16();           // min_us
-      _model.config.input.maxRc = m.readU16();           // max_us
+      config.input.minRc = m.readU16();           // min_us
+      config.input.maxRc = m.readU16();           // max_us
       if (m.remain() >= 4)
       {
         m.readU8();                                                               // rc interpolation
         m.readU8();                                                               // rc interpolation interval
-        _model.config.input.airModeActivateThreshold = (m.readU16() - 1000) / 10; // airmode activate threshold
+        config.input.airModeActivateThreshold = (m.readU16() - 1000) / 10; // airmode activate threshold
       }
       if (m.remain() >= 6)
       {
@@ -1363,9 +1429,9 @@ case MSP_BUILD_INFO:
       {
         m.readU8();                                                // was rc iterpolation channels
         m.readU8();                                                // was rc_smoothing_type
-        _model.config.input.filter.freq = m.readU8();              // rc_smoothing_setpoint_cutoff
-        _model.config.input.filterThrottle.freq = m.readU8();      // rc_smoothing_throttle_cutoff
-        _model.config.input.filterAutoThrottleFactor = m.readU8(); // rc_smoothing_auto_factor_throttle
+        config.input.filter.freq = m.readU8();              // rc_smoothing_setpoint_cutoff
+        config.input.filterThrottle.freq = m.readU8();      // rc_smoothing_throttle_cutoff
+        config.input.filterAutoThrottleFactor = m.readU8(); // rc_smoothing_auto_factor_throttle
         m.readU8();                                                // was rc_smoothing_derivative_type
       }
       if (m.remain() >= 1)
@@ -1375,44 +1441,40 @@ case MSP_BUILD_INFO:
       // 1.42+
       if (m.remain() >= 1)
       {
-        _model.config.input.filterAutoFactor = m.readU8(); // rc_smoothing_auto_factor
+        config.input.filterAutoFactor = m.readU8(); // rc_smoothing_auto_factor
       }
       // 1.44
       if (m.remain() >= 1)
       {
-        _model.config.input.filterEnable = m.readU8(); // rc_smoothing
+        config.input.filterEnable = m.readU8(); // rc_smoothing
       }
       // 1.45
       if (m.remain() >= 6)
       {
         m.advance(6); // elrs uid
       }
-      // 1.47
-      if (m.remain() >= 1)
-      {
-        m.readU8(); // elrs modelId
-      }
-      _model.notifyConfigChange(MODEL_CHANGE_INPUT);
+
+      events[static_cast<size_t>(MODEL_CHANGE_INPUT)] = true;
       break;
 
   case MSP_FAILSAFE_CONFIG:
   r.writeU8(
-      _model.config.failsafe.delay);
+      config.failsafe.delay);
 
   r.writeU8(
-      _model.config.failsafe.landingTime);
+      config.failsafe.landingTime);
 
   r.writeU16(
-      _model.config.failsafe.landingThrottle);
+      config.failsafe.landingThrottle);
 
   r.writeU8(
-      _model.config.failsafe.killSwitch);
+      config.failsafe.killSwitch);
 
   r.writeU16(
-      _model.config.failsafe.throttleLowDelay);
+      config.failsafe.throttleLowDelay);
 
   r.writeU8(
-      _model.config.failsafe.procedure);
+      config.failsafe.procedure);
 
   break;
 
@@ -1424,28 +1486,25 @@ case MSP_SET_FAILSAFE_CONFIG:
         break;
     }
 
-    _model.config.failsafe.delay =
+    config.failsafe.delay =
         m.readU8();
 
-    _model.config.failsafe.landingTime =
+    config.failsafe.landingTime =
         m.readU8();
 
-    _model.config.failsafe.landingThrottle =
+    config.failsafe.landingThrottle =
         m.readU16();
 
-    _model.config.failsafe.killSwitch =
+    config.failsafe.killSwitch =
         m.readU8();
 
-    _model.config.failsafe.throttleLowDelay =
+    config.failsafe.throttleLowDelay =
         m.readU16();
 
     const uint8_t procedure =
         m.readU8();
 
-    _model.config.failsafe.procedure =
-        procedure < FAILSAFE_PROCEDURE_COUNT
-            ? procedure
-            : FAILSAFE_PROCEDURE_DROP;
+    config.failsafe.procedure = procedure; // invalid procedures must be rejected
 
     break;
 }
@@ -1453,8 +1512,8 @@ case MSP_SET_FAILSAFE_CONFIG:
     case MSP_RXFAIL_CONFIG:
       for (size_t i = 0; i < _model.state.input.channelCount; i++)
       {
-        r.writeU8(_model.config.input.channel[i].fsMode);
-        r.writeU16(_model.config.input.channel[i].fsValue);
+        r.writeU8(config.input.channel[i].fsMode);
+        r.writeU16(config.input.channel[i].fsValue);
       }
       break;
 
@@ -1462,8 +1521,8 @@ case MSP_SET_FAILSAFE_CONFIG:
       size_t i = m.readU8();
       if (i < INPUT_CHANNELS)
       {
-        _model.config.input.channel[i].fsMode = m.readU8();   // mode
-        _model.config.input.channel[i].fsValue = m.readU16(); // pulse
+        config.input.channel[i].fsMode = m.readU8();   // mode
+        config.input.channel[i].fsValue = m.readU16(); // pulse
       }
       else
       {
@@ -1480,53 +1539,51 @@ case MSP_SET_FAILSAFE_CONFIG:
       break;
 
     case MSP_RC_TUNING:
-      r.writeU8(_model.config.input.rate[AXIS_ROLL]);
-      r.writeU8(_model.config.input.expo[AXIS_ROLL]);
+      r.writeU8(config.input.rate[AXIS_ROLL]);
+      r.writeU8(config.input.expo[AXIS_ROLL]);
       for (size_t i = 0; i < AXIS_COUNT_RPY; i++)
       {
-        r.writeU8(_model.config.input.superRate[i]);
+        r.writeU8(config.input.superRate[i]);
       }
       r.writeU8(0);                                    // was tpa scale
       r.writeU8(50);                                   // thrMid8
       r.writeU8(0);                                    // thr expo
       r.writeU16(0);                                   // was tpa breakpoint
-      r.writeU8(_model.config.input.expo[AXIS_YAW]);   // yaw expo
-      r.writeU8(_model.config.input.rate[AXIS_YAW]);   // yaw rate
-      r.writeU8(_model.config.input.rate[AXIS_PITCH]); // pitch rate
-      r.writeU8(_model.config.input.expo[AXIS_PITCH]); // pitch expo
+      r.writeU8(config.input.expo[AXIS_YAW]);   // yaw expo
+      r.writeU8(config.input.rate[AXIS_YAW]);   // yaw rate
+      r.writeU8(config.input.rate[AXIS_PITCH]); // pitch rate
+      r.writeU8(config.input.expo[AXIS_PITCH]); // pitch expo
       // 1.41+
-      r.writeU8(_model.config.output.throttleLimitType);    // throttle_limit_type (off)
-      r.writeU8(_model.config.output.throttleLimitPercent); // throtle_limit_percent (100%)
+      r.writeU8(config.output.throttleLimitType);    // throttle_limit_type (off)
+      r.writeU8(config.output.throttleLimitPercent); // throtle_limit_percent (100%)
       // 1.42+
-      r.writeU16(_model.config.input.rateLimit[0]); // rate limit roll
-      r.writeU16(_model.config.input.rateLimit[1]); // rate limit pitch
-      r.writeU16(_model.config.input.rateLimit[2]); // rate limit yaw
+      r.writeU16(config.input.rateLimit[0]); // rate limit roll
+      r.writeU16(config.input.rateLimit[1]); // rate limit pitch
+      r.writeU16(config.input.rateLimit[2]); // rate limit yaw
       // 1.43+
-      r.writeU8(_model.config.input.rateType); // rates type
-      // 1.47
-      r.writeU8(50); // thrHover8
+      r.writeU8(config.input.rateType); // rates type
       break;
 
     case MSP_SET_RC_TUNING:
       if (m.remain() >= 10)
       {
         const uint8_t rate = m.readU8();
-        if (_model.config.input.rate[AXIS_PITCH] == _model.config.input.rate[AXIS_ROLL])
+        if (config.input.rate[AXIS_PITCH] == config.input.rate[AXIS_ROLL])
         {
-          _model.config.input.rate[AXIS_PITCH] = rate;
+          config.input.rate[AXIS_PITCH] = rate;
         }
-        _model.config.input.rate[AXIS_ROLL] = rate;
+        config.input.rate[AXIS_ROLL] = rate;
 
         const uint8_t expo = m.readU8();
-        if (_model.config.input.expo[AXIS_PITCH] == _model.config.input.expo[AXIS_ROLL])
+        if (config.input.expo[AXIS_PITCH] == config.input.expo[AXIS_ROLL])
         {
-          _model.config.input.expo[AXIS_PITCH] = expo;
+          config.input.expo[AXIS_PITCH] = expo;
         }
-        _model.config.input.expo[AXIS_ROLL] = expo;
+        config.input.expo[AXIS_ROLL] = expo;
 
         for (size_t i = 0; i < AXIS_COUNT_RPY; i++)
         {
-          _model.config.input.superRate[i] = m.readU8();
+          config.input.superRate[i] = m.readU8();
         }
         m.readU8();  // was tpa scale
         m.readU8();  // thrMid8
@@ -1534,44 +1591,40 @@ case MSP_SET_FAILSAFE_CONFIG:
         m.readU16(); // was tpa breakpoint
         if (m.remain() >= 1)
         {
-          _model.config.input.expo[AXIS_YAW] = m.readU8(); // yaw expo
+          config.input.expo[AXIS_YAW] = m.readU8(); // yaw expo
         }
         if (m.remain() >= 1)
         {
-          _model.config.input.rate[AXIS_YAW] = m.readU8(); // yaw rate
+          config.input.rate[AXIS_YAW] = m.readU8(); // yaw rate
         }
         if (m.remain() >= 1)
         {
-          _model.config.input.rate[AXIS_PITCH] = m.readU8(); // pitch rate
+          config.input.rate[AXIS_PITCH] = m.readU8(); // pitch rate
         }
         if (m.remain() >= 1)
         {
-          _model.config.input.expo[AXIS_PITCH] = m.readU8(); // pitch expo
+          config.input.expo[AXIS_PITCH] = m.readU8(); // pitch expo
         }
         // 1.41
         if (m.remain() >= 2)
         {
-          _model.config.output.throttleLimitType = m.readU8();    // throttle_limit_type
-          _model.config.output.throttleLimitPercent = m.readU8(); // throttle_limit_percent
+          config.output.throttleLimitType = m.readU8();    // throttle_limit_type
+          config.output.throttleLimitPercent = m.readU8(); // throttle_limit_percent
         }
         // 1.42
         if (m.remain() >= 6)
         {
-          _model.config.input.rateLimit[0] = m.readU16(); // roll
-          _model.config.input.rateLimit[1] = m.readU16(); // pitch
-          _model.config.input.rateLimit[2] = m.readU16(); // yaw
+          config.input.rateLimit[0] = m.readU16(); // roll
+          config.input.rateLimit[1] = m.readU16(); // pitch
+          config.input.rateLimit[2] = m.readU16(); // yaw
         }
         // 1.43
         if (m.remain() >= 1)
         {
-          _model.config.input.rateType = m.readU8();
+          config.input.rateType = m.readU8();
         }
-        // 1.47
-        if (m.remain() >= 1)
-        {
-          m.readU8(); // thrHover8
-        }
-        _model.notifyConfigChange(MODEL_CHANGE_RATES);
+
+        events[static_cast<size_t>(MODEL_CHANGE_RATES)] = true;
       }
       else
       {
@@ -1582,11 +1635,11 @@ case MSP_SET_FAILSAFE_CONFIG:
 
     case MSP_ADVANCED_CONFIG:
       r.writeU8(1); // gyroSync unused
-      r.writeU8(_model.config.loopSync);
-      r.writeU8(_model.config.output.async);
-      r.writeU8(_model.config.output.protocol);
-      r.writeU16(_model.config.output.rate);
-      r.writeU16(_model.config.output.motorIdle);
+      r.writeU8(config.loopSync);
+      r.writeU8(config.output.async);
+      r.writeU8(config.output.protocol);
+      r.writeU16(config.output.rate);
+      r.writeU16(config.output.motorIdle);
       r.writeU8(0);    // 32k gyro
       r.writeU8(0);    // PWM inversion
       r.writeU8(0);    // gyro_to_use: {1:0, 2:1. 2:both}
@@ -1595,19 +1648,19 @@ case MSP_SET_FAILSAFE_CONFIG:
       r.writeU16(125); // gyro cal duration (1.25s)
       r.writeU16(0);   // gyro offset yaw
       r.writeU8(0);    // check overflow
-      r.writeU8(_model.config.debug.mode);
+      r.writeU8(config.debug.mode);
       r.writeU8(DEBUG_COUNT);
       break;
 
     case MSP_SET_ADVANCED_CONFIG:
       m.readU8(); // ignore gyroSync, removed in 1.43
-      _model.config.loopSync = m.readU8();
-      _model.config.output.async = m.readU8();
-      _model.config.output.protocol = m.readU8();
-      _model.config.output.rate = m.readU16();
+      config.loopSync = m.readU8();
+      config.output.async = m.readU8();
+      config.output.protocol = m.readU8();
+      config.output.rate = m.readU16();
       if (m.remain() >= 2)
       {
-        _model.config.output.motorIdle = m.readU16(); // dshot idle
+        config.output.motorIdle = m.readU16(); // dshot idle
       }
       if (m.remain())
       {
@@ -1628,14 +1681,14 @@ case MSP_SET_FAILSAFE_CONFIG:
       }
       if (m.remain())
       {
-        _model.config.debug.mode = m.readU8();
+        config.debug.mode = m.readU8();
       }
-      _model.reload();
-      _model.setRebootRequired();
+      needsReload = true;
+      needsReboot = true;
       break;
 
     case MSP_COMPASS_CONFIG:
-      r.writeU16(_model.config.mag.declination); // mag_declination * 10
+      r.writeU16(config.mag.declination); // mag_declination * 10
       break;
 
     case MSP_SET_COMPASS_CONFIG: {
@@ -1656,129 +1709,112 @@ case MSP_SET_FAILSAFE_CONFIG:
         r.result = -1;
         break;
       }
-      _model.config.mag.declination =
+      config.mag.declination =
           static_cast<int16_t>(signedTenths);
       break;
     }
 
     case MSP_FILTER_CONFIG:
-      r.writeU8(_model.config.gyro.filter.freq);          // gyro lpf
-      r.writeU16(_model.config.dterm.filter.freq);        // dterm lpf
-      r.writeU16(_model.config.yaw.filter.freq);          // yaw lpf
-      r.writeU16(_model.config.gyro.notch1Filter.freq);   // gyro notch 1 hz
-      r.writeU16(_model.config.gyro.notch1Filter.cutoff); // gyro notch 1 cutoff
-      r.writeU16(_model.config.dterm.notchFilter.freq);   // dterm notch hz
-      r.writeU16(_model.config.dterm.notchFilter.cutoff); // dterm notch cutoff
-      r.writeU16(_model.config.gyro.notch2Filter.freq);   // gyro notch 2 hz
-      r.writeU16(_model.config.gyro.notch2Filter.cutoff); // gyro notch 2 cutoff
-      r.writeU8(_model.config.dterm.filter.type);         // dterm type
-      r.writeU8(fromGyroDlpf(_model.config.gyro.dlpf));
+      r.writeU8(config.gyro.filter.freq);          // gyro lpf
+      r.writeU16(config.dterm.filter.freq);        // dterm lpf
+      r.writeU16(config.yaw.filter.freq);          // yaw lpf
+      r.writeU16(config.gyro.notch1Filter.freq);   // gyro notch 1 hz
+      r.writeU16(config.gyro.notch1Filter.cutoff); // gyro notch 1 cutoff
+      r.writeU16(config.dterm.notchFilter.freq);   // dterm notch hz
+      r.writeU16(config.dterm.notchFilter.cutoff); // dterm notch cutoff
+      r.writeU16(config.gyro.notch2Filter.freq);   // gyro notch 2 hz
+      r.writeU16(config.gyro.notch2Filter.cutoff); // gyro notch 2 cutoff
+      r.writeU8(config.dterm.filter.type);         // dterm type
+      r.writeU8(fromGyroDlpf(config.gyro.dlpf));
       r.writeU8(0);                                 // dlfp 32khz type
-      r.writeU16(_model.config.gyro.filter.freq);   // lowpass1 freq
-      r.writeU16(_model.config.gyro.filter2.freq);  // lowpass2 freq
-      r.writeU8(_model.config.gyro.filter.type);    // lowpass1 type
-      r.writeU8(_model.config.gyro.filter2.type);   // lowpass2 type
-      r.writeU16(_model.config.dterm.filter2.freq); // dterm lopwass2 freq
+      r.writeU16(config.gyro.filter.freq);   // lowpass1 freq
+      r.writeU16(config.gyro.filter2.freq);  // lowpass2 freq
+      r.writeU8(config.gyro.filter.type);    // lowpass1 type
+      r.writeU8(config.gyro.filter2.type);   // lowpass2 type
+      r.writeU16(config.dterm.filter2.freq); // dterm lopwass2 freq
       // 1.41+
-      r.writeU8(_model.config.dterm.filter2.type);         // dterm lopwass2 type
-      r.writeU16(_model.config.gyro.dynLpfFilter.cutoff);  // dyn lpf gyro min
-      r.writeU16(_model.config.gyro.dynLpfFilter.freq);    // dyn lpf gyro max
-      r.writeU16(_model.config.dterm.dynLpfFilter.cutoff); // dyn lpf dterm min
-      r.writeU16(_model.config.dterm.dynLpfFilter.freq);   // dyn lpf dterm max
+      r.writeU8(config.dterm.filter2.type);         // dterm lopwass2 type
+      r.writeU16(config.gyro.dynLpfFilter.cutoff);  // dyn lpf gyro min
+      r.writeU16(config.gyro.dynLpfFilter.freq);    // dyn lpf gyro max
+      r.writeU16(config.dterm.dynLpfFilter.cutoff); // dyn lpf dterm min
+      r.writeU16(config.dterm.dynLpfFilter.freq);   // dyn lpf dterm max
       // gyro analyse
       r.writeU8(0);                                          // deprecated dyn notch range
       r.writeU8(0);                                          // deprecated dyn_notch_width_percent
-      r.writeU16(_model.config.gyro.dynamicFilter.q);        // dyn_notch_q
-      r.writeU16(_model.config.gyro.dynamicFilter.min_freq); // dyn_notch_min_hz
+      r.writeU16(config.gyro.dynamicFilter.q);        // dyn_notch_q
+      r.writeU16(config.gyro.dynamicFilter.min_freq); // dyn_notch_min_hz
       // rpm filter
-      r.writeU8(_model.config.gyro.rpmFilter.harmonics); // gyro_rpm_notch_harmonics
-      r.writeU8(_model.config.gyro.rpmFilter.minFreq);   // gyro_rpm_notch_min
+      r.writeU8(config.gyro.rpmFilter.harmonics); // gyro_rpm_notch_harmonics
+      r.writeU8(config.gyro.rpmFilter.minFreq);   // gyro_rpm_notch_min
       // 1.43+
-      r.writeU16(_model.config.gyro.dynamicFilter.max_freq); // dyn_notch_max_hz
+      r.writeU16(config.gyro.dynamicFilter.max_freq); // dyn_notch_max_hz
       // 1.44
       r.writeU8(0); // dterm lpf1 dyn expo
-      r.writeU8(_model.config.gyro.dynamicFilter.count);
-      // 1.48
-      r.writeU16(_model.config.gyro.rpmFilter.fade); // rpm_notch_fade_range_hz
-      r.writeU16(_model.config.gyro.rpmFilter.q);    // rpm_notch_q
-      for (size_t i = 0; i < RPM_FILTER_HARMONICS_MAX; i++)
-      {
-        r.writeU8(_model.config.gyro.rpmFilter.weights[i]); // rpm_notch_harmonic_freq
-      }
+      r.writeU8(config.gyro.dynamicFilter.count);
       break;
 
     case MSP_SET_FILTER_CONFIG:
       if (m.remain() < 5) { r.result = -1; break; }
-      _model.config.gyro.filter.freq = m.readU8();
-      _model.config.dterm.filter.freq = m.readU16();
-      _model.config.yaw.filter.freq = m.readU16();
+      config.gyro.filter.freq = m.readU8();
+      config.dterm.filter.freq = m.readU16();
+      config.yaw.filter.freq = m.readU16();
       if (m.remain() >= 8)
       {
-        _model.config.gyro.notch1Filter.freq = m.readU16();
-        _model.config.gyro.notch1Filter.cutoff = m.readU16();
-        _model.config.dterm.notchFilter.freq = m.readU16();
-        _model.config.dterm.notchFilter.cutoff = m.readU16();
+        config.gyro.notch1Filter.freq = m.readU16();
+        config.gyro.notch1Filter.cutoff = m.readU16();
+        config.dterm.notchFilter.freq = m.readU16();
+        config.dterm.notchFilter.cutoff = m.readU16();
       }
       if (m.remain() >= 4)
       {
-        _model.config.gyro.notch2Filter.freq = m.readU16();
-        _model.config.gyro.notch2Filter.cutoff = m.readU16();
+        config.gyro.notch2Filter.freq = m.readU16();
+        config.gyro.notch2Filter.cutoff = m.readU16();
       }
       if (m.remain() >= 1)
       {
-        _model.config.dterm.filter.type = (FilterType)m.readU8();
+        config.dterm.filter.type = (FilterType)m.readU8();
       }
       if (m.remain() >= 10)
       {
         m.readU8(); // dlfp type
         m.readU8(); // 32k dlfp type
-        _model.config.gyro.filter.freq = m.readU16();
-        _model.config.gyro.filter2.freq = m.readU16();
-        _model.config.gyro.filter.type = m.readU8();
-        _model.config.gyro.filter2.type = m.readU8();
-        _model.config.dterm.filter2.freq = m.readU16();
+        config.gyro.filter.freq = m.readU16();
+        config.gyro.filter2.freq = m.readU16();
+        config.gyro.filter.type = m.readU8();
+        config.gyro.filter2.type = m.readU8();
+        config.dterm.filter2.freq = m.readU16();
       }
       // 1.41+
       if (m.remain() >= 9)
       {
-        _model.config.dterm.filter2.type = m.readU8();
-        _model.config.gyro.dynLpfFilter.cutoff = m.readU16();  // dyn gyro lpf min
-        _model.config.gyro.dynLpfFilter.freq = m.readU16();    // dyn gyro lpf max
-        _model.config.dterm.dynLpfFilter.cutoff = m.readU16(); // dyn dterm lpf min
-        _model.config.dterm.dynLpfFilter.freq = m.readU16();   // dyn dterm lpf min
+        config.dterm.filter2.type = m.readU8();
+        config.gyro.dynLpfFilter.cutoff = m.readU16();  // dyn gyro lpf min
+        config.gyro.dynLpfFilter.freq = m.readU16();    // dyn gyro lpf max
+        config.dterm.dynLpfFilter.cutoff = m.readU16(); // dyn dterm lpf min
+        config.dterm.dynLpfFilter.freq = m.readU16();   // dyn dterm lpf min
       }
       if (m.remain() >= 8)
       {
         m.readU8();                                              // deprecated dyn_notch_range
-        _model.config.gyro.dynamicFilter.count = m.readU8();     // dyn_notch_width_percent
-        _model.config.gyro.dynamicFilter.q = m.readU16();        // dyn_notch_q
-        _model.config.gyro.dynamicFilter.min_freq = m.readU16(); // dyn_notch_min_hz
-        _model.config.gyro.rpmFilter.harmonics = m.readU8();     // gyro_rpm_notch_harmonics
-        _model.config.gyro.rpmFilter.minFreq = m.readU8();       // gyro_rpm_notch_min
+        config.gyro.dynamicFilter.count = m.readU8();     // dyn_notch_width_percent
+        config.gyro.dynamicFilter.q = m.readU16();        // dyn_notch_q
+        config.gyro.dynamicFilter.min_freq = m.readU16(); // dyn_notch_min_hz
+        config.gyro.rpmFilter.harmonics = m.readU8();     // gyro_rpm_notch_harmonics
+        config.gyro.rpmFilter.minFreq = m.readU8();       // gyro_rpm_notch_min
       }
       // 1.43+
       if (m.remain() >= 2)
       {
-        _model.config.gyro.dynamicFilter.max_freq = m.readU16(); // dyn_notch_max_hz
+        config.gyro.dynamicFilter.max_freq = m.readU16(); // dyn_notch_max_hz
       }
       // 1.44
       if (m.remain() >= 2)
       {
         m.readU8(); // dterm lpf1 dyn expo
-        _model.config.gyro.dynamicFilter.count = m.readU8();
+        config.gyro.dynamicFilter.count = m.readU8();
       }
-      // 1.48
-      if (m.remain() >= 7)
-      {
-        // TODO: validate
-        _model.config.gyro.rpmFilter.fade = m.readU16(); // rpm_notch_fade_range_hz
-        _model.config.gyro.rpmFilter.q = m.readU16();    // rpm_notch_q
-        for (size_t i = 0; i < RPM_FILTER_HARMONICS_MAX; i++)
-        {
-          _model.config.gyro.rpmFilter.weights[i] = m.readU8(); // rpm_notch_harmonic_freq
-        }
-      }
-      _model.notifyConfigChange(MODEL_CHANGE_FILTER);
+
+      events[static_cast<size_t>(MODEL_CHANGE_FILTER)] = true;
       break;
 
     case MSP_PID_CONTROLLER:
@@ -1795,9 +1831,9 @@ case MSP_SET_FAILSAFE_CONFIG:
     case MSP_PID:
       for (size_t i = 0; i < PID_ITEM_COUNT; i++)
       {
-        r.writeU8(_model.config.pid[i].P);
-        r.writeU8(_model.config.pid[i].I);
-        r.writeU8(_model.config.pid[i].D);
+        r.writeU8(config.pid[i].P);
+        r.writeU8(config.pid[i].I);
+        r.writeU8(config.pid[i].D);
       }
       break;
 
@@ -1821,18 +1857,17 @@ constexpr int REQUIRED_PID_BYTES =
            i < PID_ITEM_COUNT;
            i++)
       {
-        _model.config.pid[i].P =
+        config.pid[i].P =
             m.readU8();
 
-        _model.config.pid[i].I =
+        config.pid[i].I =
             m.readU8();
 
-        _model.config.pid[i].D =
+        config.pid[i].D =
             m.readU8();
       }
 
-      _model.notifyConfigChange(
-          MODEL_CHANGE_PID);
+      events[static_cast<size_t>(MODEL_CHANGE_PID)] = true;
 
       break;
     }
@@ -1850,21 +1885,21 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU8(0);                              // reserved
       r.writeU16(0);                             // rateAccelLimit;
       r.writeU16(0);                             // yawRateAccelLimit;
-      r.writeU8(_model.config.level.angleLimit); // levelAngleLimit;
+      r.writeU8(config.level.angleLimit); // levelAngleLimit;
       r.writeU8(0);                              // was pidProfile.levelSensitivity
       r.writeU16(0);                             // itermThrottleThreshold;
-      r.writeU16(_model.config.antiGravityGain); // anti_gravity_gain
+      r.writeU16(config.antiGravityGain); // anti_gravity_gain
       r.writeU16(0);
       r.writeU8(0);                                  // iterm rotation
       r.writeU8(0);                                  // smart feed forward
-      r.writeU8(_model.config.iterm.relax);          // iterm relax
+      r.writeU8(config.iterm.relax);          // iterm relax
       r.writeU8(1);                                  // iterm relax type (setpoint only)
       r.writeU8(0);                                  // abs control gain
       r.writeU8(0);                                  // throttle boost
       r.writeU8(0);                                  // acro trainer max angle
-      r.writeU16(_model.config.pid[FC_PID_ROLL].F);  // pid roll f
-      r.writeU16(_model.config.pid[FC_PID_PITCH].F); // pid pitch f
-      r.writeU16(_model.config.pid[FC_PID_YAW].F);   // pid yaw f
+      r.writeU16(config.pid[FC_PID_ROLL].F);  // pid roll f
+      r.writeU16(config.pid[FC_PID_PITCH].F); // pid pitch f
+      r.writeU16(config.pid[FC_PID_YAW].F);   // pid yaw f
       r.writeU8(0);                                  // antigravity mode
       // 1.41+
       r.writeU8(0); // d max roll
@@ -1875,9 +1910,9 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU8(0); // use_integrated_yaw
       r.writeU8(0); // integrated_yaw_relax
       // 1.42+
-      r.writeU8(_model.config.iterm.relaxCutoff); // iterm_relax_cutoff
+      r.writeU8(config.iterm.relaxCutoff); // iterm_relax_cutoff
       // 1.43+
-      r.writeU8(_model.config.output.motorLimit); // motor_output_limit
+      r.writeU8(config.output.motorLimit); // motor_output_limit
       r.writeU8(0);                               // auto_profile_cell_count
       r.writeU8(0);                               // idle_min_rpm
       // 1.44
@@ -1888,9 +1923,9 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU8(0);                                       // ff jitter factor
       r.writeU8(0);                                       // vbat sag compensation
       r.writeU8(0);                                       // thrust linearization
-      r.writeU8(_model.config.controller.tpaMode);        // tpa mode
-      r.writeU8(_model.config.controller.tpaScale);       // tpa rate
-      r.writeU16(_model.config.controller.tpaBreakpoint); // tpa breakpoint
+      r.writeU8(config.controller.tpaMode);        // tpa mode
+      r.writeU8(config.controller.tpaScale);       // tpa rate
+      r.writeU16(config.controller.tpaBreakpoint); // tpa breakpoint
       break;
 
     case MSP_SET_PID_ADVANCED:
@@ -1908,13 +1943,13 @@ constexpr int REQUIRED_PID_BYTES =
       m.readU16();
       if (m.remain() >= 2)
       {
-        _model.config.level.angleLimit = m.readU8();
+        config.level.angleLimit = m.readU8();
         m.readU8(); // was pidProfile.levelSensitivity
       }
       if (m.remain() >= 4)
       {
         m.readU16(); // itermThrottleThreshold;
-        _model.config.antiGravityGain =
+        config.antiGravityGain =
             std::clamp<uint16_t>(
                 m.readU16(),
                 0,
@@ -1928,14 +1963,14 @@ constexpr int REQUIRED_PID_BYTES =
       {
         m.readU8();                                      // iterm rotation
         m.readU8();                                      // smart feed forward
-        _model.config.iterm.relax = m.readU8();          // iterm relax
+        config.iterm.relax = m.readU8();          // iterm relax
         m.readU8();                                      // iterm relax type
         m.readU8();                                      // abs control gain
         m.readU8();                                      // throttle boost
         m.readU8();                                      // acro trainer max angle
-        _model.config.pid[FC_PID_ROLL].F = m.readU16();  // pid roll f
-        _model.config.pid[FC_PID_PITCH].F = m.readU16(); // pid pitch f
-        _model.config.pid[FC_PID_YAW].F = m.readU16();   // pid yaw f
+        config.pid[FC_PID_ROLL].F = m.readU16();  // pid roll f
+        config.pid[FC_PID_PITCH].F = m.readU16(); // pid pitch f
+        config.pid[FC_PID_YAW].F = m.readU16();   // pid yaw f
         m.readU8();                                      // antigravity mode
       }
       // 1.41+
@@ -1952,12 +1987,12 @@ constexpr int REQUIRED_PID_BYTES =
       // 1.42+
       if (m.remain() >= 1)
       {
-        _model.config.iterm.relaxCutoff = m.readU8(); // iterm_relax_cutoff
+        config.iterm.relaxCutoff = m.readU8(); // iterm_relax_cutoff
       }
       // 1.43+
       if (m.remain() >= 3)
       {
-        _model.config.output.motorLimit = m.readU8(); // motor_output_limit
+        config.output.motorLimit = m.readU8(); // motor_output_limit
         m.readU8();                                   // auto_profile_cell_count
         m.readU8();                                   // idle_min_rpm
       }
@@ -1980,15 +2015,15 @@ constexpr int REQUIRED_PID_BYTES =
       }
       if (m.remain() >= 4)
       {
-        _model.config.controller.tpaMode = m.readU8();                                          // tpa mode
-        _model.config.controller.tpaScale = std::clamp<uint8_t>(m.readU8(), 0, 100);            // tpa rate
-        _model.config.controller.tpaBreakpoint = std::clamp<uint16_t>(m.readU16(), 1000, 2000); // tpa breakpoint
+        config.controller.tpaMode = m.readU8();                                          // tpa mode
+        config.controller.tpaScale = m.readU8(); // checked before commit
+        config.controller.tpaBreakpoint = m.readU16();
       }
-      _model.notifyConfigChange(MODEL_CHANGE_PID);
+      events[static_cast<size_t>(MODEL_CHANGE_PID)] = true;
       break;
 
     case MSP_SIMPLIFIED_TUNING: {
-      const auto& s = _model.config.simplifiedTuning;
+      const auto& s = config.simplifiedTuning;
       r.writeU8(s.pidsMode);
       r.writeU8(s.masterMultiplier);
       r.writeU8(s.rollPitchRatio);
@@ -2002,25 +2037,25 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU32(0);
       r.writeU8(s.dtermFilter);
       r.writeU8(s.dtermFilterMultiplier);
-      r.writeU16(_model.config.dterm.filter.freq);
-      r.writeU16(_model.config.dterm.filter2.freq);
-      r.writeU16(_model.config.dterm.dynLpfFilter.cutoff);
-      r.writeU16(_model.config.dterm.dynLpfFilter.freq);
+      r.writeU16(config.dterm.filter.freq);
+      r.writeU16(config.dterm.filter2.freq);
+      r.writeU16(config.dterm.dynLpfFilter.cutoff);
+      r.writeU16(config.dterm.dynLpfFilter.freq);
       r.writeU32(0);
       r.writeU32(0);
       r.writeU8(s.gyroFilter);
       r.writeU8(s.gyroFilterMultiplier);
-      r.writeU16(_model.config.gyro.filter.freq);
-      r.writeU16(_model.config.gyro.filter2.freq);
-      r.writeU16(_model.config.gyro.dynLpfFilter.cutoff);
-      r.writeU16(_model.config.gyro.dynLpfFilter.freq);
+      r.writeU16(config.gyro.filter.freq);
+      r.writeU16(config.gyro.filter2.freq);
+      r.writeU16(config.gyro.dynLpfFilter.cutoff);
+      r.writeU16(config.gyro.dynLpfFilter.freq);
       r.writeU32(0);
       r.writeU32(0);
       break;
     }
 
     case MSP_SET_SIMPLIFIED_TUNING: {
-      auto& s = _model.config.simplifiedTuning;
+      auto& s = config.simplifiedTuning;
       s.pidsMode = m.readU8();
       s.masterMultiplier = m.readU8();
       s.rollPitchRatio = m.readU8();
@@ -2034,37 +2069,37 @@ constexpr int REQUIRED_PID_BYTES =
       m.readU32();
       s.dtermFilter = m.readU8();
       s.dtermFilterMultiplier = m.readU8();
-      _model.config.dterm.filter.freq = m.readU16();
-      _model.config.dterm.filter2.freq = m.readU16();
-      _model.config.dterm.dynLpfFilter.cutoff = m.readU16();
-      _model.config.dterm.dynLpfFilter.freq = m.readU16();
+      config.dterm.filter.freq = m.readU16();
+      config.dterm.filter2.freq = m.readU16();
+      config.dterm.dynLpfFilter.cutoff = m.readU16();
+      config.dterm.dynLpfFilter.freq = m.readU16();
       m.readU32();
       m.readU32();
       s.gyroFilter = m.readU8();
       s.gyroFilterMultiplier = m.readU8();
-      _model.config.gyro.filter.freq = m.readU16();
-      _model.config.gyro.filter2.freq = m.readU16();
-      _model.config.gyro.dynLpfFilter.cutoff = m.readU16();
-      _model.config.gyro.dynLpfFilter.freq = m.readU16();
+      config.gyro.filter.freq = m.readU16();
+      config.gyro.filter2.freq = m.readU16();
+      config.gyro.dynLpfFilter.cutoff = m.readU16();
+      config.gyro.dynLpfFilter.freq = m.readU16();
       m.readU32();
       m.readU32();
-      _model.calculateSimplifiedPids(s, _model.config.pid);
+      _model.calculateSimplifiedPids(s, config.pid);
       if (s.dtermFilter)
       {
         _model.calculateSimplifiedDtermFilters(
-            s.dtermFilterMultiplier, _model.config.dterm.filter.freq, _model.config.dterm.filter2.freq,
-            _model.config.dterm.dynLpfFilter.cutoff, _model.config.dterm.dynLpfFilter.freq);
+            s.dtermFilterMultiplier, config.dterm.filter.freq, config.dterm.filter2.freq,
+            config.dterm.dynLpfFilter.cutoff, config.dterm.dynLpfFilter.freq);
       }
       if (s.gyroFilter)
       {
-        _model.calculateSimplifiedGyroFilters(s.gyroFilterMultiplier, _model.config.gyro.filter.freq,
-                                              _model.config.gyro.filter2.freq, _model.config.gyro.dynLpfFilter.cutoff,
-                                              _model.config.gyro.dynLpfFilter.freq);
+        _model.calculateSimplifiedGyroFilters(s.gyroFilterMultiplier, config.gyro.filter.freq,
+                                              config.gyro.filter2.freq, config.gyro.dynLpfFilter.cutoff,
+                                              config.gyro.dynLpfFilter.freq);
       }
-      _model.notifyConfigChange(MODEL_CHANGE_PID);
+      events[static_cast<size_t>(MODEL_CHANGE_PID)] = true;
       if (s.gyroFilter || s.dtermFilter)
       {
-        _model.notifyConfigChange(MODEL_CHANGE_FILTER);
+        events[static_cast<size_t>(MODEL_CHANGE_FILTER)] = true;
       }
       break;
     }
@@ -2082,8 +2117,8 @@ constexpr int REQUIRED_PID_BYTES =
       s.pitchPiGain = m.readU8();
       m.readU32();
       m.readU32();
-      PidConfig tmp[3] = {_model.config.pid[FC_PID_ROLL], _model.config.pid[FC_PID_PITCH],
-                          _model.config.pid[FC_PID_YAW]};
+      PidConfig tmp[3] = {config.pid[FC_PID_ROLL], config.pid[FC_PID_PITCH],
+                          config.pid[FC_PID_YAW]};
       _model.calculateSimplifiedPids(s, tmp);
       for (int i = 0; i < 3; i++)
       {
@@ -2166,7 +2201,7 @@ constexpr int REQUIRED_PID_BYTES =
     case MSP_MOTOR:
       for (size_t i = 0; i < 8; i++)
       {
-        if (i >= OUTPUT_CHANNELS || _model.config.pin[i + PIN_OUTPUT_0] == -1)
+        if (i >= OUTPUT_CHANNELS || config.pin[i + PIN_OUTPUT_0] == -1)
         {
           r.writeU16(0);
           continue;
@@ -2186,7 +2221,7 @@ constexpr int REQUIRED_PID_BYTES =
         uint16_t escCurrent = 0;     // 0.01A per unit
         uint16_t escConsumption = 0; // mAh
 
-        if (_model.config.pin[i + PIN_OUTPUT_0] != -1)
+        if (config.pin[i + PIN_OUTPUT_0] != -1)
         {
           rpm = lrintf(_model.state.output.telemetry.rpm[i]);
           invalidPct = _model.state.output.telemetry.errors[i];
@@ -2227,7 +2262,7 @@ constexpr int REQUIRED_PID_BYTES =
       {
         const uint16_t value = m.readU16();
         const bool validMotor = i < motorCount &&
-            !_model.config.output.channel[i].servo;
+            !config.output.channel[i].servo;
         if (value < 1000u || value > 2000u ||
             (!validMotor && value != 1000u))
         {
@@ -2256,7 +2291,7 @@ constexpr int REQUIRED_PID_BYTES =
     case MSP_SERVO:
       for (size_t i = 0; i < OUTPUT_CHANNELS; i++)
       {
-        if (i >= OUTPUT_CHANNELS || _model.config.pin[i + PIN_OUTPUT_0] == -1)
+        if (i >= OUTPUT_CHANNELS || config.pin[i + PIN_OUTPUT_0] == -1)
         {
           r.writeU16(1500);
           continue;
@@ -2270,9 +2305,9 @@ constexpr int REQUIRED_PID_BYTES =
       {
         if (i < OUTPUT_CHANNELS)
         {
-          r.writeU16(_model.config.output.channel[i].min);
-          r.writeU16(_model.config.output.channel[i].max);
-          r.writeU16(_model.config.output.channel[i].neutral);
+          r.writeU16(config.output.channel[i].min);
+          r.writeU16(config.output.channel[i].max);
+          r.writeU16(config.output.channel[i].neutral);
         }
         else
         {
@@ -2290,9 +2325,9 @@ constexpr int REQUIRED_PID_BYTES =
       uint8_t i = m.readU8();
       if (i < OUTPUT_CHANNELS)
       {
-        _model.config.output.channel[i].min = m.readU16();
-        _model.config.output.channel[i].max = m.readU16();
-        _model.config.output.channel[i].neutral = m.readU16();
+        config.output.channel[i].min = m.readU16();
+        config.output.channel[i].max = m.readU16();
+        config.output.channel[i].neutral = m.readU16();
         m.readU8();
         m.readU8();
         m.readU32();
@@ -2327,13 +2362,13 @@ constexpr int REQUIRED_PID_BYTES =
       else
       {
         r.writeU8(3 /* SMARTAUDIO */);               // vtx type unknown
-        r.writeU8(_model.config.vtx.band);           // band
-        r.writeU8(_model.config.vtx.channel);        // channel
-        r.writeU8(_model.config.vtx.power);          // power
-        r.writeU8(0);                                // status (looks like 1 means pit mode :shrug:)
-        r.writeU16(0);                               // freq
-        r.writeU8(1);                                // ready
-        r.writeU8(_model.config.vtx.lowPowerDisarm); // low power disarm
+        r.writeU8(_model.state.vtx.appliedBand); // band
+        r.writeU8(_model.state.vtx.appliedChannel); // channel
+        r.writeU8(_model.state.vtx.appliedPower); // power
+        r.writeU8(_model.state.vtx.pitMode); // observed pit status
+        r.writeU16(_model.state.vtx.frequency); // observed frequency
+        r.writeU8(_model.state.vtx.ready); // acknowledged configuration
+        r.writeU8(config.vtx.lowPowerDisarm); // low power disarm
       }
       // 1.42
       r.writeU16(0); // pit mode freq
@@ -2344,42 +2379,27 @@ constexpr int REQUIRED_PID_BYTES =
       break;
 
     case MSP_SET_VTX_CONFIG: {
-      uint16_t freq = m.readU16();
-      if (freq <= VTXCOMMON_MSP_BANDCHAN_CHKVAL)
-      {
-        // Value is band and channel
-        // const uint8_t newBand = (freq / 8) + 1;
-        // const uint8_t newChannel = (freq % 8) + 1;
-      }
-
+      const uint16_t encoded = m.readU16();
+      if (encoded >= 40) { r.result = -1; break; }
+      config.vtx.band = encoded / 8u + 1u;
+      config.vtx.channel = encoded % 8u + 1u;
       if (m.remain() >= 2)
       {
-        _model.config.vtx.power = m.readU8();
-        /*const uint8_t newPitmode = */ m.readU8();
+        config.vtx.power = m.readU8();
+        if (m.readU8() != 0) { r.result = -1; break; } // Pit mode not implemented.
       }
-
-      if (m.remain())
-      {
-        _model.config.vtx.lowPowerDisarm = m.readU8();
-      }
-
-      // API version 1.42 - this parameter kept separate since clients may already be supplying
-      if (m.remain() >= 2)
-      {
-        /*const uint16_t pitModeFreq = */ m.readU16();
-      }
-
-      // API version 1.42 - extensions for non-encoded versions of the band, channel or frequency
+      if (m.remain() >= 1) config.vtx.lowPowerDisarm = m.readU8();
+      if (m.remain() >= 2 && m.readU16() != 0) { r.result = -1; break; }
       if (m.remain() >= 4)
       {
-        // Added standalone values for band, channel and frequency to move
-        // away from the flawed encoded combined method originally implemented.
-        _model.config.vtx.band = m.readU8();
-        _model.config.vtx.channel = m.readU8();
-        /*uint16_t newFreq = */ m.readU16();
+        config.vtx.band = m.readU8(); config.vtx.channel = m.readU8();
+        const uint16_t frequency = m.readU16();
+        if (config.vtx.band == 0 || frequency > 6000) { r.result = -1; break; }
       }
+      if (_model.state.vtx.powerLevels && config.vtx.power > _model.state.vtx.powerLevels)
+        r.result = -1;
+      break;
     }
-    break;
 
     case MSP_SET_ARMING_DISABLED: {
       const uint8_t cmd = m.readU8();
@@ -2439,7 +2459,7 @@ constexpr int REQUIRED_PID_BYTES =
       if (m.remain() >= 2)
       {
         // Added in API version 1.43
-        _model.config.gps.setHomeOnce = m.readU8(); // gps_set_home_point_once
+        config.gps.setHomeOnce = m.readU8(); // gps_set_home_point_once
         m.readU8();                                 // gps_ublox_use_galileo
       }
       break;
@@ -2450,7 +2470,7 @@ constexpr int REQUIRED_PID_BYTES =
       r.writeU8(1); // autoConfig, 0: off, 1: on
       r.writeU8(1); // autoBaud, 0: off, 1: on
       // Added in API version 1.43
-      r.writeU8(_model.config.gps.setHomeOnce); // gps_set_home_point_once
+      r.writeU8(config.gps.setHomeOnce); // gps_set_home_point_once
       r.writeU8(1);                             // gps_ublox_use_galileo
       break;
 
@@ -2474,8 +2494,8 @@ constexpr int REQUIRED_PID_BYTES =
         r.result = -1;
         break;
       }
-      auto& a = _model.config.altHold;
-      auto& rf = _model.config.rangefinder;
+      auto& a = config.altHold;
+      auto& rf = config.rangefinder;
 
       if (m.remain() == 0)
       {
@@ -2515,8 +2535,8 @@ constexpr int REQUIRED_PID_BYTES =
         a.groundEffectHeight = m.readU8();
         a.propWashAccelThreshold = m.readU8();
 
-        _model.sanitize();
-        _model.setRebootRequired();
+        needsSanitize = true;
+        needsReboot = true;
       }
       else if (m.remain() == 22)
       {
@@ -2544,8 +2564,8 @@ constexpr int REQUIRED_PID_BYTES =
         rf.maxDistanceCm = m.readU16();
         rf.updateIntervalMs = m.readU16();
 
-        _model.sanitize();
-        _model.setRebootRequired();
+        needsSanitize = true;
+        needsReboot = true;
       }
       break;
     }
@@ -2606,18 +2626,63 @@ constexpr int REQUIRED_PID_BYTES =
           range.lastUpdateUs);
       r.writeU8(
           static_cast<uint8_t>(
-              _model.config.rangefinder.type));
+              config.rangefinder.type));
+      break;
+    }
+
+    case MSP_GPS_RESCUE: {
+      StockRescueSettings v;
+      if (!Control::modeSupported(MODE_GPS_RESCUE) || !Control::stockRescueSettings(config, v))
+      { r.result = -1; break; }
+      r.writeU16(v.angle);
+      r.writeU16(v.returnAltitudeM);
+      r.writeU16(v.descentDistanceM);
+      r.writeU16(v.groundSpeedCms);
+      r.writeU16(v.throttleMin);
+      r.writeU16(v.throttleMax);
+      r.writeU16(v.throttleHover);
+      r.writeU8(v.sanityChecks);
+      r.writeU8(v.minSats);
+      r.writeU16(v.ascendRateCms);
+      r.writeU16(v.descendRateCms);
+      r.writeU8(v.allowArmingWithoutFix);
+      r.writeU8(v.altitudeMode);
+      r.writeU16(v.minStartDistanceM);
+      r.writeU16(v.initialClimbM);
+      break;
+    }
+    case MSP_SET_GPS_RESCUE: {
+      if (!Control::modeSupported(MODE_GPS_RESCUE)) { r.result = -1; break; }
+      auto& v = config.extension.stockRescue;
+      v.angle = m.readU16();
+      v.returnAltitudeM = m.readU16();
+      v.descentDistanceM = m.readU16();
+      v.groundSpeedCms = m.readU16();
+      v.throttleMin = m.readU16();
+      v.throttleMax = m.readU16();
+      v.throttleHover = m.readU16();
+      v.sanityChecks = m.readU8();
+      v.minSats = m.readU8();
+      v.ascendRateCms = m.readU16();
+      v.descendRateCms = m.readU16();
+      v.allowArmingWithoutFix = m.readU8();
+      v.altitudeMode = m.readU8();
+      v.minStartDistanceM = m.readU16();
+      v.initialClimbM = m.readU16();
+      config.extension.stockRescueEnabled = 1;
       break;
     }
 
     case MSP2_ESPFC_GPS_RESCUE_CONFIG: {
+      if (m.remain() == 0 && config.extension.stockRescueEnabled)
+      { r.result = -1; break; }
       const int payloadSize = m.remain();
       if (payloadSize != 0 && payloadSize != 18)
       {
         r.result = -1;
         break;
       }
-      const auto& c = _model.config.gpsRescue;
+      const auto& c = config.gpsRescue;
       if (m.remain() == 0)
       {
         r.writeU8(c.altitudeMode);
@@ -2640,7 +2705,8 @@ constexpr int REQUIRED_PID_BYTES =
       }
       else if (m.remain() == 18)
       {
-        auto& cfg = _model.config.gpsRescue;
+        config.extension.stockRescueEnabled = 0;
+        auto& cfg = config.gpsRescue;
         cfg.altitudeMode = m.readU8();
         cfg.altitudeMarginM = m.readU8();
         cfg.fixedAltitudeM = m.readU8();
@@ -2658,8 +2724,8 @@ constexpr int REQUIRED_PID_BYTES =
         cfg.gpsStaleDs = m.readU8();
         cfg.maxHorizontalAccuracyM = m.readU8();
         cfg.maxAccelerationCms2 = m.readU16();
-        _model.sanitize();
-        _model.setRebootRequired();
+        needsSanitize = true;
+        needsReboot = true;
       }
       break;
     }
@@ -2796,7 +2862,7 @@ constexpr int REQUIRED_PID_BYTES =
     case MSP_EEPROM_WRITE:
       if (!_model.isModeActive(MODE_ARMED))
       {
-        _model.save();
+        if (!_model.save()) r.result = -1;
       }
       else
       {
@@ -2808,7 +2874,7 @@ constexpr int REQUIRED_PID_BYTES =
       if (!_model.isModeActive(MODE_ARMED))
       {
         _model.reset();
-        _model.save();
+        if (!_model.save()) { r.result = -1; break; }
         _postCommand = [this]() { processRestart(); };
         r.writeU8(1); // success
       }
@@ -2846,6 +2912,28 @@ constexpr int REQUIRED_PID_BYTES =
       r.result = -1;
       break;
   }
+  if (m.decodeError || (configWrite && m.remain() != 0))
+  {
+    r.result = -1;
+    r.len = 0;
+    return;
+  }
+  if (staged && r.result >= 0)
+  {
+    if (!Utils::configurationValid(*staged))
+    {
+      r.result = -1;
+      r.len = 0;
+      return;
+    }
+    _model.config = *staged;
+    if (needsSanitize) _model.sanitize();
+    if (needsReload) _model.reload();
+    for (size_t i = 0; i < 5; ++i)
+      if (events[i]) _model.notifyConfigChange(static_cast<ModelChangeEvent>(i));
+    if (needsReboot) _model.setRebootRequired();
+  }
+
 }
 
 void MspProcessor::processEsc4way()

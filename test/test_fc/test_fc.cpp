@@ -140,6 +140,7 @@ void test_actuator_land_health_rejects_nonfinite_estimator_components()
   constexpr uint32_t NOW_US = 2700000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.begin();
@@ -263,6 +264,7 @@ void test_timer_check_micros()
 void test_model_gyro_init_1k_256dlpf()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 8000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -280,6 +282,7 @@ void test_model_gyro_init_1k_256dlpf()
 void test_model_gyro_init_1k_188dlpf()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_188;
   model.config.loopSync = 2;
@@ -297,6 +300,7 @@ void test_model_gyro_init_1k_188dlpf()
 void test_model_inner_pid_init()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -334,6 +338,7 @@ void test_model_inner_pid_init()
 void test_controller_rates()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 8000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 8;
@@ -384,6 +389,7 @@ void test_controller_rates()
 void test_controller_rates_limit()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 8000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 8;
@@ -432,6 +438,8 @@ void test_controller_pid_dt_tracks_successful_gyro_samples()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -481,6 +489,8 @@ void test_controller_angle_mode_does_not_latch_fterm_scale()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -522,6 +532,8 @@ void test_controller_navigation_angle_owns_rate_targets_without_angle_switch()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -581,6 +593,7 @@ void test_controller_assisted_rejects_stale_estimator_independently_of_baro()
   constexpr uint32_t NOW_US = 2800000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -623,6 +636,8 @@ void test_controller_assisted_modes_reject_nonfinite_sensor_state()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -693,6 +708,8 @@ void test_controller_angle_v2_activates_and_slews()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
@@ -774,6 +791,8 @@ void test_controller_angle_v2_bumpless_entry()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -846,6 +865,8 @@ void test_controller_angle_v2_active_path_is_bumpless_and_negative_feedback()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock =
       1000;
@@ -994,6 +1015,8 @@ void test_controller_althold_v2_captures_current_altitude()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -1056,6 +1079,8 @@ void test_controller_althold_v2_center_stick_holds_target()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -1109,6 +1134,8 @@ void test_controller_althold_v2_climb_command_moves_target_up()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
@@ -1167,6 +1194,8 @@ void test_controller_althold_v2_descent_command_moves_target_down()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -1220,6 +1249,8 @@ void test_controller_althold_v2_stops_when_estimator_unhealthy()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
@@ -1277,6 +1308,8 @@ void test_controller_althold_v2_vertical_accel_limit()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
@@ -1343,6 +1376,8 @@ void test_controller_althold_v2_target_is_bounded()
           0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock =
       1000;
@@ -1474,6 +1509,8 @@ void test_controller_althold_v2_full_climb_rate_scaling()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock =
       1000;
 
@@ -1590,6 +1627,8 @@ void test_actuator_althold_fault_requires_switch_cycle()
           50000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   // --------------------------------------------------
   // Required barometer state
@@ -1786,6 +1825,7 @@ void test_actuator_althold_fault_requires_switch_cycle()
 void test_actuator_mode_link_activates_target_without_aux_range()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.input.channelsValid =
       true;
@@ -1875,6 +1915,7 @@ void test_actuator_mode_link_activates_target_without_aux_range()
 void test_actuator_mode_logic_and_requires_all_ranges()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.input.channelsValid =
       true;
@@ -1954,6 +1995,7 @@ void test_actuator_mode_logic_and_requires_all_ranges()
 void test_actuator_mode_link_cannot_target_arm()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.input.channelsValid =
       true;
@@ -2023,6 +2065,7 @@ void test_actuator_mode_link_cannot_target_arm()
 void test_actuator_mode_link_rejects_linked_source_chain()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.input.channelsValid =
       true;
@@ -2164,22 +2207,19 @@ void test_model_config_antigravity_tail_layout_stays_packed()
       sizeof(
           GpsRescueConfig);
 
-  const size_t expectedModelSize =
-      ((rescueEnd +
-        alignof(ModelConfig) -
-        1u) /
-       alignof(ModelConfig)) *
-      alignof(ModelConfig);
+  const size_t extensionOffset = ((rescueEnd + alignof(FirmwareExtension) - 1u) /
+      alignof(FirmwareExtension)) * alignof(FirmwareExtension);
+  TEST_ASSERT_EQUAL_UINT32(extensionOffset, offsetof(ModelConfig, extension));
+  const size_t expectedModelSize = ((extensionOffset + sizeof(FirmwareExtension) +
+      alignof(ModelConfig) - 1u) / alignof(ModelConfig)) * alignof(ModelConfig);
+  TEST_ASSERT_EQUAL_UINT32(expectedModelSize, sizeof(ModelConfig));
 
-  TEST_ASSERT_EQUAL_UINT32(
-      expectedModelSize,
-      sizeof(
-          ModelConfig));
 }
 
 void test_model_sanitize_migrates_legacy_antigravity_tail()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.antiGravityGain =
       247;
@@ -2202,6 +2242,7 @@ void test_model_sanitize_migrates_legacy_antigravity_tail()
 void test_model_sanitize_scrubs_legacy_antigravity_mode_rows()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.antiGravityConfigTag =
       0;
@@ -2269,6 +2310,7 @@ void test_model_sanitize_scrubs_legacy_antigravity_mode_rows()
 void test_model_sanitize_preserves_new_antigravity_mode_rows()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.antiGravityConfigTag =
       ModelConfig::ANTI_GRAVITY_CONFIG_TAG;
@@ -2308,6 +2350,7 @@ void test_model_sanitize_preserves_new_antigravity_mode_rows()
 void test_model_sanitize_preserves_valid_antigravity_gain()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.antiGravityGain =
       173;
@@ -2324,9 +2367,13 @@ void test_model_sanitize_preserves_valid_antigravity_gain()
       173,
       model.config.antiGravityGain);
 
+#if defined(ESPFC_ANTI_GRAVITY_ACTIVE)
   TEST_ASSERT_TRUE(
       model.config.featureMask &
       FEATURE_ANTI_GRAVITY);
+#else
+  TEST_ASSERT_FALSE(model.config.featureMask & FEATURE_ANTI_GRAVITY);
+#endif
 }
 
 
@@ -2336,6 +2383,8 @@ void test_controller_antigravity_uses_valid_gyro_sample_interval()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(2200000u);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.featureMask |= FEATURE_ANTI_GRAVITY;
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
@@ -2343,6 +2392,8 @@ void test_controller_antigravity_uses_valid_gyro_sample_interval()
   model.config.mixerSync = 1;
   model.config.mixer.type = FC_MIXER_QUADX;
   model.begin();
+  // Exercise the observer directly even in builds that hide its output authority.
+  model.config.featureMask |= FEATURE_ANTI_GRAVITY;
   Controller controller(model);
   controller.begin();
 
@@ -2377,6 +2428,8 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.config.featureMask |=
       FEATURE_ANTI_GRAVITY;
 
@@ -2396,6 +2449,8 @@ void test_controller_anti_gravity_tracks_manual_throttle_transient()
       FC_MIXER_QUADX;
 
   model.begin();
+  // Exercise the observer directly even in builds that hide its output authority.
+  model.config.featureMask |= FEATURE_ANTI_GRAVITY;
 
   Controller controller(
       model);
@@ -2529,6 +2584,8 @@ void test_controller_anti_gravity_can_be_enabled_by_mode()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.config.featureMask &=
       ~FEATURE_ANTI_GRAVITY;
 
@@ -2607,6 +2664,8 @@ void test_controller_anti_gravity_yields_to_assisted_vertical_control()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.config.featureMask |=
       FEATURE_ANTI_GRAVITY;
 
@@ -2683,6 +2742,8 @@ void test_msp_current_meter_reply_is_ignored_when_source_is_not_msp()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.config.ibat.source =
       CURRENT_METER_ADC;
 
@@ -2734,6 +2795,8 @@ void test_msp_current_meter_short_reply_is_ignored()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.config.ibat.source =
       CURRENT_METER_MSP;
 
@@ -2770,6 +2833,7 @@ void test_mixer_disarmed_motor_test_session_expires_and_hard_stops()
   constexpr uint32_t NOW = 3300000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.currentMixer =
       Output::Mixers::getMixer(FC_MIXER_QUADX, model.state.customMixer);
   for (size_t i = 0; i < OUTPUT_CHANNELS; ++i)
@@ -2814,6 +2878,7 @@ void test_mixer_disarmed_motor_test_session_expires_and_hard_stops()
 void test_model_disallows_arming_with_zero_motor_mixer()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.mode.armingDisabledFlags = 0;
   model.state.pinConflict = false;
   model.state.currentMixer.count = 0;
@@ -2830,6 +2895,7 @@ void test_model_direct_range_pin_cannot_conflict_with_motor()
   ArduinoFakeReset();
   When(Method(ArduinoFake(), millis)).AlwaysReturn(1);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.logger.begin(256);
   model.config.pin[PIN_OUTPUT_0] = 40;
   model.config.rangefinder.type = RANGEFINDER_HCSR04;
@@ -2846,6 +2912,7 @@ void test_model_gps_home_requires_fresh_3d_quality_and_respects_set_once()
   constexpr uint32_t NOW = 11000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.gps.minSats = 8;
   model.config.gps.setHomeOnce = true;
   auto& gps = model.state.gps;
@@ -2881,6 +2948,7 @@ void test_model_gps_home_requires_fresh_3d_quality_and_respects_set_once()
 void test_model_sanitize_preserves_msp_current_source()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.ibat.source =
       CURRENT_METER_MSP;
@@ -2917,6 +2985,8 @@ void test_msp_current_meter_reply_updates_battery_state()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.ibat.source =
       CURRENT_METER_MSP;
@@ -2997,6 +3067,8 @@ void test_new_armed_flight_requires_new_fresh_gps_home()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.gps.setHomeOnce = true;
   model.config.gps.minSats = 8;
   auto& gps = model.state.gps;
@@ -3033,6 +3105,7 @@ void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
 {
   ArduinoFakeReset();
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.vbat.source = 1;
   Sensor::VoltageSensor sensor(model);
   sensor.begin();
@@ -3041,7 +3114,7 @@ void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
   // An unplugged pack at USB boot must not exhaust the detection window.
   for (int i = 0; i < 100; ++i)
   {
-    battery.voltage = 0.0f;
+    battery.voltage = battery.voltageUnfiltered = 0.0f;
     sensor.updatePackDetection();
   }
   TEST_ASSERT_EQUAL_INT(50, battery.samples);
@@ -3050,7 +3123,7 @@ void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
   // A later connected 3S pack is recognized normally.
   for (int i = 0; i < 50; ++i)
   {
-    battery.voltage = 12.0f;
+    battery.voltage = battery.voltageUnfiltered = 12.0f;
     sensor.updatePackDetection();
   }
   TEST_ASSERT_EQUAL_INT(0, battery.samples);
@@ -3061,7 +3134,7 @@ void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
   // Brief low voltage while disarmed is not enough to reset the pack.
   for (int i = 0; i < 49; ++i)
   {
-    battery.voltage = 0.0f;
+    battery.voltage = battery.voltageUnfiltered = 0.0f;
     sensor.updatePackDetection();
   }
   TEST_ASSERT_EQUAL_INT(3, battery.cells);
@@ -3076,7 +3149,7 @@ void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
   // A new 4S pack must be measured from scratch after the disconnect.
   for (int i = 0; i < 50; ++i)
   {
-    battery.voltage = 16.0f;
+    battery.voltage = battery.voltageUnfiltered = 16.0f;
     sensor.updatePackDetection();
   }
   TEST_ASSERT_EQUAL_INT(4, battery.cells);
@@ -3085,7 +3158,7 @@ void test_battery_pack_detection_handles_late_connection_and_disarmed_swap()
   model.updateModes(1u << MODE_ARMED);
   for (int i = 0; i < 60; ++i)
   {
-    battery.voltage = 0.0f;
+    battery.voltage = battery.voltageUnfiltered = 0.0f;
     sensor.updatePackDetection();
   }
   TEST_ASSERT_EQUAL_INT(4, battery.cells);
@@ -3132,6 +3205,8 @@ void test_voltage_sensor_reads_fresh_msp_current_and_rejects_stale_data()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.ibat.source =
       CURRENT_METER_MSP;
@@ -3203,6 +3278,8 @@ void test_actuator_angle_fault_requires_switch_cycle()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(50000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   // Required sensor configuration/state.
   model.state.gyro.present =
@@ -3312,6 +3389,8 @@ void test_controller_althold_v2_inactive_build_does_not_drive_thrust()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock =
       1000;
 
@@ -3390,6 +3469,8 @@ void test_controller_althold_exit_limits_manual_throttle_step_and_releases()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -3435,6 +3516,8 @@ void test_controller_althold_exit_disarm_bypasses_throttle_handoff()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -3487,6 +3570,8 @@ void test_controller_althold_v2_active_path_is_bumpless_and_corrective()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock =
       1000;
@@ -3594,6 +3679,7 @@ void test_controller_althold_v2_active_path_is_bumpless_and_corrective()
 void test_controller_althold_v2_low_manual_throttle_preserves_rate_iterm()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Controller controller(
       model);
 
@@ -3628,6 +3714,7 @@ void test_controller_althold_v2_low_manual_throttle_preserves_rate_iterm()
 void test_controller_althold_v2_tpa_uses_assisted_thrust()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Controller controller(
       model);
 
@@ -3671,6 +3758,8 @@ void test_actuator_althold_v2_allows_stick_deflection_after_entry()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -3751,6 +3840,8 @@ void test_actuator_althold_v2_invalid_pilot_channel_exits_and_latches()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -3839,6 +3930,8 @@ void test_controller_althold_v2_debug_exposes_vertical_control_chain()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock =
       1000;
@@ -3963,6 +4056,8 @@ void test_controller_althold_v2_uses_dedicated_centered_stick_channel()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock =
       1000;
 
@@ -4055,6 +4150,8 @@ void test_actuator_althold_v2_requires_centered_pilot_stick_on_entry()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -4137,6 +4234,8 @@ void test_actuator_althold_v2_rejects_missing_pilot_channel()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -4248,6 +4347,8 @@ void test_actuator_althold_v2_rejects_invalid_raw_pilot_channel()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -4339,6 +4440,8 @@ void test_land_v2_level_airframe_produces_balanced_quad_motor_commands()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -4416,6 +4519,8 @@ void test_controller_land_v2_levels_and_requests_descent()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock =
       1000;
@@ -4568,6 +4673,8 @@ void test_controller_land_v2_requires_supervisor_authorization()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.config.mixer.type =
       FC_MIXER_QUADX;
 
@@ -4640,6 +4747,8 @@ void test_failsafe_land_v2_bad_estimator_preserves_armed_with_level_fallback()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -4687,6 +4796,7 @@ void test_land_v2_attitude_fault_blocks_level_but_preserves_propulsion()
   constexpr uint32_t NOW_US = 3100000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -4732,6 +4842,7 @@ void test_land_v2_altitude_fault_keeps_level_but_not_descent()
   constexpr uint32_t NOW_US = 3200000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -4762,6 +4873,7 @@ void test_land_v2_altitude_fault_keeps_level_but_not_descent()
 void test_land_v2_fault_bypasses_motor_stop_feature()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.featureMask |= FEATURE_MOTOR_STOP;
   model.state.input.ch[AXIS_THRUST] = -1.0f;
   model.updateModes(uint32_t{1} << MODE_ARMED);
@@ -4815,6 +4927,7 @@ static void checkNoRangeTouchdownAtHeight(float entry, float height)
   constexpr uint32_t START = 5000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setNoRangeLandingFixture(model, START, entry, height);
   Actuator actuator(model);
   for (uint32_t i = 0; i < 57; ++i)
@@ -4844,6 +4957,7 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
   When(Method(ArduinoFake(), millis)).AlwaysReturn(7900);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 500;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -4948,6 +5062,7 @@ void test_land_motor_idle_requires_all_outputs_not_any_one()
   ArduinoFakeReset();
   When(Method(ArduinoFake(), micros)).AlwaysReturn(9000000u);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.mixer.type = FC_MIXER_QUADX;
   model.state.output.ch[AXIS_THRUST] = -0.96f;
   const MixerConfig cfg =
@@ -4983,6 +5098,7 @@ void test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion()
   constexpr uint32_t START = 6000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setNoRangeLandingFixture(model, START, 1.0f, 0.05f);
   Actuator actuator(model);
   model.state.output.ch[AXIS_THRUST] = -0.30f;
@@ -5021,6 +5137,7 @@ void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
   constexpr uint32_t START = 7000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setNoRangeLandingFixture(model, START, 3.0f, 2.0f);
   Actuator actuator(model);
   for (uint32_t i = 0; i < 22; ++i)
@@ -5060,6 +5177,7 @@ void test_land_box_failsafe_qualified_arm_off_remains_authoritative()
   constexpr uint32_t NOW_US = 6300000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.conditions[0].id = MODE_ARMED;
   model.config.conditions[0].ch = AXIS_AUX_1;
   model.config.conditions[0].min = 1250;
@@ -5094,6 +5212,7 @@ void test_land_rx_recovery_exposes_disarm_switch_without_throttle_takeover()
   constexpr uint32_t NOW_US = 6100000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.conditions[0].id = MODE_ARMED;
   model.config.conditions[0].ch = AXIS_AUX_1;
   model.config.conditions[0].min = 1250;
@@ -5153,6 +5272,7 @@ void test_land_full_actuator_gyro_loss_aborts_without_false_landed()
   constexpr uint32_t NOW_US = 4800000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   // Live AUX ARM switch: this exercises updateArmingDisabled ->
   // updateModeMask -> updateArmed -> updateFailsafeLand, not the helper alone.
   model.config.conditions[0].id = MODE_ARMED;
@@ -5200,6 +5320,7 @@ void test_land_disarm_and_recovery_cannot_reuse_touchdown_history()
   constexpr uint32_t NOW_US = 5400000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setHealthyAssistedEstimatorState(model, NOW_US);
   model.state.altitude.healthy = true;
   model.state.altitude.height = 2.0f;
@@ -5245,6 +5366,7 @@ void test_land_repeated_failsafe_stage2_does_not_reset_contact_state()
   constexpr uint32_t NOW_US = 5700000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   TelemetryManager telemetry(model);
   Input input(model, telemetry);
   model.config.failsafe.procedure = FAILSAFE_PROCEDURE_AUTO_LAND;
@@ -5273,6 +5395,7 @@ void test_failsafe_gps_rescue_stage2_preserves_committed_land()
   constexpr uint32_t NOW_US = 6900000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   TelemetryManager telemetry(model);
   Input input(model, telemetry);
   model.config.failsafe.procedure = FAILSAFE_PROCEDURE_GPS_RESCUE;
@@ -5303,6 +5426,7 @@ void test_failsafe_gps_rescue_stage2_preserves_committed_land()
 void test_mixer_automatic_thrust_ignores_low_manual_motor_stop()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.featureMask |= FEATURE_MOTOR_STOP;
   model.state.input.us[AXIS_THRUST] = 1000;
   model.updateModes(uint32_t{1} << MODE_ARMED);
@@ -5339,6 +5463,7 @@ void test_land_rangefinder_supervisor_gap_revokes_previous_touchdown_dwell()
   constexpr uint32_t NOW_US = 7500000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setHealthyAssistedEstimatorState(model, NOW_US);
   model.state.altitude.healthy = true;
   model.state.altitude.height = 0.1f;
@@ -5373,6 +5498,7 @@ void test_failsafe_land_rangefinder_clearance_vetoes_false_baro_touchdown()
   constexpr uint32_t NOW_US = 5000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setHealthyAssistedEstimatorState(model, NOW_US);
   model.state.altitude.healthy = true;
   model.state.altitude.lastUpdateUs = NOW_US;
@@ -5413,6 +5539,7 @@ void test_failsafe_land_rangefinder_confirms_ground_above_takeoff_elevation()
   constexpr uint32_t NOW_US = 5500000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setHealthyAssistedEstimatorState(model, NOW_US);
   model.state.altitude.healthy = true;
   model.state.altitude.lastUpdateUs = NOW_US;
@@ -5453,6 +5580,8 @@ void test_failsafe_land_v2_touchdown_dwell_disarms()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -5546,6 +5675,8 @@ void test_failsafe_land_v2_touchdown_candidate_has_hysteresis()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -5633,6 +5764,8 @@ void test_failsafe_land_v2_low_entry_thrust_prevents_hover_false_touchdown()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -5707,6 +5840,8 @@ void test_failsafe_land_v2_near_ground_hover_does_not_disarm()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -5808,6 +5943,8 @@ void test_failsafe_land_v2_timeout_preserves_airborne_propulsion()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -5890,6 +6027,8 @@ void test_failsafe_land_v2_high_altitude_timeout_requires_ground_contact()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   setHealthyAssistedEstimatorState(model, NOW_US);
   model.state.altitude.healthy = true;
   model.state.altitude.lastUpdateUs = NOW_US;
@@ -5943,6 +6082,8 @@ void test_failsafe_land_v2_rx_recovery_stays_committed_to_land()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -6014,6 +6155,8 @@ void test_baro_bias_seeds_first_absolute_altitude_sample()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   Espfc::Sensor::BaroSensor sensor(
       model);
 
@@ -6062,6 +6205,7 @@ void test_fusion_rejected_imu_does_not_republish_cached_attitude()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
   When(Method(ArduinoFake(), millis)).AlwaysReturn(1200);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.loopTimer.setRate(500);
   model.state.accel.timer.setRate(500);
   model.state.gyro.present = true;
@@ -6111,6 +6255,8 @@ void test_fusion_rejects_invalid_accel_without_poisoning_state()
           1);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.loopTimer.setRate(
       500);
@@ -6394,6 +6540,8 @@ void test_actuator_stale_gyro_blocks_arm_and_disarms()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.present =
       true;
 
@@ -6451,6 +6599,8 @@ void test_actuator_fresh_gyro_passes_runtime_health_gate()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.present =
       true;
 
@@ -6482,6 +6632,7 @@ void test_actuator_fresh_gyro_passes_runtime_health_gate()
 void test_actuator_arming_gyro_motor_calbration()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   // model.begin();
 
   Actuator actuator(model);
@@ -6501,6 +6652,8 @@ void test_actuator_arming_failsafe()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(1000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.present = true;
   model.state.gyro.sampleValid = true;
   model.state.gyro.lastUpdateUs = 1000;
@@ -6529,6 +6682,8 @@ void test_actuator_arming_throttle()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(1000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.output.protocol = ESC_PROTOCOL_DSHOT150;
   model.config.input.minCheck = 1050;
   model.state.input.us[AXIS_THRUST] = 1100;
@@ -6551,6 +6706,7 @@ void test_actuator_arming_throttle()
 void test_mixer_invalid_custom_entries_are_ignored()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(
       model);
 
@@ -6622,6 +6778,7 @@ void test_mixer_invalid_custom_entries_are_ignored()
 void test_mixer_invalid_output_count_fails_closed()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(
       model);
 
@@ -6673,6 +6830,7 @@ void test_mixer_invalid_output_count_fails_closed()
 void test_mixer_quad_yaw_reversal_preserves_directional_saturation_feedback()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.mixer.type = FC_MIXER_QUADX;
   model.config.mixer.yawReverse = false;
   model.updateModes(uint32_t{1} << MODE_AIRMODE);
@@ -6703,6 +6861,7 @@ void test_mixer_quad_yaw_reversal_preserves_directional_saturation_feedback()
 void test_mixer_rate_saturation_feedback_is_axis_and_direction_specific()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.mixer.type = FC_MIXER_QUADX;
   model.config.mixer.yawReverse = true;
   model.updateModes(uint32_t{1} << MODE_AIRMODE);
@@ -6747,6 +6906,7 @@ void test_mixer_rate_saturation_feedback_is_axis_and_direction_specific()
 void test_mixer_airmode_preserves_asymmetric_motor_differential()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.mixer.yawReverse = true;
   model.updateModes(uint32_t{1} << MODE_AIRMODE);
   model.state.output.ch[AXIS_ROLL] = 0.3f;
@@ -6789,6 +6949,7 @@ void test_mixer_airmode_preserves_asymmetric_motor_differential()
 void test_mixer_airmode_scales_excess_differential()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.updateModes(uint32_t{1} << MODE_AIRMODE);
   model.state.output.ch[AXIS_ROLL] = 1.5f;
   model.state.output.ch[AXIS_THRUST] = 0.4f;
@@ -6810,6 +6971,7 @@ void test_mixer_airmode_scales_excess_differential()
 void test_mixer_airmode_excludes_servo_from_motor_headroom()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.mixer.type = FC_MIXER_TRI;
   model.config.output.channel[3].servo = true;
   model.config.mixer.yawReverse = true;
@@ -6832,6 +6994,7 @@ void test_mixer_airmode_excludes_servo_from_motor_headroom()
 void test_mixer_throttle_limit_none()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(model);
 
   TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, mixer.limitThrust(-1.0f, THROTTLE_LIMIT_TYPE_NONE, 100));
@@ -6843,6 +7006,7 @@ void test_mixer_throttle_limit_none()
 void test_mixer_throttle_limit_scale()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(model);
 
   TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, mixer.limitThrust(-1.0f, THROTTLE_LIMIT_TYPE_SCALE, 100));
@@ -6869,6 +7033,7 @@ void test_mixer_throttle_limit_scale()
 void test_mixer_throttle_limit_clip()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(model);
 
   TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f, mixer.limitThrust(-1.0f, THROTTLE_LIMIT_TYPE_CLIP, 100));
@@ -6895,6 +7060,7 @@ void test_mixer_throttle_limit_clip()
 void test_mixer_output_limit_motor()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(model);
   OutputChannelConfig motor = {.servo = false};
 
@@ -6922,6 +7088,7 @@ void test_mixer_output_limit_motor()
 void test_mixer_output_limit_servo()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Output::Mixer mixer(model);
   OutputChannelConfig servo = {.servo = true};
 
@@ -6966,6 +7133,8 @@ When(
         2100); // Stats end - update 2
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   // --------------------------------------------------
   // Estimator rates
@@ -7336,6 +7505,8 @@ void test_rejected_fusion_does_not_reintegrate_world_accel()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.accel.timer.rate =
       1000;
 
@@ -7395,6 +7566,8 @@ void test_rejected_height_sample_does_not_correct_vario()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   prepareAltitudeRegressionModel(
       model,
@@ -7639,6 +7812,8 @@ void test_pressure_filter_first_sample_is_primed()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.baro.rate =
       50;
 
@@ -7702,6 +7877,8 @@ void test_altitude_estimator_has_independent_freshness()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   setHealthyAssistedEstimatorState(
       model,
       NOW_US);
@@ -7744,6 +7921,7 @@ void test_altitude_estimator_has_independent_freshness()
 void test_disarm_output_propagates_without_control_cycle()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   Output::Mixer mixer(
       model);
@@ -7806,6 +7984,8 @@ void test_angle_fault_transition_rate_is_finite_and_bounded()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.gyro.clock =
       1000;
@@ -7984,6 +8164,8 @@ void test_angle_v2_candidate_keeps_physical_motor_driver_blocked()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.gyro.clock =
       1000;
 
@@ -8027,6 +8209,8 @@ void test_failsafe_startup_without_rx_does_not_enter_stage2()
           5000000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -8095,6 +8279,7 @@ void test_failsafe_startup_requires_sustained_rx_recovery()
         1500001,
         1500001);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -8172,6 +8357,8 @@ void test_failsafe_recovery_interrupted_by_loss_stays_blocked()
           1030000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -8266,6 +8453,8 @@ void test_failsafe_recovery_interrupted_by_invalid_frame_stays_blocked()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   TelemetryManager telemetry(
       model);
 
@@ -8352,6 +8541,8 @@ void test_failsafe_auto_land_request_is_recorded_but_disarms()
           2000000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -8471,6 +8662,8 @@ void test_failsafe_auto_land_v2_rejects_bad_estimator()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   TelemetryManager telemetry(
       model);
 
@@ -8559,6 +8752,7 @@ void test_failsafe_auto_land_v2_rejects_bad_estimator()
 void test_failsafe_drop_does_not_request_land()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -8599,6 +8793,7 @@ void test_failsafe_drop_does_not_request_land()
 void test_failsafe_invalid_procedure_sanitizes_to_drop()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.failsafe.procedure =
       255;
@@ -8625,6 +8820,8 @@ void test_failsafe_land_v2_healthy_is_non_actuating()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -8722,6 +8919,8 @@ void test_box_failsafe_with_valid_rx_still_runs_stage2()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   TelemetryManager telemetry(
       model);
 
@@ -8769,6 +8968,7 @@ void test_box_failsafe_with_valid_rx_still_runs_stage2()
 void test_new_arm_clears_previous_land_latch()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   Actuator actuator(
       model);
@@ -8887,6 +9087,7 @@ void test_new_arm_clears_previous_land_latch()
 void test_failsafe_repeated_stage2_preserves_landed_state()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   TelemetryManager telemetry(
       model);
@@ -8946,6 +9147,8 @@ void test_failsafe_land_fault_survives_request_termination()
 
   Model model;
 
+  model.state.mixer.outputReady = true; // simulated output fixture
+
   model.state.failsafe.landingRequested =
       false;
 
@@ -8977,6 +9180,8 @@ void test_failsafe_land_v2_fault_latches()
           NOW_US);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   setHealthyAssistedEstimatorState(
       model,
@@ -9032,6 +9237,7 @@ void test_failsafe_land_v2_fault_latches()
 void test_actuator_missing_aux_channel_cannot_activate_mode()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   // Receiver exposes only the four primary flight channels.
   model.state.input.channelCount =
@@ -9072,6 +9278,7 @@ void test_actuator_missing_aux_channel_cannot_activate_mode()
 void test_actuator_missing_aux_channel_does_not_apply_scaler()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   auto& scaler =
       model.config.scaler[0];
@@ -9142,6 +9349,7 @@ void test_actuator_missing_aux_channel_does_not_apply_scaler()
 void test_actuator_angle_v2_scaler_updates_selected_axis()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   auto& scaler =
       model.config.scaler[0];
@@ -9211,6 +9419,7 @@ void test_actuator_angle_v2_scaler_updates_selected_axis()
 void test_actuator_no_receiver_cannot_activate_aux_mode()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.state.input.channelCount =
       0;
@@ -9258,6 +9467,7 @@ void test_actuator_gps_arming_block_clears_when_feature_disabled()
   // GPS must never prevent arming regardless of fix or feature state,
   // so that position hold can be added later without blocking takeoff.
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Actuator actuator(
       model);
 
@@ -9383,6 +9593,8 @@ void test_input_frame_rate_ignores_startup_and_loss_gaps()
   ArduinoFakeReset();
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   TelemetryManager telemetry(
       model);
   Input input(
@@ -9453,6 +9665,7 @@ void test_input_frame_rate_ignores_startup_and_loss_gaps()
 void test_model_sanitize_preserves_rc_safety_invariants()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.input.minCheck =
       32767;
@@ -9616,7 +9829,9 @@ void test_fusion_mode_name_rejects_negative_enum()
 
 void test_althold_v2_rangefinder_config_is_sanitized()
 {
+  When(Method(ArduinoFake(), millis)).AlwaysReturn(0);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.rangefinder.type =
       255;
@@ -9655,6 +9870,7 @@ void test_althold_v2_rangefinder_config_is_sanitized()
 void test_althold_v2_configurable_limits_are_persisted()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.config.altHold.hoverThrottle = 62;
   model.config.altHold.hoverLearnRate = 7;
@@ -9684,6 +9900,8 @@ void test_altitude_v2_rate_gate_reports_rejection()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(200000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.loopSync = 1;
   model.config.mixerSync = 1;
@@ -9726,6 +9944,8 @@ void test_altitude_v2_rangefinder_is_fused_near_ground()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(100000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.loopSync = 1;
   model.config.mixerSync = 1;
@@ -9776,6 +9996,8 @@ void test_controller_althold_v2_hover_feedforward_and_tilt_compensation()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -9824,6 +10046,8 @@ void test_controller_althold_v2_transition_stress_preserves_target_contract()
   When(Method(ArduinoFake(), micros)).AlwaysReturn(0);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.gyro.dlpf = GYRO_DLPF_256;
   model.config.loopSync = 1;
@@ -9863,6 +10087,8 @@ void test_altitude_v2_acceleration_bias_observer_learns_residual()
       .AlwaysReturn(200000);
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.loopSync = 1;
   model.config.mixerSync = 1;
@@ -9921,6 +10147,7 @@ void test_resource_manager_cpu_land_recovers_services_after_disarm()
   ArduinoFakeReset();
   When(Method(ArduinoFake(), micros)).AlwaysReturn(1000000u);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.updateModes(uint32_t{1} << MODE_ARMED);
   ResourceManager manager(model);
   manager.begin();
@@ -9952,6 +10179,7 @@ void test_resource_manager_cpu_land_recovers_services_after_disarm()
 void test_mixer_collective_throttle_limit_reports_vertical_saturation()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.mixer.type = FC_MIXER_QUADX;
   model.config.output.throttleLimitType = THROTTLE_LIMIT_TYPE_CLIP;
   model.config.output.throttleLimitPercent = 50;
@@ -9990,6 +10218,7 @@ void test_mixer_collective_throttle_limit_reports_vertical_saturation()
 void test_mixer_vertical_saturation_feedback_is_directional()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
 
   model.setOutputSaturation(
       true,
@@ -10168,6 +10397,7 @@ void test_heading_health_requires_fresh_valid_calibrated_magnetometer()
   constexpr uint32_t NOW = 5000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.fusion.useMag = 1;
   model.config.mag.dev = MAG_HMC5883L;
   model.state.mag.present = true;
@@ -10201,6 +10431,7 @@ void test_gps_rescue_rejects_unqualified_absolute_heading()
   constexpr uint32_t NOW = 5200000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   setHealthyAssistedEstimatorState(model, NOW);
   model.state.altitude.healthy = true;
   model.state.gps.present = true;
@@ -10371,6 +10602,7 @@ void test_committed_land_ignores_subsequent_stage1_and_stage2()
   constexpr uint32_t NOW_US = 5700000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   TelemetryManager telemetry(model);
   Input input(model, telemetry);
   model.config.failsafe.procedure = FAILSAFE_PROCEDURE_AUTO_LAND;
@@ -10405,29 +10637,36 @@ void test_battery_cells_stay_fixed_while_armed_during_detection_window()
   Sensor::VoltageSensor sensor(model);
   sensor.begin();
   auto& battery = model.state.battery;
-  battery.voltage = 12.1f;
+  // Filter startup ramps cannot lock in an intermediate cell count.
+  for (int i = 0; i < 7; ++i) {
+    battery.voltage = 3.0f + i;
+    battery.voltageUnfiltered = 12.1f;
+    sensor.updatePackDetection();
+    TEST_ASSERT_EQUAL_INT(0, battery.cells);
+  }
   sensor.updatePackDetection();
   TEST_ASSERT_EQUAL_INT(3, battery.cells);
-  TEST_ASSERT_EQUAL_INT(49, battery.samples);
-
   model.updateModes(uint32_t{1} << MODE_ARMED);
-  for (int i = 0; i < 60; ++i)
-  {
-    battery.voltage = 16.8f;
+  for (int i = 0; i < 60; ++i) {
+    battery.voltageUnfiltered = 16.8f;
     sensor.updatePackDetection();
   }
   TEST_ASSERT_EQUAL_INT(3, battery.cells);
-  TEST_ASSERT_EQUAL_INT(49, battery.samples);
-
   model.updateModes(0);
   sensor.updatePackDetection();
+  TEST_ASSERT_EQUAL_INT(3, battery.cells); // no disconnect, no cell-count revision
+  battery.voltageUnfiltered = 0;
+  for (int i = 0; i < 50; ++i) sensor.updatePackDetection();
+  TEST_ASSERT_EQUAL_INT(0, battery.cells);
+  battery.voltageUnfiltered = 16.8f;
+  for (int i = 0; i < 8; ++i) sensor.updatePackDetection();
   TEST_ASSERT_EQUAL_INT(4, battery.cells);
-  TEST_ASSERT_EQUAL_INT(48, battery.samples);
 }
 
 void test_custom_msp_config_rejects_malformed_payload_sizes()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   const uint8_t hoverBefore = model.config.altHold.hoverThrottle;
@@ -10462,6 +10701,7 @@ void test_custom_msp_config_rejects_malformed_payload_sizes()
 void test_msp_armed_policy_rejects_writes_but_allows_config_reads()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   model.updateModes(uint32_t{1} << MODE_ARMED);
@@ -10525,6 +10765,7 @@ void test_altitude_range_reference_preserves_local_height_on_acquisition()
   constexpr uint32_t NOW_US = 100000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.state.gyro.clock = 1000;
   model.config.loopSync = 1;
   model.config.mixerSync = 1;
@@ -10633,6 +10874,7 @@ void test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts
 void test_msp_rejects_truncated_standard_config_without_partial_mutation()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   const auto original = model.config;
@@ -10671,6 +10913,7 @@ void test_msp_rejects_truncated_standard_config_without_partial_mutation()
 void test_msp_rejects_invalid_meter_and_mode_payload_atomically()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   auto send = [&](uint16_t cmd, std::initializer_list<uint8_t> data) {
@@ -10706,6 +10949,7 @@ void test_msp_rejects_invalid_meter_and_mode_payload_atomically()
 void test_msp_legacy_mode_range_preserves_optional_link_fields()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.conditions[0].logicMode = 1;
   model.config.conditions[0].linkId = MODE_ANGLE;
   Connect::MspProcessor processor(model);
@@ -10714,7 +10958,7 @@ void test_msp_legacy_mode_range_preserves_optional_link_fields()
   m.version = Connect::MSP_V2;
   m.cmd = MSP_SET_MODE_RANGE;
   m.received = 5;
-  const uint8_t payload[] = {0, MODE_ALTHOLD, 0, 4, 8};
+  const uint8_t payload[] = {0, 1, 0, 4, 8};
   std::copy(payload, payload + sizeof(payload), m.buffer);
   Connect::MspResponse response;
   processor.processCommand(m, response, serial);
@@ -10729,18 +10973,21 @@ void test_msp_legacy_mode_range_preserves_optional_link_fields()
 void test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct()
 {
   using Espfc::Connect::MspBoxMapping;
-  const uint8_t wire[] = {0, 28, 1, 3, 13, 27, 26, 31, 4, 11, 46};
+  const uint8_t wire[] = {0, 28, 1, 200, 13, 27, 26, 31, 4, 201, 46};
   for (uint8_t i = 0; i < MODE_COUNT; ++i)
   {
-    TEST_ASSERT_EQUAL_UINT8(wire[i], MspBoxMapping::encode(i));
-    TEST_ASSERT_EQUAL_INT(i, MspBoxMapping::decode(wire[i]));
+    const bool supported = Control::modeSupported(i);
+    TEST_ASSERT_EQUAL_UINT8(supported ? wire[i] : 255, MspBoxMapping::encode(i));
+    TEST_ASSERT_EQUAL_INT(supported ? i : -1, MspBoxMapping::decode(wire[i]));
   }
   TEST_ASSERT_EQUAL_INT(-1, MspBoxMapping::decode(255u));
   const uint32_t internalMask = (uint32_t{1} << MODE_GPS_RESCUE) |
                                 (uint32_t{1} << MODE_ANGLE);
-  TEST_ASSERT_EQUAL_HEX32(internalMask, MspBoxMapping::statusMask(internalMask));
+
 
   Model model;
+
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   auto query = [&](uint16_t cmd) {
@@ -10754,9 +11001,17 @@ void test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct()
   };
 
   const auto ids = query(MSP_BOXIDS);
-  TEST_ASSERT_EQUAL_UINT16(MODE_COUNT, ids.len);
-  for (size_t i = 0; i < MODE_COUNT; ++i)
-    TEST_ASSERT_EQUAL_UINT8(wire[i], ids.data[i]);
+  unsigned advertised = 0;
+  uint32_t expectedStatus = 0;
+  for (size_t i = 0; i < MODE_COUNT; ++i) {
+    if (!Control::modeSupported(i)) continue;
+    TEST_ASSERT_EQUAL_UINT8(wire[i], ids.data[advertised]);
+    if (i == MODE_ANGLE || i == MODE_GPS_RESCUE) expectedStatus |= uint32_t{1} << advertised;
+    ++advertised;
+  }
+  TEST_ASSERT_EQUAL_UINT16(advertised, ids.len);
+  TEST_ASSERT_EQUAL_HEX32(expectedStatus, MspBoxMapping::statusMask(internalMask));
+  if (!Control::modeSupported(MODE_GPS_RESCUE)) return;
 
   // The MSP wire is 46 for Rescue while stored config remains MODE_GPS_RESCUE.
   model.config.conditions[0].id = MODE_GPS_RESCUE;
@@ -10780,6 +11035,7 @@ void test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct()
 void test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   auto send = [&](std::initializer_list<uint8_t> bytes) {
@@ -10793,6 +11049,10 @@ void test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown()
     return response.result;
   };
 
+  if (!Control::modeSupported(MODE_GPS_RESCUE)) {
+    TEST_ASSERT_EQUAL_INT(-1, send({0, 46, 2, 16, 32, 1, 1}));
+    return;
+  }
   TEST_ASSERT_EQUAL_INT(1, send({0, 46, 2, 16, 32, 1, 1}));
   TEST_ASSERT_EQUAL_UINT8(MODE_GPS_RESCUE, model.config.conditions[0].id);
   TEST_ASSERT_EQUAL_UINT8(AXIS_AUX_3, model.config.conditions[0].ch);
@@ -10809,7 +11069,7 @@ void test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown()
   TEST_ASSERT_EQUAL_INT16(previous.max, model.config.conditions[0].max);
 
   // Legacy 5-byte form leaves linked-to ID and logic untouched.
-  TEST_ASSERT_EQUAL_INT(1, send({0, 3, 1, 20, 28}));
+  TEST_ASSERT_EQUAL_INT(1, send({0, 200, 1, 20, 28}));
   TEST_ASSERT_EQUAL_UINT8(MODE_ALTHOLD, model.config.conditions[0].id);
   TEST_ASSERT_EQUAL_UINT8(MODE_ANGLE, model.config.conditions[0].linkId);
 }
@@ -10818,6 +11078,7 @@ void test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown()
 void test_msp_versioned_setters_reject_partial_optional_groups()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   const auto inputBefore = model.config.input;
@@ -10872,6 +11133,7 @@ void test_msp_versioned_setters_reject_partial_optional_groups()
 void test_msp_rejects_out_of_range_airmode_and_motor_values_atomically()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   auto process = [&](uint16_t command, std::initializer_list<uint8_t> data) {
@@ -10913,12 +11175,13 @@ void test_msp_rejects_out_of_range_airmode_and_motor_values_atomically()
 void test_msp_versioned_setters_accept_full_configurator_payloads()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   const struct {uint16_t getCmd; uint16_t setCmd; uint8_t bytes;} requests[] = {
-      {MSP_RX_CONFIG, MSP_SET_RX_CONFIG, 39},
-      {MSP_RC_TUNING, MSP_SET_RC_TUNING, 24},
-      {MSP_FILTER_CONFIG, MSP_SET_FILTER_CONFIG, 56}
+      {MSP_RX_CONFIG, MSP_SET_RX_CONFIG, 38},
+      {MSP_RC_TUNING, MSP_SET_RC_TUNING, 23},
+      {MSP_FILTER_CONFIG, MSP_SET_FILTER_CONFIG, 49}
   };
   for (const auto& pair : requests)
   {
@@ -10947,6 +11210,7 @@ void test_msp_versioned_setters_accept_full_configurator_payloads()
 void test_msp_battery_state_reports_pack_presence_and_warning_threshold()
 {
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   Connect::MspProcessor processor(model);
   TestPartialSerialSink serial;
   auto status = [&]() -> uint8_t {
@@ -11020,6 +11284,7 @@ void test_external_arduino_rangefinder_is_not_falsely_advertised()
 {
   ArduinoFakeReset();
   Model model;
+  model.state.mixer.outputReady = true; // simulated output fixture
   model.config.rangefinder.type = RANGEFINDER_NONE;
   Espfc::Sensor::RangefinderSensor sensor(model);
   TEST_ASSERT_EQUAL(0, sensor.begin());

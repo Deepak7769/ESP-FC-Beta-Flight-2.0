@@ -50,6 +50,7 @@ void MspMessage::advance(size_t size)
   const size_t current =
       std::min<size_t>(read, end);
 
+  if (size > end - current) decodeError = true;
   read = static_cast<uint16_t>(
       current +
       std::min(size, end - current));
@@ -59,6 +60,7 @@ uint8_t MspMessage::readU8()
 {
   if (read >= received)
   {
+    decodeError = true;
     read = received;
     return 0;
   }
@@ -70,6 +72,7 @@ uint16_t MspMessage::readU16()
 {
   if (remain() < 2)
   {
+    decodeError = true;
     read = received;
     return 0;
   }
@@ -87,6 +90,7 @@ uint32_t MspMessage::readU32()
 {
   if (remain() < 4)
   {
+    decodeError = true;
     read = received;
     return 0;
   }

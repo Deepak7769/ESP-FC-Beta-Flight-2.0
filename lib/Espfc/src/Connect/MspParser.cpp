@@ -15,6 +15,7 @@ void MspParser::parse(uint8_t c, MspMessage& msg)
 
     case MSP_STATE_HEADER_START: // sync char 2 'M'
       msg.read = 0;
+      msg.decodeError = false;
       msg.received = 0;
       msg.checksum = 0;
       msg.checksum2 = 0;

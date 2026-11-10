@@ -43,6 +43,7 @@ enum GpsRescueAltitudeMode : uint8_t
   GPS_RESCUE_ALT_FIXED = 1,
   GPS_RESCUE_ALT_MAX = 2,
   GPS_RESCUE_ALT_AT_LEAST = 3,
+  GPS_RESCUE_ALT_TRACKED_MAX = 4,
   GPS_RESCUE_ALTITUDE_MODE_COUNT
 };
 
@@ -71,6 +72,9 @@ struct GpsRescueParams
   float maxYawRate{1.2f};
   float altitudeTolerance{0.5f};
   float headingBlend{0.06f};
+  uint8_t minSats{4};
+  bool sanityChecks{true};
+  bool stockCompatibility{false};
 };
 
 struct GpsRescueInput
@@ -92,6 +96,7 @@ struct GpsRescueInput
   float velocityNorth{0.0f};
   float velocityEast{0.0f};
   float altitudeAboveHome{0.0f};
+  float maximumAltitude{0.0f};
   float verticalRate{0.0f};
   float yawHeading{0.0f};
   float courseOverGround{0.0f};
@@ -224,7 +229,7 @@ public:
         out.verticalRate =
             std::clamp(
                 (_targetAltitude - altitude) * 1.2f,
-                0.0f,
+                p.stockCompatibility ? -p.descentRate : 0.0f,
                 p.climbRate);
 
         // Establish safe altitude before starting the horizontal return leg.
@@ -248,8 +253,9 @@ public:
           _phaseStartedUs = in.nowUs;
         }
         else if (
-            altitude >=
-            _targetAltitude - p.altitudeTolerance)
+            (p.stockCompatibility
+                ? std::fabs(altitude - _targetAltitude) <= p.altitudeTolerance
+                : altitude >= _targetAltitude - p.altitudeTolerance))
         {
           _phase = GpsRescuePhase::ALIGN;
           _phaseStartedUs = in.nowUs;
@@ -353,8 +359,8 @@ public:
 
         // Never allow an apparently healthy but non-progressing return leg
         // to continue indefinitely. The existing supervisor will land.
-        if (_noProgressElapsed >= 8.0f ||
-            _phaseElapsed >= progressTimeout)
+        if (p.sanityChecks && (_noProgressElapsed >= 8.0f ||
+            _phaseElapsed >= progressTimeout))
         {
           _phase = GpsRescuePhase::ABORT;
           out.controlling = false;
@@ -462,7 +468,7 @@ private:
     if (!in.homeValid) f |= GPS_RESCUE_FAULT_HOME;
     if (!in.gpsValid) f |= GPS_RESCUE_FAULT_GPS;
     if (in.gpsAgeS > p.gpsStaleS) f |= GPS_RESCUE_FAULT_STALE;
-    if (in.sats < 4) f |= GPS_RESCUE_FAULT_SATS;
+    if (in.sats < p.minSats) f |= GPS_RESCUE_FAULT_SATS;
     if (in.horizontalAccuracy <= 0.0f ||
         in.horizontalAccuracy > p.maxHorizontalAccuracy)
       f |= GPS_RESCUE_FAULT_ACCURACY;
@@ -478,6 +484,7 @@ private:
         std::isfinite(in.velocityNorth) &&
         std::isfinite(in.velocityEast) &&
         std::isfinite(in.altitudeAboveHome) &&
+        std::isfinite(in.maximumAltitude) &&
         std::isfinite(in.verticalRate) &&
         std::isfinite(in.yawHeading);
 
@@ -498,6 +505,9 @@ private:
       case GPS_RESCUE_ALT_FIXED:
         _targetAltitude = p.fixedAltitude;
         break;
+      case GPS_RESCUE_ALT_TRACKED_MAX:
+        _targetAltitude = std::max(altitude, in.maximumAltitude) + p.altitudeMargin;
+        break;
       case GPS_RESCUE_ALT_MAX:
         _targetAltitude = p.maxAltitude;
         break;
@@ -514,10 +524,8 @@ private:
         break;
     }
 
-    _targetAltitude =
-        std::max(
-            _targetAltitude,
-            altitude);
+    _targetAltitude = std::max(_targetAltitude,
+        p.stockCompatibility ? 0.0f : altitude);
     _targetAltitude =
         std::min(
             _targetAltitude,
@@ -556,8 +564,9 @@ private:
     else
     {
       _phase =
-          _targetAltitude >
-              altitude + p.altitudeTolerance
+          (p.stockCompatibility
+              ? std::fabs(_targetAltitude - altitude) > p.altitudeTolerance
+              : _targetAltitude > altitude + p.altitudeTolerance)
               ? GpsRescuePhase::CLIMB
               : GpsRescuePhase::ALIGN;
     }
@@ -568,10 +577,13 @@ private:
     return Navigation::wrapRadians(in.yawHeading);
   }
 
-  static float verticalReturnRate(
+  float verticalReturnRate(
       float altitude,
       const GpsRescueParams& p)
   {
+    if (p.stockCompatibility)
+      return std::clamp((_targetAltitude - altitude) * 1.2f,
+                        -p.descentRate, p.climbRate);
     if (
         altitude >
         p.minLandingAltitude +

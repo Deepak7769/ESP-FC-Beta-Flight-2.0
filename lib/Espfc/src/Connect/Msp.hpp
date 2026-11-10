@@ -80,6 +80,7 @@ public:
   uint16_t expected;
   uint16_t received;
   uint16_t read;
+  bool decodeError{false};
   uint8_t sequence;
   uint8_t checksum;
   uint8_t checksum2;

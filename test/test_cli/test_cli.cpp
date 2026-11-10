@@ -401,6 +401,11 @@ void test_cli_composite_updates_are_transactional()
   TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
 
   command("set output_0 S R 1000 1500 2000\n");
+  TEST_ASSERT_FALSE(model.config.output.channel[0].servo);
+  TEST_ASSERT_TRUE(stream.str().find("ERROR: invalid parameter value") != std::string::npos);
+  // A servo output must have a usable period before it can be enabled.
+  command("set output_servo_rate 50\n");
+  command("set output_0 S R 1000 1500 2000\n");
   TEST_ASSERT_TRUE(model.config.output.channel[0].servo);
   TEST_ASSERT_TRUE(model.config.output.channel[0].reverse);
 

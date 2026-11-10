@@ -1,4 +1,5 @@
 #include "SerialManager.h"
+#include "Utils/SerialPolicy.hpp"
 #include "Debug_Espfc.h"
 #include "Device/SerialDeviceAdapter.h"
 #include "Hal/Time.hpp"
@@ -63,6 +64,8 @@ SerialManager::SerialManager(Model& model, TelemetryManager& telemetry): _model(
 
 int SerialManager::begin()
 {
+  _model.state.serialConfigurationValid = Utils::serialConfigurationValid(_model.config);
+  if (!_model.state.serialConfigurationValid) return 0;
   reenumerateUsb();
 
   for(int i = 0; i < SERIAL_UART_COUNT; i++)
@@ -135,6 +138,8 @@ int SerialManager::begin()
     }
     else if(spc.functionMask & SERIAL_FUNCTION_VTX_SMARTAUDIO)
     {
+      if (sdc.tx_pin < 0) { _model.state.serialConfigurationValid = false; return 0; }
+      sdc.halfDuplex = true;
       sdc.baud = 4800;
       sdc.parity = Hal::SDC_SERIAL_PARITY_NONE;
       sdc.stop_bits = Hal::SDC_SERIAL_STOP_BITS_2;

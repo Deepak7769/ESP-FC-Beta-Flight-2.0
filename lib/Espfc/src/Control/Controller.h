@@ -69,6 +69,8 @@ private:
 
   // Level-flight collective baseline in normalized [-1,1] units.
   float _hoverThrust = 0.0f;
+  float _rescuePeakAltitude = 0.0f;
+  bool _stockRescueVerticalWasActive = false;
   bool _hoverThrustInitialized = false;
 
   uint32_t _assistedLastUpdateUs = 0;

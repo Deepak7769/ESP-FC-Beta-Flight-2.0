@@ -12,6 +12,7 @@
 #include "Hal/Gpio.hpp"
 #include "Stream/ReadWritable.hpp"
 #include "Utils/Storage.h"
+#include "Utils/ConfigValidation.hpp"
 #include "Utils/Logger.hpp"
 #include "Utils/Math.hpp"
 
@@ -201,7 +202,9 @@ class Model
     state.mode.armingDisabledFlags != 0 ||
     state.pinConflict ||
     state.currentMixer.count == 0 ||
-    state.blackboxClosing;
+    !state.mixer.outputReady ||
+    !state.serialConfigurationValid ||
+    !state.storageHealthy || state.blackboxClosing;
 #endif
     }
 
@@ -350,22 +353,26 @@ void setOutputSaturation(
     {
       logger.begin();
       #ifndef UNIT_TEST
-      _storage.begin();
+      const bool opened = _storage.begin() == 1;
       logger.info().log("F_CPU").logln(F_CPU);
-      _storageResult = _storage.load(config);
+      _storageResult = opened ? _storage.load(config) : STORAGE_ERR_IO;
+      state.storageHealthy = _storageResult == STORAGE_LOAD_SUCCESS;
       logStorageResult();
       #endif
       postLoad();
-      return 1;
+      return state.storageHealthy ? 1 : 0;
     }
 
-    void save()
+    bool save()
     {
+      if (isModeActive(MODE_ARMED) || !Utils::configurationValid(config)) return false;
       preSave();
       #ifndef UNIT_TEST
       _storageResult = _storage.save(config);
+      state.storageHealthy = _storageResult == STORAGE_SAVE_SUCCESS;
       logStorageResult();
       #endif
+      return state.storageHealthy;
     }
 
     void reload()
@@ -1333,7 +1340,7 @@ if(config.output.protocol == ESC_PROTOCOL_PWM)
       uint32_t featureAllowMask =  FEATURE_RX_PPM | FEATURE_RX_SERIAL | FEATURE_MOTOR_STOP | FEATURE_SOFTSERIAL | FEATURE_GPS |
         FEATURE_TELEMETRY | FEATURE_RX_SPI | FEATURE_ANTI_GRAVITY;// | FEATURE_AIRMODE;
 
-      config.featureMask &= featureAllowMask;
+      config.featureMask &= featureAllowMask & Control::supportedFeatures();
 
       for(int i = 0; i < SERIAL_UART_COUNT; i++)
       {
@@ -1523,6 +1530,8 @@ if (config.debug.axis >= AXIS_COUNT_RPY)
         case STORAGE_ERR_BAD_MAGIC:   logger.err().logln("EEPROM wrong magic"); break;
         case STORAGE_ERR_BAD_VERSION: logger.err().logln("EEPROM wrong version"); break;
         case STORAGE_ERR_BAD_SIZE:    logger.err().logln("EEPROM wrong size"); break;
+        case STORAGE_ERR_INTEGRITY: logger.err().logln("EEPROM integrity or schema failure; reconfigure and save"); break;
+        case STORAGE_ERR_IO: logger.err().logln("EEPROM unavailable"); break;
         case STORAGE_NONE:
         default:
           logger.err().logln("EEPROM unknown result"); break;

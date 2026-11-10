@@ -808,6 +808,26 @@ struct GpsRescueConfig
   uint16_t maxAccelerationCms2 = 300;
 };
 
+// Explicit MSP API 1.46 representation. It is serialized field-by-field
+// on the wire; sizeof()/padding are never used for MSP packets.
+struct StockRescueSettings
+{
+  uint16_t angle = 25, returnAltitudeM = 20, descentDistanceM = 15;
+  uint16_t groundSpeedCms = 800, throttleMin = 1000, throttleMax = 2000;
+  uint16_t throttleHover = 1500;
+  uint8_t sanityChecks = 1, minSats = 6;
+  uint16_t ascendRateCms = 30, descendRateCms = 10;
+  uint8_t allowArmingWithoutFix = 1, altitudeMode = 2;
+  uint16_t minStartDistanceM = 10, initialClimbM = 10;
+};
+
+struct alignas(4) FirmwareExtension
+{
+  uint16_t cellMinimum = 340, cellMaximum = 420, capacityMah = 0;
+  uint8_t stockRescueEnabled = 0;
+  StockRescueSettings stockRescue;
+};
+
 struct ControllerConfig
 {
   int8_t tpaMode = 0;
@@ -1041,6 +1061,7 @@ class ModelConfig
     uint8_t antiGravityGain = ANTI_GRAVITY_GAIN_DEFAULT;
     uint16_t antiGravityConfigTag = ANTI_GRAVITY_CONFIG_TAG;
     GpsRescueConfig gpsRescue;
+    FirmwareExtension extension;
  
     ModelConfig()
     {
