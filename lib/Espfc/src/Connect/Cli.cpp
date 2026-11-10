@@ -1093,7 +1093,9 @@ bool Cli::process(const char c, CliCmd& cmd, Stream::Printer& stream)
   if (c == 0x04)
   {
     stream.println();
-    stream.println("# leaving CLI mode, unsaved changes lost");
+    stream.println(_model.getRebootRequired()
+        ? "# leaving CLI mode; reboot required before arming. Save before reboot to keep changes."
+        : "# leaving CLI mode");
     _active = false;
     _interactive = false;
     _model.setArmingDisabled(ARMING_DISABLED_CLI, false);
@@ -1200,6 +1202,13 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
     s.println("ERROR: maintenance or configuration unavailable while armed");
     return;
   }
+
+  // CLI configuration is applied by a full restart, including output
+  // attachment and serial/mode setup. Do not retain stale readiness.
+  const auto requireConfigurationReboot = [this]() {
+    _model.state.mixer.outputReady = false;
+    _model.setRebootRequired();
+  };
 
   if (std::strcmp(cmd.args[0], "help") == 0)
   {
@@ -1318,7 +1327,10 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
         const Param bound = bindParam(_params[i]);
         const ModelConfig before = _model.config;
         if (bound.update(cmd.args) && Utils::configurationValid(_model.config))
+        {
+          requireConfigurationReboot();
           print(bound, s);
+        }
         else
         {
           _model.config = before;
@@ -1514,6 +1526,7 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       _model.config.scaler[2].minScale = 25; //%
       _model.config.scaler[2].maxScale = 400;
 
+      requireConfigurationReboot();
       s.println("OK");
     }
     else if (std::strcmp(cmd.args[1], "modes") == 0)
@@ -1533,6 +1546,7 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
       _model.config.conditions[2].min = 1700;
       _model.config.conditions[2].max = 2100;
 
+      requireConfigurationReboot();
       s.println("OK");
     }
     else if (std::strcmp(cmd.args[1], "micrus") == 0)
@@ -1550,7 +1564,9 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
   }
   else if (std::strcmp(cmd.args[0], "load") == 0)
   {
-    s.println(_model.load() ? "OK" : "ERROR: configuration load failed");
+    const bool loaded = _model.load() != 0;
+    if (loaded) requireConfigurationReboot();
+    s.println(loaded ? "OK" : "ERROR: configuration load failed");
   }
   else if (std::strcmp(cmd.args[0], "save") == 0)
   {
@@ -1797,6 +1813,7 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
   else if (std::strcmp(cmd.args[0], "defaults") == 0)
   {
     _model.reset();
+    requireConfigurationReboot();
   }
   else if (std::strcmp(cmd.args[0], "motors") == 0)
   {

@@ -248,7 +248,171 @@ void test_output_period_must_contain_the_complete_pwm_pulse() {
  m.config.output.rate=400;m.config.output.channel[0].servo=true;m.config.output.servoRate=1000;
  TEST_ASSERT_FALSE(Control::outputTimingValid(m.config));
 }
+
+static void executeCli(Connect::Cli& cli, CliCmd& cmd,
+                       Espfc::Stream::Printer& printer, const char* text)
+{
+  for (; *text; ++text) cli.process(*text, cmd, printer);
+}
+
+void test_cli_output_change_requires_reboot_after_cancel()
+{
+  Model model;
+  model.config.output.protocol = ESC_PROTOCOL_PWM;
+  model.config.output.rate = 400;
+  Output::Mixer mixer(model);
+  TEST_ASSERT_EQUAL_INT(1, mixer.begin());
+  TestWire stream;
+  Espfc::Stream::Printer printer(stream);
+  Connect::Cli cli(model);
+  CliCmd cmd{};
+  cli.process('#', cmd, printer);
+  executeCli(cli, cmd, printer, "set pin_output_0 8\n");
+  TEST_ASSERT_EQUAL_INT(8, model.config.pin[PIN_OUTPUT_0]);
+  TEST_ASSERT_FALSE(model.state.mixer.outputReady);
+  TEST_ASSERT_TRUE(model.getRebootRequired());
+  cli.process(0x04, cmd, printer);
+  TEST_ASSERT_FALSE(model.state.mode.armingDisabledFlags & ARMING_DISABLED_CLI);
+  TEST_ASSERT_TRUE(model.armingDisabled());
+  TEST_ASSERT_TRUE(model.state.mode.armingDisabledFlags & ARMING_DISABLED_REBOOT_REQUIRED);
+}
+
+void test_cli_invalid_idle_and_unknown_parameter_preserve_readiness()
+{
+  Model model;
+  model.config.output.protocol = ESC_PROTOCOL_PWM;
+  model.config.output.rate = 400;
+  Output::Mixer mixer(model);
+  TEST_ASSERT_EQUAL_INT(1, mixer.begin());
+  const ModelConfig before = model.config;
+  TestWire stream;
+  Espfc::Stream::Printer printer(stream);
+  Connect::Cli cli(model);
+  CliCmd cmd{};
+  cli.process('#', cmd, printer);
+  for (const char* command : {"set output_motor_idle -1\n",
+                              "set output_motor_idle 2001\n",
+                              "set missing_setting 1\n"})
+  {
+    executeCli(cli, cmd, printer, command);
+    TEST_ASSERT_EQUAL_MEMORY(&before, &model.config, sizeof(before));
+    TEST_ASSERT_TRUE(model.state.mixer.outputReady);
+    TEST_ASSERT_FALSE(model.getRebootRequired());
+  }
+  cli.process(0x04, cmd, printer);
+  TEST_ASSERT_FALSE(model.armingDisabled());
+}
+
+void test_cli_noninteractive_configuration_cannot_bypass_reboot_gate()
+{
+  Model model;
+  model.config.output.protocol = ESC_PROTOCOL_PWM;
+  model.config.output.rate = 400;
+  Output::Mixer mixer(model);
+  TEST_ASSERT_EQUAL_INT(1, mixer.begin());
+  TestWire stream;
+  Espfc::Stream::Printer printer(stream);
+  Connect::Cli cli(model);
+  CliCmd cmd{};
+  cli.process(0x02, cmd, printer);
+  executeCli(cli, cmd, printer, "set output_motor_rate 450\n");
+  cli.process(0x03, cmd, printer);
+  TEST_ASSERT_EQUAL_INT(450, model.config.output.rate);
+  TEST_ASSERT_FALSE(model.state.mixer.outputReady);
+  TEST_ASSERT_TRUE(model.getRebootRequired());
+  TEST_ASSERT_TRUE(model.armingDisabled());
+}
+
+void test_cli_other_configuration_mutators_invalidate_readiness()
+{
+  for (const char* command : {"defaults\n", "preset scaler\n", "preset modes\n", "load\n"})
+  {
+    Model model;
+    model.config.output.protocol = ESC_PROTOCOL_PWM;
+    model.config.output.rate = 400;
+    Output::Mixer mixer(model);
+    TEST_ASSERT_EQUAL_INT(1, mixer.begin());
+    TestWire stream;
+    Espfc::Stream::Printer printer(stream);
+    Connect::Cli cli(model);
+    CliCmd cmd{};
+    executeCli(cli, cmd, printer, command);
+    TEST_ASSERT_FALSE_MESSAGE(model.state.mixer.outputReady, command);
+    TEST_ASSERT_TRUE_MESSAGE(model.getRebootRequired(), command);
+    TEST_ASSERT_TRUE_MESSAGE(model.armingDisabled(), command);
+  }
+}
+
+void test_msp_invalid_motor_idle_is_rejected_before_narrowing()
+{
+  for (const uint16_t idle : {2001u, 32767u, 32768u, 65535u})
+  {
+    Model model;
+    const ModelConfig before = model.config;
+    const auto reply = process(model, MSP_SET_ADVANCED_CONFIG,
+        {0, 1, 1, ESC_PROTOCOL_PWM, 0x90, 0x01,
+         uint8_t(idle), uint8_t(idle >> 8)});
+    TEST_ASSERT_EQUAL_INT(-1, reply.result);
+    TEST_ASSERT_EQUAL_MEMORY(&before, &model.config, sizeof(before));
+    TEST_ASSERT_FALSE(model.getRebootRequired());
+  }
+}
+
+void test_msp_valid_motor_idle_boundaries_are_not_silently_changed()
+{
+  for (const uint16_t idle : {0u, 550u, 2000u})
+  {
+    Model model;
+    const auto reply = process(model, MSP_SET_ADVANCED_CONFIG,
+        {0, 1, 1, ESC_PROTOCOL_PWM, 0x90, 0x01,
+         uint8_t(idle), uint8_t(idle >> 8)});
+    TEST_ASSERT_EQUAL_INT(1, reply.result);
+    TEST_ASSERT_EQUAL_INT(idle, model.config.output.motorIdle);
+  }
+}
+
+void test_configuration_record_rejects_invalid_idle_and_throttle_span()
+{
+  ModelConfig config;
+  uint8_t record[2048];
+  for (const int idle : {-1, 2001})
+  {
+    config.output.motorIdle = idle;
+    TEST_ASSERT_FALSE(Utils::configurationValid(config));
+    TEST_ASSERT_FALSE(Utils::ConfigRecord::encode(config, record, sizeof(record)));
+  }
+  config.output.minCommand = 1950;
+  config.output.maxThrottle = 2000;
+  config.output.motorIdle = 500;
+  TEST_ASSERT_TRUE(Utils::configurationValid(config));
+  config.output.motorIdle = 501;
+  TEST_ASSERT_FALSE(Utils::configurationValid(config));
+  TEST_ASSERT_FALSE(Utils::ConfigRecord::encode(config, record, sizeof(record)));
+}
+
+void test_msp_motor_range_cannot_silently_reduce_existing_idle()
+{
+  Model model;
+  const ModelConfig before = model.config;
+  const std::vector<uint8_t> narrowRange = {0, 0, 0xd0, 0x07, 0x9e, 0x07};
+  TEST_ASSERT_EQUAL_INT(-1, process(model, MSP_SET_MOTOR_CONFIG, narrowRange).result);
+  TEST_ASSERT_EQUAL_MEMORY(&before, &model.config, sizeof(before));
+  TEST_ASSERT_EQUAL_INT(1, process(model, MSP_SET_ADVANCED_CONFIG,
+      {0, 1, 1, ESC_PROTOCOL_PWM, 0x90, 0x01, 0xf4, 0x01}).result);
+  TEST_ASSERT_EQUAL_INT(1, process(model, MSP_SET_MOTOR_CONFIG, narrowRange).result);
+  TEST_ASSERT_EQUAL_INT(1950, model.config.output.minCommand);
+  TEST_ASSERT_EQUAL_INT(500, model.config.output.motorIdle);
+}
+
 int main(){UNITY_BEGIN();
+ RUN_TEST(test_cli_output_change_requires_reboot_after_cancel);
+ RUN_TEST(test_cli_invalid_idle_and_unknown_parameter_preserve_readiness);
+ RUN_TEST(test_cli_noninteractive_configuration_cannot_bypass_reboot_gate);
+ RUN_TEST(test_cli_other_configuration_mutators_invalidate_readiness);
+ RUN_TEST(test_msp_invalid_motor_idle_is_rejected_before_narrowing);
+ RUN_TEST(test_msp_valid_motor_idle_boundaries_are_not_silently_changed);
+ RUN_TEST(test_configuration_record_rejects_invalid_idle_and_throttle_span);
+ RUN_TEST(test_msp_motor_range_cannot_silently_reduce_existing_idle);
  RUN_TEST(test_output_period_must_contain_the_complete_pwm_pulse);
  RUN_TEST(test_msp_legacy_blackbox_zero_divisors_are_rejected_atomically);
  RUN_TEST(test_msp_decode_error_does_not_poison_the_next_frame);

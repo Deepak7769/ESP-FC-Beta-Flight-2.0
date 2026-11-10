@@ -43,6 +43,9 @@ inline bool configurationValid(const ModelConfig& c)
       c.output.protocol == ESC_PROTOCOL_PROSHOT ||
       c.output.minCommand < 900 || c.output.maxThrottle > 2000 ||
       c.output.minCommand >= c.output.maxThrottle ||
+      c.output.motorIdle < 0 || c.output.motorIdle > 2000 ||
+      int32_t(c.output.motorIdle) >
+          (int32_t(c.output.maxThrottle) - int32_t(c.output.minCommand)) * 10 ||
       c.output.rate < 50 || c.output.rate > 8000 || c.output.servoRate < 0 || c.output.servoRate > 1000 ||
       c.output.motorPoles < 2 || c.output.motorPoles > 60 || (c.output.motorPoles & 1) ||
       c.output.motorLimit < 1 || c.output.motorLimit > 100 ||

@@ -1660,7 +1660,13 @@ case MSP_SET_FAILSAFE_CONFIG:
       config.output.rate = m.readU16();
       if (m.remain() >= 2)
       {
-        config.output.motorIdle = m.readU16(); // dshot idle
+        const uint16_t motorIdle = m.readU16(); // 0.1us command units
+        if (motorIdle > 2000u)
+        {
+          r.result = -1;
+          break;
+        }
+        config.output.motorIdle = static_cast<int16_t>(motorIdle);
       }
       if (m.remain())
       {
