@@ -23,7 +23,11 @@ void InputPPM::begin(int pin, int mode)
   _frameValid = true;
   _writeIndex = 0;
   _readIndex = 1;
+#if defined(ESP8266)
+  _mailbox = 2u;
+#else
   _mailbox.store(2u, std::memory_order_relaxed);
+#endif
   _last_tick = micros();
 
   for(size_t i = 0; i < CHANNELS; i++)
@@ -51,6 +55,17 @@ void InputPPM::begin(int pin, int mode)
 
 InputStatus FAST_CODE_ATTR InputPPM::update()
 {
+#if defined(ESP8266)
+  // No lock-free exchange on LX106. The ISR cannot run while this
+  // single-core consumer swaps the mailbox; no spinlock or heap access.
+  noInterrupts();
+  const uint32_t published = _mailbox;
+  if (published & FRAME_DIRTY) _mailbox = _readIndex;
+  interrupts();
+  if (!(published & FRAME_DIRTY)) return INPUT_IDLE;
+  _readIndex = published & FRAME_INDEX_MASK;
+  return INPUT_RECEIVED;
+#else
   if (_mailbox.load(std::memory_order_acquire) & FRAME_DIRTY)
   {
     const uint32_t published =
@@ -59,6 +74,7 @@ InputStatus FAST_CODE_ATTR InputPPM::update()
     return INPUT_RECEIVED;
   }
   return INPUT_IDLE;
+#endif
 }
 
 uint16_t FAST_CODE_ATTR InputPPM::get(uint8_t i) const
@@ -150,9 +166,15 @@ void IRAM_ATTR InputPPM::handle()
         // Never retain AUX values outside the completed frame's count.
         for (size_t i = _channel; i < CHANNELS; ++i)
           frame.channels[i] = i == 2 ? 1000 : 1500;
+#if defined(ESP8266)
+        // ISR already excludes the task on this single-core target.
+        const uint32_t available = _mailbox;
+        _mailbox = uint32_t(_writeIndex) | FRAME_DIRTY;
+#else
         const uint32_t available = _mailbox.exchange(
             uint32_t(_writeIndex) | FRAME_DIRTY,
             std::memory_order_acq_rel);
+#endif
         _writeIndex = available & FRAME_INDEX_MASK;
       }
     }
