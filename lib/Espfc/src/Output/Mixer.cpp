@@ -19,17 +19,7 @@ int Mixer::begin()
   state.currentMixer = Mixers::getMixer(
       static_cast<MixerType>(_model.config.mixer.type), state.customMixer);
   const auto& mix = state.currentMixer;
-  if (!mix.count || mix.count > OUTPUT_CHANNELS ||
-      mix.count > ESC_CHANNEL_COUNT || !mix.mixes) return 0;
-  size_t rules = 0;
-  for (; rules < MIXER_RULE_MAX && mix.mixes[rules].src != MIXER_SOURCE_NULL; ++rules)
-  {
-    const auto& rule = mix.mixes[rules];
-    if (rule.src <= MIXER_SOURCE_NULL || rule.src >= MIXER_SOURCE_MAX ||
-        rule.dst < 0 || rule.dst >= mix.count ||
-        rule.rate < -1000 || rule.rate > 1000) return 0;
-  }
-  if (!rules || rules == MIXER_RULE_MAX) return 0;
+  if (!mixerConfigValid(mix, std::min<size_t>(OUTPUT_CHANNELS, ESC_CHANNEL_COUNT))) return 0;
   if (_model.config.mixer.type == FC_MIXER_TRI)
   {
     for (size_t i = 0; i < mix.count; ++i)

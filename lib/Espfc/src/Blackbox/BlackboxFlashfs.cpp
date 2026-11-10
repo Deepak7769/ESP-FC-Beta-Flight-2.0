@@ -14,6 +14,25 @@ using BufferType = Espfc::Utils::RingBuf<uint8_t, FLASHFS_WRITE_BUFFER_SIZE>;
 static BufferType buff;
 
 static FlashfsRuntime flashfs;
+static bool flashfsFault = false;
+
+static bool IRAM_ATTR flashfsWriteChecked(
+    uint32_t address, const uint8_t* data, unsigned int len)
+{
+    const auto p = reinterpret_cast<const esp_partition_t*>(flashfs.partition);
+    if (flashfsFault || !p || !data || address > p->size || len > p->size - address)
+    {
+        flashfsFault = true;
+        return false;
+    }
+    if (len && esp_partition_write_raw(p, address, data, len) != ESP_OK)
+    {
+        // Never retry a potentially partially programmed NOR region in place.
+        flashfsFault = true;
+        return false;
+    }
+    return true;
+}
 
 const FlashfsRuntime * flashfsGetRuntime()
 {
@@ -28,26 +47,34 @@ static uint32_t IRAM_ATTR flashfsJournalAddress(size_t index, bool getEnd = fals
 
 void flashfsJournalLoad(FlashfsJournalItem * data, size_t start, size_t num)
 {
+    if (!flashfs.partition || !data || start >= FLASHFS_JOURNAL_ITEMS ||
+        num > FLASHFS_JOURNAL_ITEMS - start)
+    {
+        flashfsFault = true;
+        return;
+    }
     size_t size = num * sizeof(FlashfsJournalItem);
-    flashfsReadAbs(flashfsJournalAddress(start), (uint8_t*)data, size);
+    if (flashfsReadAbs(flashfsJournalAddress(start), (uint8_t*)data, size) != int(size))
+        flashfsFault = true;
 }
 
-static void IRAM_ATTR flashfsLogBegin()
+static bool IRAM_ATTR flashfsLogBegin()
 {
     uint32_t beginAddr = flashfs.address;
     size_t idx = flashfs.journalIdx;
     if(idx >= FLASHFS_JOURNAL_ITEMS)
 {
-    return;
+    return false;
 }
-    flashfs.journal[idx].logBegin = beginAddr;
     
 
-    if(!flashfs.partition) return;
+    if(!flashfs.partition) return false;
 
     size_t address = flashfsJournalAddress(idx);
 
-    flashfsWriteAbs(address, (uint8_t*)&beginAddr, sizeof(uint32_t));
+    if (!flashfsWriteChecked(address, (uint8_t*)&beginAddr, sizeof(uint32_t))) return false;
+    flashfs.journal[idx].logBegin = beginAddr;
+    return true;
 }
 
 static bool IRAM_ATTR flashfsLogStarted()
@@ -61,79 +88,91 @@ static bool IRAM_ATTR flashfsLogStarted()
         flashfs.journal[flashfs.journalIdx].logBegin !=
         FLASHFS_ERASED_VAL;
 }
-static void IRAM_ATTR flashfsLogEnd()
+static bool IRAM_ATTR flashfsLogEnd()
 {
     uint32_t endAddr = flashfs.address;
     size_t idx = flashfs.journalIdx;
     if(idx >= FLASHFS_JOURNAL_ITEMS)
 {
-    return;
+    return false;
 }
-    flashfs.journal[idx].logEnd = endAddr;
-
-    flashfs.journalIdx++;
-
-    if(!flashfs.partition) return;
+    if(!flashfs.partition) return false;
 
     size_t address = flashfsJournalAddress(idx, true);
 
-    flashfsWriteAbs(address, (uint8_t*)&endAddr, sizeof(uint32_t));
+    if (!flashfsWriteChecked(address, (uint8_t*)&endAddr, sizeof(uint32_t))) return false;
+    flashfs.journal[idx].logEnd = endAddr;
+    flashfs.journalIdx++;
+    return true;
 }
 
 void flashfsJournalFix(FlashfsJournalItem * data, size_t num)
 {
-    uint8_t buff[4];
+    if (!data || num > FLASHFS_JOURNAL_ITEMS) { flashfsFault = true; return; }
+    // An unfinished log has no authenticated end offset. Preserve it for
+    // download; require an explicit disarmed erase before writing again.
     for(size_t i = 0; i < num; i++)
     {
         if(data[i].logBegin != FLASHFS_ERASED_VAL && data[i].logEnd == FLASHFS_ERASED_VAL)
         {
-            uint32_t addr = data[i].logBegin;
-            uint32_t end = flashfsGetSize();
-            while(addr < end)
-            {
-                flashfsReadAbs(addr, buff, 4);
-                if(*reinterpret_cast<uint32_t*>(&buff[0]) == FLASHFS_ERASED_VAL)
-                {
-                    flashfs.address = addr;
-                    flashfsLogEnd();
-                    break;
-                }
-                addr += 128;
-            }
-            break;
+            flashfsFault = true;
+            return;
         }
     }
 }
 
 int flashfsInit(void)
 {
+    flashfsFault = false;
+    buff.clear();
     flashfs.partition = Espfc::Device::FlashDevice::findPartition();
     if(!flashfs.partition) return 0;
+    if (reinterpret_cast<const esp_partition_t*>(flashfs.partition)->size <= FLASHFS_JOURNAL_SIZE)
+    {
+        flashfsFault = true;
+        return 0;
+    }
 
     flashfs.buffer = (void*)&buff;
     flashfs.journalIdx = 0;
     flashfs.address = 0;
 
     flashfsJournalLoad(flashfs.journal, 0, FLASHFS_JOURNAL_ITEMS);
+    if (flashfsFault) return 0;
     for(size_t i = 0; i < FLASHFS_JOURNAL_ITEMS; i++)
     {
         const auto& it = flashfs.journal[i];
+        if (it.logBegin == FLASHFS_ERASED_VAL && it.logEnd == FLASHFS_ERASED_VAL)
+        {
+            for (size_t j = i + 1; j < FLASHFS_JOURNAL_ITEMS; ++j)
+                if (flashfs.journal[j].logBegin != FLASHFS_ERASED_VAL ||
+                    flashfs.journal[j].logEnd != FLASHFS_ERASED_VAL) flashfsFault = true;
+            break;
+        }
+        if (it.logBegin != flashfs.address || it.logBegin >= flashfsGetSize() ||
+            (it.logEnd != FLASHFS_ERASED_VAL &&
+             (it.logEnd < it.logBegin || it.logEnd > flashfsGetSize())))
+        {
+            flashfsFault = true;
+            break;
+        }
         if(it.logEnd == FLASHFS_ERASED_VAL) break;
         flashfs.address = it.logEnd;
         flashfs.journalIdx++;
     }
     flashfsJournalFix(flashfs.journal, FLASHFS_JOURNAL_ITEMS);
 
-    return 1;
+    return flashfsFault ? 0 : 1;
 }
 
 bool IRAM_ATTR flashfsFlushAsync(bool force)
 {
+    (void)force;
     auto buffer = reinterpret_cast<BufferType*>(flashfs.buffer);
-    if (!flashfs.partition || !buffer) return false;
+    if (flashfsFault || !flashfs.partition || !buffer) return false;
     const size_t size = buffer->size();
     if (!size) return true; // Empty means drained; do not create an empty log.
-    if(!flashfsLogStarted()) flashfsLogBegin();
+    if(!flashfsLogStarted() && !flashfsLogBegin()) return false;
     if(flashfs.partition && size > 0)
     {
         //uint32_t newAddress = force ? (flashfs.address + size) : Espfc::Utils::alignAddressToWrite(flashfs.address, size, FLASHFS_FLUSH_BUFFER_SIZE);
@@ -142,8 +181,15 @@ bool IRAM_ATTR flashfsFlushAsync(bool force)
         size_t chunks = (size / FLASHFS_FLUSH_BUFFER_SIZE) + 1;
         while(chunks--)
         {
-            size_t len = buffer->pop(tmp, FLASHFS_FLUSH_BUFFER_SIZE);
-            flashfsWriteAbs(flashfs.address, tmp, len);
+            size_t len = buffer->peek(tmp, FLASHFS_FLUSH_BUFFER_SIZE);
+            if (!len) break;
+            if (flashfs.address > flashfsGetSize() || len > flashfsGetSize() - flashfs.address)
+            {
+                flashfsFault = true;
+                return false;
+            }
+            if (!flashfsWriteChecked(flashfs.address, tmp, len)) return false;
+            buffer->pop(tmp, len);
             flashfs.address += len;
         }
         return true;
@@ -156,7 +202,7 @@ void IRAM_ATTR flashfsWriteByte(uint8_t byte)
     if(flashfsIsEOF()) return;
 
     auto buffer = reinterpret_cast<BufferType*>(flashfs.buffer);
-    buffer->push(byte);
+    if (!buffer || !buffer->push(byte)) { flashfsFault = true; return; }
     const size_t size = buffer->size();
 
     if(flashfs.address + size >= flashfsGetSize())
@@ -190,9 +236,7 @@ void IRAM_ATTR flashfsWrite(const uint8_t *data, unsigned int len, bool sync)
 
 void IRAM_ATTR flashfsWriteAbs(uint32_t address, const uint8_t *data, unsigned int len)
 {
-    if(!flashfs.partition) return;
-    const auto p = reinterpret_cast<const esp_partition_t*>(flashfs.partition);
-    esp_partition_write_raw(p, address, data, len);
+    (void)flashfsWriteChecked(address, data, len);
 }
 
 int IRAM_ATTR flashfsReadAbs(
@@ -239,12 +283,12 @@ bool IRAM_ATTR flashfsIsSupported(void)
 
 bool IRAM_ATTR flashfsIsReady(void)
 {
-    return flashfsIsSupported();
+    return flashfsIsSupported() && !flashfsFault;
 }
 
 bool IRAM_ATTR flashfsIsEOF(void)
 {
-    return !flashfs.partition || flashfs.journalIdx >= FLASHFS_JOURNAL_ITEMS || flashfs.address >= flashfsGetSize();
+    return flashfsFault || !flashfs.partition || flashfs.journalIdx >= FLASHFS_JOURNAL_ITEMS || flashfs.address >= flashfsGetSize();
 }
 
 void flashfsEraseCompletely(void)
@@ -259,24 +303,27 @@ void flashfsEraseCompletely(void)
             const esp_partition_t*>(
                 flashfs.partition);
 
-    esp_partition_erase_range(
+    if (esp_partition_erase_range(
         p,
         0,
-        p->size);
+        p->size) != ESP_OK)
+    {
+        flashfsFault = true;
+        return;
+    }
 
     flashfsInit();
 }
 
 void IRAM_ATTR flashfsClose(void)
 {
-    flashfsFlushAsync(true);
-    flashfsLogEnd();
+    if (flashfsFlushAsync(true) && flashfsLogStarted()) (void)flashfsLogEnd();
 }
 
 uint32_t IRAM_ATTR flashfsGetWriteBufferFreeSpace(void)
 {
     auto buffer = reinterpret_cast<BufferType*>(flashfs.buffer);
-    return buffer->available();
+    return buffer && !flashfsFault ? buffer->available() : 0;
 }
 
 uint32_t IRAM_ATTR flashfsGetWriteBufferSize(void)
@@ -287,7 +334,7 @@ uint32_t IRAM_ATTR flashfsGetWriteBufferSize(void)
 uint32_t IRAM_ATTR flashfsGetSize(void)
 {
     const auto p = reinterpret_cast<const esp_partition_t*>(flashfs.partition);
-    return p ? p->size - FLASHFS_JOURNAL_SIZE : 0;
+    return p && p->size > FLASHFS_JOURNAL_SIZE ? p->size - FLASHFS_JOURNAL_SIZE : 0;
 }
 
 uint32_t flashfsGetOffset(void)

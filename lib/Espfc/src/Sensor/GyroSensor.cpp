@@ -19,6 +19,8 @@ GyroSensor::~GyroSensor() {}
 
 int GyroSensor::begin()
 {
+  // Never clear a device fault by reinitializing a live control path.
+  if (_model.isModeActive(MODE_ARMED)) return 0;
   _model.state.gyro.sampleValid =
       false;
 
@@ -29,6 +31,12 @@ int GyroSensor::begin()
 
   _gyro = _model.state.gyro.dev;
   if (!_gyro) return 0;
+  if (_gyro->getBus() && _gyro->getBus()->isSPI() && !_gyro->testConnection())
+  {
+    _connectionFault = true;
+    return 0;
+  }
+  _connectionFault = false;
 
 _gyro->setDLPFMode(
     _model.config.gyro.dlpf);
@@ -192,6 +200,12 @@ int FAST_CODE_ATTR GyroSensor::read()
 {
   if (!_model.gyroActive()) return 0;
 
+  if (_connectionFault)
+  {
+    _model.state.gyro.sampleValid = false;
+    return 0;
+  }
+
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_GYRO_READ);
 
   if (!_gyro->readGyro(_model.state.gyro.raw))
@@ -233,6 +247,7 @@ int FAST_CODE_ATTR GyroSensor::read()
     _lastConnectionCheckUs = now;
     if (!_gyro->testConnection())
     {
+      _connectionFault = true;
       _model.state.gyro.sampleValid = false;
       return 0;
     }

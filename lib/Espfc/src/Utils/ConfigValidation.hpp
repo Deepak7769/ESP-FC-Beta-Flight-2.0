@@ -3,6 +3,7 @@
 #include "Utils/SerialPolicy.hpp"
 #include "Control/Capabilities.hpp"
 #include <cstring>
+#include <algorithm>
 
 namespace Espfc::Utils {
 inline bool stockRescueValid(const StockRescueSettings& r)
@@ -38,7 +39,7 @@ inline bool configurationValid(const ModelConfig& c)
       c.input.minRc < 750 || c.input.maxRc > 2250 || c.input.minRc >= c.input.midRc ||
       c.input.midRc >= c.input.maxRc || c.input.minCheck < c.input.minRc ||
       c.input.maxCheck > c.input.maxRc || c.input.minCheck >= c.input.maxCheck ||
-      c.input.rateType < 0 || c.input.rateType > 5 ||
+      c.input.rateType < 0 || c.input.rateType > 4 ||
       c.output.protocol < ESC_PROTOCOL_PWM || c.output.protocol >= ESC_PROTOCOL_COUNT ||
       c.output.protocol == ESC_PROTOCOL_PROSHOT ||
       c.output.minCommand < 900 || c.output.maxThrottle > 2000 ||
@@ -60,7 +61,8 @@ inline bool configurationValid(const ModelConfig& c)
       c.gpsRescue.altitudeMode > 3 || !c.gpsRescue.climbRateDmS || !c.gpsRescue.descentRateDmS ||
       !c.gpsRescue.speedDmS || !c.gpsRescue.maxAltitudeM || !c.gpsRescue.maxAccelerationCms2 ||
       c.gpsRescue.maxAngleDeg < 1 || c.gpsRescue.maxAngleDeg > 60 ||
-      c.customMixerCount < 0 || c.customMixerCount > MIXER_RULE_MAX ||
+      c.customMixerCount < 0 ||
+      static_cast<size_t>(c.customMixerCount) > std::min<size_t>(OUTPUT_CHANNELS, ESC_CHANNEL_COUNT) ||
       c.rangefinder.type >= RANGEFINDER_MAX ||
       (c.blackbox.dev != BLACKBOX_DEV_NONE && c.blackbox.dev != BLACKBOX_DEV_SERIAL && c.blackbox.dev != BLACKBOX_DEV_FLASH) ||
       c.blackbox.pDenom < 0 || c.blackbox.pDenom > 4 ||
@@ -78,6 +80,8 @@ inline bool configurationValid(const ModelConfig& c)
   for (const auto& ch : c.input.channel)
     if (ch.map < 0 || ch.map >= INPUT_CHANNELS || ch.min < 750 || ch.max > 2250 ||
         ch.min > ch.neutral || ch.neutral > ch.max || ch.fsMode < 0 || ch.fsMode > 2) return false;
+  for (int16_t limit : c.input.rateLimit)
+    if (limit < 1 || limit > 1998) return false;
   for (const auto& ch : c.output.channel)
     if (ch.min < 750 || ch.max > 2250 || ch.min > ch.neutral || ch.neutral > ch.max) return false;
   for (const auto& condition : c.conditions)
@@ -93,10 +97,9 @@ inline bool configurationValid(const ModelConfig& c)
       c.input.filter, c.input.filterThrottle, c.input.filterDerivative};
   for (const auto& f : filters)
     if (f.type < 0 || f.type > FILTER_NONE || f.freq < 0 || f.cutoff < 0) return false;
-  for (size_t i = 0; i < static_cast<size_t>(c.customMixerCount); ++i)
-    if (c.customMixes[i].src < 0 || c.customMixes[i].src >= MIXER_SOURCE_MAX ||
-        c.customMixes[i].dst < 0 || c.customMixes[i].dst >= OUTPUT_CHANNELS ||
-        c.customMixes[i].rate < -1000 || c.customMixes[i].rate > 1000) return false;
+  if ((customMixer || c.customMixerCount != 0) &&
+      !mixerConfigValid(MixerConfig(c.customMixerCount, c.customMixes),
+                        std::min<size_t>(OUTPUT_CHANNELS, ESC_CHANNEL_COUNT))) return false;
   return true;
 }
 } // namespace Espfc::Utils

@@ -18,16 +18,21 @@ void InputPPM::begin(int pin, int mode)
   }
 
   _channel = 0;
-  _channelCount = 0;
   _lastFrameChannels = 0;
   _stableFrames = 0;
   _frameValid = true;
-  _new_data = false;
+  _writeIndex = 0;
+  _readIndex = 1;
+  _mailbox.store(2u, std::memory_order_relaxed);
   _last_tick = micros();
 
   for(size_t i = 0; i < CHANNELS; i++)
   {
-    _channels[i] = (i == 2) ? 1000 : 1500; // throttle
+    for (auto& frame : _frames)
+    {
+      frame.channels[i] = (i == 2) ? 1000 : 1500; // throttle
+      frame.count = 0;
+    }
   }
 
   if(pin != -1)
@@ -46,9 +51,11 @@ void InputPPM::begin(int pin, int mode)
 
 InputStatus FAST_CODE_ATTR InputPPM::update()
 {
-  if(_new_data)
+  if (_mailbox.load(std::memory_order_acquire) & FRAME_DIRTY)
   {
-    _new_data = false;
+    const uint32_t published =
+        _mailbox.exchange(_readIndex, std::memory_order_acq_rel);
+    _readIndex = published & FRAME_INDEX_MASK;
     return INPUT_RECEIVED;
   }
   return INPUT_IDLE;
@@ -61,7 +68,7 @@ uint16_t FAST_CODE_ATTR InputPPM::get(uint8_t i) const
     return 0;
   }
 
-  return _channels[i];
+  return _frames[_readIndex].channels[i];
 }
 
 void FAST_CODE_ATTR InputPPM::get(
@@ -79,13 +86,13 @@ void FAST_CODE_ATTR InputPPM::get(
 
   for (size_t i = 0; i < len; i++)
   {
-    data[i] = _channels[i];
+    data[i] = _frames[_readIndex].channels[i];
   }
 }
 
 size_t InputPPM::getChannelCount() const
 {
-  return _channelCount;
+  return _frames[_readIndex].count;
 }
 
 bool InputPPM::needAverage() const { return true; }
@@ -138,11 +145,15 @@ void IRAM_ATTR InputPPM::handle()
       if (_stableFrames >=
           STABLE_FRAMES_REQUIRED)
       {
-        _channelCount =
-            _channel;
-
-        _new_data =
-            true;
+        auto& frame = _frames[_writeIndex];
+        frame.count = _channel;
+        // Never retain AUX values outside the completed frame's count.
+        for (size_t i = _channel; i < CHANNELS; ++i)
+          frame.channels[i] = i == 2 ? 1000 : 1500;
+        const uint32_t available = _mailbox.exchange(
+            uint32_t(_writeIndex) | FRAME_DIRTY,
+            std::memory_order_acq_rel);
+        _writeIndex = available & FRAME_INDEX_MASK;
       }
     }
     else
@@ -179,7 +190,7 @@ void IRAM_ATTR InputPPM::handle()
     return;
   }
 
-  _channels[
+  _frames[_writeIndex].channels[
       _channel++] =
       static_cast<uint16_t>(
           width);

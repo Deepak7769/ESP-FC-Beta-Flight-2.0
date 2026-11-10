@@ -83,6 +83,22 @@ public:
   const MixerEntry* mixes;
 };
 
+// Output count and rule count are separate quantities. Every active rule
+// must be checked, and the fixed-size rule array must contain a terminator.
+inline bool mixerConfigValid(const MixerConfig& mix, size_t capacity)
+{
+  if (!mix.count || mix.count > capacity || !mix.mixes) return false;
+  for (size_t i = 0; i < MIXER_RULE_MAX; ++i)
+  {
+    const auto& rule = mix.mixes[i];
+    if (rule.src == MIXER_SOURCE_NULL) return i != 0;
+    if (rule.src < MIXER_SOURCE_NULL || rule.src >= MIXER_SOURCE_MAX ||
+        rule.dst < 0 || rule.dst >= mix.count ||
+        rule.rate < -1000 || rule.rate > 1000) return false;
+  }
+  return false;
+}
+
 namespace Output {
 
 class Mixers

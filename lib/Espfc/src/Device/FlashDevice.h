@@ -16,6 +16,7 @@ public:
 
   size_t read(uint32_t address, uint8_t * data, size_t len)
   {
+    if (!_p || !data || address >= _p->size) return 0;
     len = std::min((uint32_t)len, _p->size - address);
     if(esp_partition_read_raw(_p, address, data, len) == ESP_OK)
     {
@@ -26,8 +27,8 @@ public:
 
   size_t write(uint32_t address, const uint8_t * data, size_t len)
   {
-    esp_partition_write_raw(_p, address, data, len);
-    return len;
+    if (!_p || !data || address > _p->size || len > _p->size - address) return 0;
+    return esp_partition_write_raw(_p, address, data, len) == ESP_OK ? len : 0;
   }
 
 private:

@@ -66,6 +66,21 @@ public:
     return _head == _tail;
   }
 
+  // Inspect pending bytes without consuming them before a fallible write.
+  size_t peek(Element* items, size_t len) const
+  {
+    len = std::min(size(), len);
+    size_t index = _head;
+    for (size_t i = 0; i < len; i++)
+    {
+      items[i] = _array[index];
+      index = _increment(index);
+    }
+    return len;
+  }
+
+  void clear() { _head = _tail = 0; }
+
   bool isFull() const
   {
     return _head == _increment(_tail);

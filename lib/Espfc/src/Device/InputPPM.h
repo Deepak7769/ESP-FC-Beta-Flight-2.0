@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include "InputDevice.h"
 
 namespace Espfc {
@@ -34,14 +35,26 @@ class InputPPM: public InputDevice
     void handle();
     static void handle_isr(void* args);
 
-volatile uint16_t _channels[CHANNELS] = {};
+// Single ISR producer / single task consumer. The producer, consumer and
+// mailbox each own a different frame; only the mailbox index is shared.
+struct Frame
+{
+  uint16_t channels[CHANNELS] = {};
+  uint8_t count = 0;
+};
+static_assert(std::atomic<uint32_t>::is_always_lock_free,
+              "PPM ISR requires lock-free 32-bit exchange");
+static constexpr uint32_t FRAME_DIRTY = 4u;
+static constexpr uint32_t FRAME_INDEX_MASK = 3u;
+Frame _frames[3];
+std::atomic<uint32_t> _mailbox{2u};
+uint8_t _writeIndex = 0; // ISR-owned
+uint8_t _readIndex = 1;  // consumer-owned
 volatile uint32_t _last_tick = 0;
 volatile uint8_t _channel = 0;
-volatile uint8_t _channelCount = 0;
 volatile uint8_t _lastFrameChannels = 0;
 volatile uint8_t _stableFrames = 0;
 volatile bool _frameValid = true;
-volatile bool _new_data = false;
 
 int _pin = -1;
 };

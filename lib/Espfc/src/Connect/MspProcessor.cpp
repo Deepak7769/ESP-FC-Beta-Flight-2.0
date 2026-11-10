@@ -21,6 +21,7 @@
 #define VTXCOMMON_MSP_BANDCHAN_CHKVAL ((uint16_t)((7 << 3) + 7))
 
 extern "C" {
+#include "blackbox/blackbox.h"
 #include "blackbox/blackbox_io.h"
 #include "io/serial_4way.h"
 #include "msp/msp_protocol.h"
@@ -203,6 +204,16 @@ static uint16_t mspPayloadU16(const Espfc::Connect::MspMessage& m,
 
 static bool mspMutatorValuesValid(const Espfc::Connect::MspMessage& m)
 {
+  if (m.cmd == MSP_SET_RC_TUNING)
+  {
+    if (m.remain() >= 22)
+      for (uint16_t offset : {16u, 18u, 20u})
+      {
+        const uint16_t limit = mspPayloadU16(m, offset);
+        if (limit < 1u || limit > 1998u) return false;
+      }
+    if (m.remain() == 23 && m.buffer[m.read + 22] > 4u) return false;
+  }
   if (m.cmd == MSP_SET_PID_ADVANCED && m.remain() >= 23 && mspPayloadU16(m, 21) > 250) return false;
   if (m.cmd == MSP_SET_RX_CONFIG && m.remain() >= 16)
   {
@@ -938,7 +949,14 @@ case MSP_BUILD_INFO:
 
     case MSP_DATAFLASH_ERASE:
 #ifdef USE_FLASHFS
-      blackboxEraseAll();
+      if (blackboxConfig()->device != BLACKBOX_DEVICE_FLASH) r.result = -1;
+      else
+      {
+        blackboxEraseAll();
+        if (!flashfsIsReady()) r.result = -1;
+      }
+#else
+      r.result = -1;
 #endif
       break;
 
