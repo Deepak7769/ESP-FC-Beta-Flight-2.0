@@ -5,6 +5,7 @@
 #include "ResourceManager.h"
 #include "Control/Altitude.hpp"
 #include "Connect/MspProcessor.hpp"
+#include "Connect/MspBoxMapping.hpp"
 #include "Input.h"
 #include "Device/InputPPM.h"
 #include "TelemetryManager.h"
@@ -10699,6 +10700,95 @@ void test_msp_legacy_mode_range_preserves_optional_link_fields()
   TEST_ASSERT_EQUAL_INT16(1100, model.config.conditions[0].max);
 }
 
+
+void test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct()
+{
+  using Espfc::Connect::MspBoxMapping;
+  const uint8_t wire[] = {0, 28, 1, 3, 13, 27, 26, 31, 4, 11, 46};
+  for (uint8_t i = 0; i < MODE_COUNT; ++i)
+  {
+    TEST_ASSERT_EQUAL_UINT8(wire[i], MspBoxMapping::encode(i));
+    TEST_ASSERT_EQUAL_INT(i, MspBoxMapping::decode(wire[i]));
+  }
+  TEST_ASSERT_EQUAL_INT(-1, MspBoxMapping::decode(255u));
+  const uint32_t internalMask = (uint32_t{1} << MODE_GPS_RESCUE) |
+                                (uint32_t{1} << MODE_ANGLE);
+  TEST_ASSERT_EQUAL_HEX32(internalMask, MspBoxMapping::statusMask(internalMask));
+
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  auto query = [&](uint16_t cmd) {
+    Connect::MspMessage m;
+    m.version = Connect::MSP_V2;
+    m.cmd = cmd;
+    Connect::MspResponse response;
+    processor.processCommand(m, response, serial);
+    TEST_ASSERT_EQUAL_INT(1, response.result);
+    return response;
+  };
+
+  const auto ids = query(MSP_BOXIDS);
+  TEST_ASSERT_EQUAL_UINT16(MODE_COUNT, ids.len);
+  for (size_t i = 0; i < MODE_COUNT; ++i)
+    TEST_ASSERT_EQUAL_UINT8(wire[i], ids.data[i]);
+
+  // The MSP wire is 46 for Rescue while stored config remains MODE_GPS_RESCUE.
+  model.config.conditions[0].id = MODE_GPS_RESCUE;
+  model.config.conditions[0].ch = AXIS_AUX_1;
+  model.config.conditions[0].min = 1300;
+  model.config.conditions[0].max = 1700;
+  model.config.conditions[0].linkId = MODE_ANGLE;
+  const auto ranges = query(MSP_MODE_RANGES);
+  TEST_ASSERT_EQUAL_UINT8(46, ranges.data[0]);
+  TEST_ASSERT_EQUAL_UINT8(0, ranges.data[1]);
+  TEST_ASSERT_EQUAL_UINT8(16, ranges.data[2]);
+  TEST_ASSERT_EQUAL_UINT8(32, ranges.data[3]);
+  const auto extra = query(MSP_MODE_RANGES_EXTRA);
+  TEST_ASSERT_EQUAL_UINT8(3, extra.data[0]); // bytes per row, not count of rows
+  TEST_ASSERT_EQUAL_UINT8(46, extra.data[1]);
+  TEST_ASSERT_EQUAL_UINT8(1, extra.data[3]); // linked-to ANGLE permanent ID
+  TEST_ASSERT_EQUAL_UINT8(MODE_GPS_RESCUE, model.config.conditions[0].id);
+  TEST_ASSERT_EQUAL_UINT8(MODE_ANGLE, model.config.conditions[0].linkId);
+}
+
+void test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  auto send = [&](std::initializer_list<uint8_t> bytes) {
+    Connect::MspMessage m;
+    m.version = Connect::MSP_V2;
+    m.cmd = MSP_SET_MODE_RANGE;
+    m.received = static_cast<uint16_t>(bytes.size());
+    std::copy(bytes.begin(), bytes.end(), m.buffer);
+    Connect::MspResponse response;
+    processor.processCommand(m, response, serial);
+    return response.result;
+  };
+
+  TEST_ASSERT_EQUAL_INT(1, send({0, 46, 2, 16, 32, 1, 1}));
+  TEST_ASSERT_EQUAL_UINT8(MODE_GPS_RESCUE, model.config.conditions[0].id);
+  TEST_ASSERT_EQUAL_UINT8(AXIS_AUX_3, model.config.conditions[0].ch);
+  TEST_ASSERT_EQUAL_UINT8(MODE_ANGLE, model.config.conditions[0].linkId);
+  TEST_ASSERT_EQUAL_INT16(1300, model.config.conditions[0].min);
+  TEST_ASSERT_EQUAL_INT16(1700, model.config.conditions[0].max);
+
+  const auto previous = model.config.conditions[0];
+  TEST_ASSERT_EQUAL_INT(-1, send({0, 255, 2, 16, 32, 1, 1}));
+  TEST_ASSERT_EQUAL_INT(-1, send({0, 46, 2, 16, 32, 1, 255}));
+  TEST_ASSERT_EQUAL_UINT8(previous.id, model.config.conditions[0].id);
+  TEST_ASSERT_EQUAL_UINT8(previous.linkId, model.config.conditions[0].linkId);
+  TEST_ASSERT_EQUAL_INT16(previous.min, model.config.conditions[0].min);
+  TEST_ASSERT_EQUAL_INT16(previous.max, model.config.conditions[0].max);
+
+  // Legacy 5-byte form leaves linked-to ID and logic untouched.
+  TEST_ASSERT_EQUAL_INT(1, send({0, 3, 1, 20, 28}));
+  TEST_ASSERT_EQUAL_UINT8(MODE_ALTHOLD, model.config.conditions[0].id);
+  TEST_ASSERT_EQUAL_UINT8(MODE_ANGLE, model.config.conditions[0].linkId);
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10759,6 +10849,8 @@ int main(int argc, char** argv)
   RUN_TEST(test_msp_rejects_truncated_standard_config_without_partial_mutation);
   RUN_TEST(test_msp_rejects_invalid_meter_and_mode_payload_atomically);
   RUN_TEST(test_msp_legacy_mode_range_preserves_optional_link_fields);
+  RUN_TEST(test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct);
+  RUN_TEST(test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);

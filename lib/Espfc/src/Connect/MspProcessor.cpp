@@ -1,4 +1,5 @@
 #include "Connect/MspProcessor.hpp"
+#include "Connect/MspBoxMapping.hpp"
 #include "Control/AssistedModeV2.h"
 #include "Hardware.h"
 #include "Hal/Time.hpp"
@@ -481,7 +482,7 @@ case MSP_BUILD_INFO:
       //         acc,     baro,    mag,     gps,     sonar,   gyro
       r.writeU16(_model.accelActive() | _model.baroActive() << 1 | _model.magActive() << 2 | _model.gpsActive() << 3 |
                  0 << 4 | _model.gyroActive() << 5);
-      r.writeU32(_model.state.mode.mask); // flight mode flags
+      r.writeU32(MspBoxMapping::statusMask(_model.state.mode.mask)); // MSP_BOXIDS-indexed bits
       r.writeU8(0);                       // pid profile
       r.writeU16(lrintf(_model.state.stats.getCpuLoad()));
       if (m.cmd == MSP_STATUS_EX)
@@ -554,27 +555,18 @@ case MSP_BUILD_INFO:
     }
 
     case MSP_BOXNAMES:
-      r.writeString("ARM;AIRMODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOXERASE;ANTI GRAVITY;POS HOLD;GPS RESCUE;");
+      r.writeString("ARM;AIR MODE;ANGLE;ALTHOLD;BEEPER;FAILSAFE;BLACKBOX;BLACKBOX ERASE;ANTI GRAVITY;POS HOLD;GPS RESCUE;");
       break;
 
     case MSP_BOXIDS:
-      r.writeU8(MODE_ARMED);
-      r.writeU8(MODE_AIRMODE);
-      r.writeU8(MODE_ANGLE);
-      r.writeU8(MODE_ALTHOLD);
-      r.writeU8(MODE_BUZZER);
-      r.writeU8(MODE_FAILSAFE);
-      r.writeU8(MODE_BLACKBOX);
-      r.writeU8(MODE_BLACKBOX_ERASE);
-      r.writeU8(MODE_ANTI_GRAVITY);
-      r.writeU8(MODE_POSHOLD);
-      r.writeU8(MODE_GPS_RESCUE);
+      for (const uint8_t id : MspBoxMapping::permanentIds)
+        r.writeU8(id);
       break;
 
     case MSP_MODE_RANGES:
       for (size_t i = 0; i < ACTUATOR_CONDITIONS; i++)
       {
-        r.writeU8(_model.config.conditions[i].id);
+        r.writeU8(MspBoxMapping::encode(_model.config.conditions[i].id));
         r.writeU8(_model.config.conditions[i].ch - AXIS_AUX_1);
         r.writeU8((_model.config.conditions[i].min - 900) / 25);
         r.writeU8((_model.config.conditions[i].max - 900) / 25);
@@ -582,12 +574,12 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_MODE_RANGES_EXTRA:
-      r.writeU8(ACTUATOR_CONDITIONS);
+      r.writeU8(3); // bytes per entry: permanentId, logicMode, linkedPermanentId
       for (size_t i = 0; i < ACTUATOR_CONDITIONS; i++)
       {
-        r.writeU8(_model.config.conditions[i].id);
+        r.writeU8(MspBoxMapping::encode(_model.config.conditions[i].id));
         r.writeU8(_model.config.conditions[i].logicMode);
-        r.writeU8(_model.config.conditions[i].linkId);
+        r.writeU8(_model.config.conditions[i].linkId == 0 ? 0 : MspBoxMapping::encode(_model.config.conditions[i].linkId));
       }
       break;
 
@@ -598,19 +590,21 @@ case MSP_BUILD_INFO:
         r.result = -1;
         break;
       }
-      // Legacy 5-byte packets leave the optional link/logic values intact.
+      // Retain optional link and logic fields for legacy 5-byte updates.
       ActuatorCondition candidate = _model.config.conditions[i];
-      candidate.id = m.readU8();
+      const int internalMode = MspBoxMapping::decode(m.readU8());
       const int channel = static_cast<int>(m.readU8()) + AXIS_AUX_1;
       candidate.min = static_cast<int16_t>(m.readU8() * 25 + 900);
       candidate.max = static_cast<int16_t>(m.readU8() * 25 + 900);
+      int internalLink = 0;
       if (m.remain() == 2)
       {
         candidate.logicMode = m.readU8();
-        candidate.linkId = m.readU8();
+        const uint8_t linkedPermanentId = m.readU8();
+        internalLink = linkedPermanentId == 0
+            ? 0 : MspBoxMapping::decode(linkedPermanentId);
       }
-      if (i >= ACTUATOR_CONDITIONS ||
-          candidate.id >= MODE_COUNT ||
+      if (internalMode < 0 || internalLink < 0 ||
           channel < AXIS_AUX_1 || channel >= AXIS_COUNT ||
           candidate.min > candidate.max ||
           candidate.max > 2100 ||
@@ -619,6 +613,9 @@ case MSP_BUILD_INFO:
         r.result = -1;
         break;
       }
+      candidate.id = static_cast<uint8_t>(internalMode);
+      if (m.received == 7)
+        candidate.linkId = static_cast<uint8_t>(internalLink);
       candidate.ch = static_cast<uint8_t>(channel);
       _model.config.conditions[i] = candidate;
     }
