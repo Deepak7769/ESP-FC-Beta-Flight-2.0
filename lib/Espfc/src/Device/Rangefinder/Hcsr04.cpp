@@ -37,6 +37,7 @@ int Hcsr04Rangefinder::begin(
   _measurementValid = false;
   _distance = 0.0f;
   _quality = 0;
+  _capturedUs = 0;
 
   if (config.type != RANGEFINDER_HCSR04 ||
       _triggerPin < 0 ||
@@ -153,6 +154,7 @@ int Hcsr04Rangefinder::update()
         if (valid)
         {
           _distance = distanceCm * 0.01f; // centimetres -> metres
+          _capturedUs = now;
           // HC-SR04 has no native quality field. A valid in-range
           // echo gets full quality; estimator innovation gating remains
           // the consistency check.
@@ -200,7 +202,8 @@ RangefinderMeasurement Hcsr04Rangefinder::measurement() const
   return {
       _measurementValid,
       _distance,
-      _quality};
+      _quality,
+      _capturedUs};
 }
 
 RangefinderDevice::DeviceType

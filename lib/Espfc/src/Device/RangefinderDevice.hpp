@@ -11,6 +11,8 @@ struct RangefinderMeasurement
   bool valid{false};
   float distance{0.0f};
   uint8_t quality{0};
+  // The capture instant, NOT when the scheduler consumes this packet.
+  uint32_t capturedUs{0};
 };
 
 class RangefinderDevice

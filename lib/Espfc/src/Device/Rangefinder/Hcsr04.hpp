@@ -41,6 +41,7 @@ private:
   bool _measurementValid{false};
   float _distance{0.0f};
   uint8_t _quality{0};
+  uint32_t _capturedUs{0};
 };
 
 } // namespace Espfc::Device

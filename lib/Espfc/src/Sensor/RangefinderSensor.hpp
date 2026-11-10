@@ -14,6 +14,12 @@ public:
   int update();
   int reload(ModelChangeEvent event);
 
+  // Pure sample publication/expiry rule to test delayed, invalid and
+  // rollover captures without depending on particular GPIO hardware.
+  static int applyMeasurement(RangefinderState& state, int status,
+                              const Device::RangefinderMeasurement& measurement,
+                              uint32_t nowUs);
+
 private:
   int activateBackend();
 

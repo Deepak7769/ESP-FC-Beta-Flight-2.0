@@ -12,6 +12,7 @@
 #include "Control/Fusion.h"
 #include "Sensor/BaroSensor.hpp"
 #include "Sensor/VoltageSensor.hpp"
+#include "Sensor/RangefinderSensor.hpp"
 #include "Model.h"
 #include "Output/Mixer.h"
 #include "Blackbox/BlackboxSerialBuffer.h"
@@ -10547,6 +10548,61 @@ void test_altitude_range_reference_preserves_local_height_on_acquisition()
   ArduinoFakeReset();
 }
 
+
+void test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts()
+{
+  RangefinderState state{};
+  state.present = true;
+  Device::RangefinderMeasurement sample{};
+  sample.valid = true;
+  sample.distance = 1.25f;
+  sample.quality = 100;
+  sample.capturedUs = 900000u;
+
+  TEST_ASSERT_EQUAL_INT(1, Sensor::RangefinderSensor::applyMeasurement(
+      state, 1, sample, 905000u));
+  TEST_ASSERT_TRUE(state.sampleValid);
+  TEST_ASSERT_TRUE(state.timestampValid);
+  TEST_ASSERT_EQUAL_UINT32(900000u, state.lastUpdateUs);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.25f, state.distance);
+
+  // Polling in a later sensor pass cannot renew an old capture.
+  TEST_ASSERT_EQUAL_INT(0, Sensor::RangefinderSensor::applyMeasurement(
+      state, 0, sample, 990000u));
+  TEST_ASSERT_TRUE(state.sampleValid);
+  TEST_ASSERT_EQUAL_UINT32(900000u, state.lastUpdateUs);
+  TEST_ASSERT_EQUAL_INT(0, Sensor::RangefinderSensor::applyMeasurement(
+      state, 0, sample, 1000000u));
+  TEST_ASSERT_FALSE(state.sampleValid);
+  TEST_ASSERT_EQUAL_UINT8(0, state.quality);
+
+  // Delayed consumption (>100ms) must not pretend the echo is fresh.
+  TEST_ASSERT_EQUAL_INT(0, Sensor::RangefinderSensor::applyMeasurement(
+      state, 1, sample, 1100000u));
+  TEST_ASSERT_FALSE(state.sampleValid);
+  sample.capturedUs = 1200000u;
+  TEST_ASSERT_EQUAL_INT(1, Sensor::RangefinderSensor::applyMeasurement(
+      state, 1, sample, 1200050u));
+  sample.valid = false;
+  TEST_ASSERT_EQUAL_INT(0, Sensor::RangefinderSensor::applyMeasurement(
+      state, 0, sample, 1200060u));
+  TEST_ASSERT_FALSE(state.sampleValid);
+
+  // Timer rollover must not turn a valid zero timestamp into an
+  // invalid sentinel or a new timestamp into an enormous age.
+  sample.valid = true;
+  sample.capturedUs = 0xfffffff0u;
+  TEST_ASSERT_EQUAL_INT(1, Sensor::RangefinderSensor::applyMeasurement(
+      state, 1, sample, 0x00000020u));
+  TEST_ASSERT_TRUE(state.sampleValid);
+  TEST_ASSERT_EQUAL_UINT32(0xfffffff0u, state.lastUpdateUs);
+  sample.capturedUs = 0u;
+  TEST_ASSERT_EQUAL_INT(1, Sensor::RangefinderSensor::applyMeasurement(
+      state, 1, sample, 10u));
+  TEST_ASSERT_TRUE(state.timestampValid);
+  TEST_ASSERT_EQUAL_UINT32(0u, state.lastUpdateUs);
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10602,6 +10658,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_battery_cells_stay_fixed_while_armed_during_detection_window);
   RUN_TEST(test_custom_msp_config_rejects_malformed_payload_sizes);
   RUN_TEST(test_altitude_range_reference_preserves_local_height_on_acquisition);
+  RUN_TEST(test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts);
   RUN_TEST(test_msp_armed_policy_rejects_writes_but_allows_config_reads);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);

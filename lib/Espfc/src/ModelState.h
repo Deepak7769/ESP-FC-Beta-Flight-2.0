@@ -428,6 +428,8 @@ struct RangefinderState
   // protocol and allowing future rangefinder drivers to be added cleanly.
   bool present{false};
   bool sampleValid{false};
+  // Do not use timestamp zero as a validity sentinel: micros() can wrap.
+  bool timestampValid{false};
   uint32_t lastUpdateUs{0};
   float distance{0.0f};
   uint8_t quality{0};
