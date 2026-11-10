@@ -132,9 +132,68 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
     case MSP_SET_SENSOR_CONFIG:
       return size >= 3 && size <= 5;
 
+    // Legal payload versions stop at whole optional field groups. A partial
+    // group must never silently leave some parameters changed.
+    case MSP_SET_ARMING_CONFIG:
+      return size == 4;
+    case MSP_SET_RC_DEADBAND:
+      return size == 5;
+    case MSP_SET_FAILSAFE_CONFIG:
+      return size == 8;
+    case MSP_SET_MOTOR_CONFIG:
+      return size == 6 || size == 8 || size == 9;
+    case MSP_SET_RX_CONFIG:
+      return size == 12 || size == 16 || size == 22 ||
+             size == 23 || size == 29 || size == 30 ||
+             size == 31 || size == 32 || size == 38 || size == 39;
+    case MSP_SET_RC_TUNING:
+      return size == 10 || size == 11 || size == 12 ||
+             size == 13 || size == 14 || size == 16 ||
+             size == 22 || size == 23 || size == 24;
+    case MSP_SET_ADVANCED_CONFIG:
+      return size == 6 || size == 8 || size == 9 ||
+             size == 10 || size == 18 || size == 19 ||
+             size == 20; // last byte is read-only DEBUG_COUNT
+    case MSP_SET_FILTER_CONFIG:
+      return size == 5 || size == 13 || size == 17 ||
+             size == 18 || size == 28 || size == 37 ||
+             size == 45 || size == 47 || size == 49 || size == 56;
+
     default:
       return true; // Other setters have their own variable-length contracts.
   }
+}
+
+// Validate dangerous values before the setter touches any persistent field.
+// Access only indices already covered by the version-aware length contract.
+static uint16_t mspPayloadU16(const Espfc::Connect::MspMessage& m,
+                              uint16_t offset)
+{
+  const uint16_t start = static_cast<uint16_t>(m.read + offset);
+  return static_cast<uint16_t>(m.buffer[start]) |
+         (static_cast<uint16_t>(m.buffer[start + 1]) << 8u);
+}
+
+static bool mspMutatorValuesValid(const Espfc::Connect::MspMessage& m)
+{
+  if (m.cmd == MSP_SET_RX_CONFIG && m.remain() >= 16)
+  {
+    // Airmode threshold is supplied in microseconds; never let a value
+    // below 1000 underflow when converted to internal 0..100 percent.
+    const uint16_t airmodeUs = mspPayloadU16(m, 14);
+    if (airmodeUs < 1000u || airmodeUs > 2000u ||
+        ((airmodeUs - 1000u) % 10u) != 0u)
+      return false;
+  }
+  if (m.cmd == MSP_SET_MOTOR_CONFIG && m.remain() >= 6)
+  {
+    const uint16_t maxThrottle = mspPayloadU16(m, 2);
+    const uint16_t minCommand = mspPayloadU16(m, 4);
+    if (maxThrottle < 1000u || maxThrottle > 2000u ||
+        minCommand < 900u || minCommand > maxThrottle)
+      return false;
+  }
+  return true;
 }
 
 enum SerialSpeedIndex
@@ -363,7 +422,8 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
   r.cmd = m.cmd;
   r.version = m.version;
   r.result = 1;
-  if (!mspMutatorPayloadSizeValid(m.cmd, m.remain()))
+  if (!mspMutatorPayloadSizeValid(m.cmd, m.remain()) ||
+      !mspMutatorValuesValid(m))
   {
     r.result = -1;
     return;

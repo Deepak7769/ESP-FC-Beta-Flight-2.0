@@ -10789,6 +10789,135 @@ void test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown()
   TEST_ASSERT_EQUAL_UINT8(MODE_ANGLE, model.config.conditions[0].linkId);
 }
 
+
+void test_msp_versioned_setters_reject_partial_optional_groups()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  const auto inputBefore = model.config.input;
+  const auto outputBefore = model.config.output;
+  const auto gyroBefore = model.config.gyro;
+  struct BadPacket { uint16_t cmd; uint8_t length; };
+  const BadPacket truncated[] = {
+      {MSP_SET_RX_CONFIG, 11},
+      {MSP_SET_RX_CONFIG, 15},
+      {MSP_SET_RX_CONFIG, 21},
+      {MSP_SET_RX_CONFIG, 28},
+      {MSP_SET_RX_CONFIG, 37},
+      {MSP_SET_RC_TUNING, 9},
+      {MSP_SET_RC_TUNING, 15},
+      {MSP_SET_RC_TUNING, 21},
+      {MSP_SET_MOTOR_CONFIG, 7},
+      {MSP_SET_ADVANCED_CONFIG, 7},
+      {MSP_SET_ADVANCED_CONFIG, 17},
+      {MSP_SET_FILTER_CONFIG, 12},
+      {MSP_SET_FILTER_CONFIG, 16},
+      {MSP_SET_FILTER_CONFIG, 27},
+      {MSP_SET_FILTER_CONFIG, 36},
+      {MSP_SET_ARMING_CONFIG, 3},
+      {MSP_SET_RC_DEADBAND, 4},
+      {MSP_SET_FAILSAFE_CONFIG, 7}
+  };
+  for (const BadPacket& t : truncated)
+  {
+    Connect::MspMessage message;
+    message.version = Connect::MSP_V2;
+    message.cmd = t.cmd;
+    message.received = t.length;
+    Connect::MspResponse response;
+    processor.processCommand(message, response, serial);
+    TEST_ASSERT_EQUAL_INT(-1, response.result);
+  }
+  TEST_ASSERT_EQUAL_UINT8(inputBefore.serialRxProvider,
+                          model.config.input.serialRxProvider);
+  TEST_ASSERT_EQUAL_INT16(inputBefore.minCheck,
+                          model.config.input.minCheck);
+  TEST_ASSERT_EQUAL_INT16(inputBefore.maxCheck,
+                          model.config.input.maxCheck);
+  TEST_ASSERT_EQUAL_UINT8(inputBefore.rate[0],
+                          model.config.input.rate[0]);
+  TEST_ASSERT_EQUAL_INT8(outputBefore.protocol, model.config.output.protocol);
+  TEST_ASSERT_EQUAL_INT16(outputBefore.maxThrottle,
+                          model.config.output.maxThrottle);
+  TEST_ASSERT_EQUAL_INT16(gyroBefore.filter.freq,
+                          model.config.gyro.filter.freq);
+}
+
+void test_msp_rejects_out_of_range_airmode_and_motor_values_atomically()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  auto process = [&](uint16_t command, std::initializer_list<uint8_t> data) {
+    Connect::MspMessage message;
+    message.version = Connect::MSP_V2;
+    message.cmd = command;
+    message.received = static_cast<uint16_t>(data.size());
+    std::copy(data.begin(), data.end(), message.buffer);
+    Connect::MspResponse response;
+    processor.processCommand(message, response, serial);
+    return response.result;
+  };
+  const auto beforeInput = model.config.input;
+  const auto beforeOutput = model.config.output;
+
+  // A 990us airmode threshold must not wrap to 255% through narrowing.
+  TEST_ASSERT_EQUAL_INT(-1, process(MSP_SET_RX_CONFIG,
+      {3, 108, 7, 220, 5, 26, 4, 0, 117, 3, 67, 8, 0, 0, 222, 3}));
+  TEST_ASSERT_EQUAL_INT8(beforeInput.serialRxProvider,
+                          model.config.input.serialRxProvider);
+  TEST_ASSERT_EQUAL_INT8(beforeInput.airModeActivateThreshold,
+                          model.config.input.airModeActivateThreshold);
+
+  // Values cannot be committed when min-command exceeds max-throttle.
+  TEST_ASSERT_EQUAL_INT(-1, process(MSP_SET_MOTOR_CONFIG,
+      {0, 0, 220, 5, 8, 7})); // max 1500, min 1800
+  TEST_ASSERT_EQUAL_INT16(beforeOutput.maxThrottle,
+                          model.config.output.maxThrottle);
+  TEST_ASSERT_EQUAL_INT16(beforeOutput.minCommand,
+                          model.config.output.minCommand);
+
+  TEST_ASSERT_EQUAL_INT(-1, process(MSP_SET_MOTOR_CONFIG,
+      {0, 0, 0xD0, 0x07, 0xD0, 0x07, 0})); // incomplete poles group
+  TEST_ASSERT_EQUAL_INT16(beforeOutput.maxThrottle,
+                          model.config.output.maxThrottle);
+}
+
+
+void test_msp_versioned_setters_accept_full_configurator_payloads()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  const struct {uint16_t getCmd; uint16_t setCmd; uint8_t bytes;} requests[] = {
+      {MSP_RX_CONFIG, MSP_SET_RX_CONFIG, 39},
+      {MSP_RC_TUNING, MSP_SET_RC_TUNING, 24},
+      {MSP_FILTER_CONFIG, MSP_SET_FILTER_CONFIG, 56}
+  };
+  for (const auto& pair : requests)
+  {
+    Connect::MspMessage query;
+    query.version = Connect::MSP_V2;
+    query.cmd = pair.getCmd;
+    Connect::MspResponse fromFirmware;
+    processor.processCommand(query, fromFirmware, serial);
+    TEST_ASSERT_EQUAL_INT(1, fromFirmware.result);
+    TEST_ASSERT_EQUAL_UINT16(pair.bytes, fromFirmware.len);
+    TEST_ASSERT_TRUE(fromFirmware.len <= Connect::MSP_BUF_SIZE);
+
+    Connect::MspMessage setter;
+    setter.version = Connect::MSP_V2;
+    setter.cmd = pair.setCmd;
+    setter.received = fromFirmware.len;
+    std::copy(fromFirmware.data,
+              fromFirmware.data + fromFirmware.len, setter.buffer);
+    Connect::MspResponse update;
+    processor.processCommand(setter, update, serial);
+    TEST_ASSERT_EQUAL_INT(1, update.result);
+  }
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10851,6 +10980,9 @@ int main(int argc, char** argv)
   RUN_TEST(test_msp_legacy_mode_range_preserves_optional_link_fields);
   RUN_TEST(test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct);
   RUN_TEST(test_msp_mode_range_write_decodes_permanent_ids_and_rejects_unknown);
+  RUN_TEST(test_msp_versioned_setters_reject_partial_optional_groups);
+  RUN_TEST(test_msp_rejects_out_of_range_airmode_and_motor_values_atomically);
+  RUN_TEST(test_msp_versioned_setters_accept_full_configurator_payloads);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);
