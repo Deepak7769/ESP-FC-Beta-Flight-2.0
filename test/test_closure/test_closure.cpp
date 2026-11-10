@@ -420,12 +420,15 @@ class ClosureMockGyro : public Device::GyroDevice
 {
 public:
   bool connected{true};
+  bool configured{true};
+  bool readingsWork{true};
   int samples{0};
   int checks{0};
   int begin(Device::BusDevice* bus) override { setBus(bus, 0); return 1; }
   int begin(Device::BusDevice* bus, uint8_t address) override { setBus(bus, address); return 1; }
   DeviceType getType() const override { return GYRO_MPU6500; }
-  int readGyro(VectorInt16& v) override { ++samples; v = VectorInt16(0, 0, 0); return 1; }
+  int readGyro(VectorInt16& v) override { ++samples; v = VectorInt16(0, 0, 0); return readingsWork ? 1 : 0; }
+  bool configurationValid() const override { return configured; }
   int readAccel(VectorInt16& v) override { v = VectorInt16(0, 0, 0); return 1; }
   void setDLPFMode(uint8_t) override {}
   int getRate() const override { return 4000; }
@@ -455,6 +458,13 @@ void test_gyro_spi_identity_fault_latches_until_disarmed_begin()
   TEST_ASSERT_EQUAL_INT(0, gyro.read());
   TEST_ASSERT_EQUAL_INT(count, device.samples);
   device.connected = true;
+  device.configured = false;
+  TEST_ASSERT_EQUAL_INT(0, gyro.begin());
+  // Even if another subsystem incorrectly marks the sensor present, a
+  // failed configuration may not unlatch its identity failure.
+  m.state.gyro.present = true;
+  TEST_ASSERT_EQUAL_INT(0, gyro.read());
+  device.configured = true;
   m.updateModes(1u << MODE_ARMED);
   TEST_ASSERT_EQUAL_INT(0, gyro.begin());
   TEST_ASSERT_EQUAL_INT(0, gyro.read());
@@ -463,6 +473,11 @@ void test_gyro_spi_identity_fault_latches_until_disarmed_begin()
   TEST_ASSERT_EQUAL_INT(1, gyro.read());
   TEST_ASSERT_TRUE(m.state.gyro.sampleValid);
   TEST_ASSERT_EQUAL_INT(count + 1, device.samples);
+  device.readingsWork = false;
+  TEST_ASSERT_EQUAL_INT(0, gyro.read());
+  TEST_ASSERT_FALSE(m.state.gyro.sampleValid);
+  device.readingsWork = true;
+  TEST_ASSERT_EQUAL_INT(1, gyro.read());
   // Periodic SPI WHO_AM_I failure must also lock out subsequent zero reads.
   clockUs += 100000;
   device.connected = false;
