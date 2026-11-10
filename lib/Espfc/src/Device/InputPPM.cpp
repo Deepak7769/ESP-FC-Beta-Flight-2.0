@@ -17,13 +17,20 @@ void InputPPM::begin(int pin, int mode)
     _pin = -1;
   }
 
+#if defined(ARCH_RP2040) && !defined(ARCH_RP2350)
+  if (!_mailboxCriticalInitialized)
+  {
+    critical_section_init(&_mailboxCritical);
+    _mailboxCriticalInitialized = true;
+  }
+#endif
   _channel = 0;
   _lastFrameChannels = 0;
   _stableFrames = 0;
   _frameValid = true;
   _writeIndex = 0;
   _readIndex = 1;
-#if defined(ESP8266) || defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
+#if defined(ESP8266) || defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3) || (defined(ARCH_RP2040) && !defined(ARCH_RP2350))
   _mailbox = 2u;
 #else
   _mailbox.store(2u, std::memory_order_relaxed);
@@ -72,6 +79,16 @@ InputStatus FAST_CODE_ATTR InputPPM::update()
   const uint32_t published = _mailbox;
   if (published & FRAME_DIRTY) _mailbox = _readIndex;
   portEXIT_CRITICAL(&_mailboxMux);
+  if (!(published & FRAME_DIRTY)) return INPUT_IDLE;
+  _readIndex = published & FRAME_INDEX_MASK;
+  return INPUT_RECEIVED;
+#elif defined(ARCH_RP2040) && !defined(ARCH_RP2350)
+  // Cortex-M0+ has no lock-free 32-bit atomic exchange; the Pico SDK
+  // critical section holds a hardware spinlock shared by both cores.
+  critical_section_enter_blocking(&_mailboxCritical);
+  const uint32_t published = _mailbox;
+  if (published & FRAME_DIRTY) _mailbox = _readIndex;
+  critical_section_exit(&_mailboxCritical);
   if (!(published & FRAME_DIRTY)) return INPUT_IDLE;
   _readIndex = published & FRAME_INDEX_MASK;
   return INPUT_RECEIVED;
@@ -185,6 +202,11 @@ void IRAM_ATTR InputPPM::handle()
         const uint32_t available = _mailbox;
         _mailbox = uint32_t(_writeIndex) | FRAME_DIRTY;
         portEXIT_CRITICAL_ISR(&_mailboxMux);
+#elif defined(ARCH_RP2040) && !defined(ARCH_RP2350)
+        critical_section_enter_blocking(&_mailboxCritical);
+        const uint32_t available = _mailbox;
+        _mailbox = uint32_t(_writeIndex) | FRAME_DIRTY;
+        critical_section_exit(&_mailboxCritical);
 #else
         const uint32_t available = _mailbox.exchange(
             uint32_t(_writeIndex) | FRAME_DIRTY,

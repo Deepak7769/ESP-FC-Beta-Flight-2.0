@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <atomic>
 #include "InputDevice.h"
+#if defined(ARCH_RP2040) && !defined(ARCH_RP2350)
+#include <pico/critical_section.h> // hardware spinlock, safe across both cores
+#endif
 #if defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
 #include <Arduino.h> // FreeRTOS portMUX_TYPE: cross-core task/ISR exclusion
 #endif
@@ -48,20 +51,24 @@ struct Frame
 // Espressif's embedded libstdc++ does not guarantee an ISR-safe lock-free
 // 32-bit atomic exchange. Use a FreeRTOS portMUX on ESP32 (including SMP),
 // and a short task-side interrupt mask on single-core ESP8266.
-#if !defined(ESP8266) && !defined(ESP32) && !defined(ESP32S2) && !defined(ESP32S3) && !defined(ESP32C3)
+#if !defined(ESP8266) && !defined(ESP32) && !defined(ESP32S2) && !defined(ESP32S3) && !defined(ESP32C3) && !(defined(ARCH_RP2040) && !defined(ARCH_RP2350))
 static_assert(std::atomic<uint32_t>::is_always_lock_free,
               "PPM ISR requires lock-free 32-bit exchange");
 #endif
 static constexpr uint32_t FRAME_DIRTY = 4u;
 static constexpr uint32_t FRAME_INDEX_MASK = 3u;
 Frame _frames[3];
-#if defined(ESP8266) || defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
+#if defined(ESP8266) || defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3) || (defined(ARCH_RP2040) && !defined(ARCH_RP2350))
 volatile uint32_t _mailbox{2u};
 #else
 std::atomic<uint32_t> _mailbox{2u};
 #endif
 #if defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
 portMUX_TYPE _mailboxMux = portMUX_INITIALIZER_UNLOCKED;
+#endif
+#if defined(ARCH_RP2040) && !defined(ARCH_RP2350)
+critical_section_t _mailboxCritical{};
+bool _mailboxCriticalInitialized{false};
 #endif
 uint8_t _writeIndex = 0; // ISR-owned
 uint8_t _readIndex = 1;  // consumer-owned
