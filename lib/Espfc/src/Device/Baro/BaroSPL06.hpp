@@ -40,8 +40,9 @@ protected:
 
   int8_t _mode;
   int32_t _t_fine;
-  int32_t _raw_temp;
-  int32_t _raw_pressure;
+  int32_t _raw_temp{0};
+  int32_t _raw_pressure{0};
+  bool _hasMeasurement{false};
   CalibrationData _cal;
   int32_t kp;
   int32_t kt;

@@ -19,6 +19,7 @@ namespace Espfc::Device::Baro {
 #define SPL06_PRESSURE_CFG_REG (0x06)    /* Pressure configuration Reg */
 #define SPL06_TEMPERATURE_CFG_REG (0x07) /* Temperature configuration Reg */
 #define SPL06_MODE_CFG_REG (0x08)        /* Mode and Status Configuration */
+#define SPL06_PRESSURE_READY (1u << 4)   /* PRS_RDY: cleared by a pressure-data read */
 #define SPL06_INT_FIFO_CFG_REG (0x09)    /* Interrupt and FIFO Configuration */
 #define SPL06_INT_STATUS_REG (0x0A)      /* Interrupt Status Reg */
 #define SPL06_FIFO_STATUS_REG (0x0B)     /* FIFO Status Reg */
@@ -76,17 +77,21 @@ int BaroSPL06::begin(BusDevice* bus, uint8_t addr)
   uint8_t buffer[SPL06_CALIB_REG_COEF_LEN] = {0};
 
   setBus(bus, addr);
+  _hasMeasurement = false;
+  _raw_temp = 0;
+  _raw_pressure = 0;
 
   if (!testConnection()) return 0;
 
-  writeReg(SPL06_RESET_REG, SPL06_RESET_VAL); // device reset
+  if (writeReg(SPL06_RESET_REG, SPL06_RESET_VAL) != 1) return 0; // device reset
   delay(50);
 
   kt = 0;
 
   kp = 0;
 
-  _bus->read(_addr, SPL06_CALIB_REG, SPL06_CALIB_REG_COEF_LEN, buffer); // read callibration
+  if (_bus->read(_addr, SPL06_CALIB_REG, SPL06_CALIB_REG_COEF_LEN, buffer) !=
+      SPL06_CALIB_REG_COEF_LEN) return 0; // reject partial calibration
 
   _cal.c0 = (int16_t)buffer[0] << 4 | buffer[1] >> 4;
   _cal.c0 = (_cal.c0 & 0x0800) ? (_cal.c0 | 0xF000) : _cal.c0;
@@ -107,13 +112,13 @@ int BaroSPL06::begin(BusDevice* bus, uint8_t addr)
   _cal.c30 = (int16_t)buffer[16] << 8 | buffer[17];
 
   kp = scaleFactor[SPL06_OVERSAMP_64];
-  writeReg(SPL06_PRESSURE_CFG_REG, SPL06_MWASURE_16 << 4 | SPL06_OVERSAMP_64);
+  if (writeReg(SPL06_PRESSURE_CFG_REG, SPL06_MWASURE_16 << 4 | SPL06_OVERSAMP_64) != 1) return 0;
 
   kt = scaleFactor[SPL06_OVERSAMP_64];
-  writeReg(SPL06_TEMPERATURE_CFG_REG, SPL06_MWASURE_16 << 4 | SPL06_OVERSAMP_64 | 0x80); // Using mems temperature
-  writeReg(SPL06_INT_FIFO_CFG_REG, 0x04 | 0x08);
-
-  writeReg(SPL06_MODE_CFG_REG, SPL06_MODE); // set sampling mode
+  if (writeReg(SPL06_TEMPERATURE_CFG_REG,
+               SPL06_MWASURE_16 << 4 | SPL06_OVERSAMP_64 | 0x80) != 1) return 0;
+  if (writeReg(SPL06_INT_FIFO_CFG_REG, 0x04 | 0x08) != 1) return 0;
+  if (writeReg(SPL06_MODE_CFG_REG, SPL06_MODE) != 1) return 0; // sampling mode
 
   delay(20);
 
@@ -127,6 +132,8 @@ BaroDeviceType BaroSPL06::getType() const
 
 float BaroSPL06::readTemperature()
 {
+  if (!_hasMeasurement || kt <= 0) return NAN;
+
   float fTCompensate;
   float fTsc;
 
@@ -184,14 +191,31 @@ bool BaroSPL06::testConnection()
 
 bool BaroSPL06::readMesurment()
 {
+  // PRS_RDY at MEAS_CFG[4] indicates a *new physical conversion*.
+  // Reading pressure clears it. A scheduler poll without PRS_RDY must
+  // not re-publish the last sample and refresh the altitude estimator.
+  uint8_t status = 0;
+  if (_bus->read(_addr, SPL06_MODE_CFG_REG, 1, &status) != 1 ||
+      (status & SPL06_PRESSURE_READY) == 0)
+    return false;
+
   uint8_t buffer[6] = {};
-  if (_bus->readFast(_addr, SPL06_PRESSURE_REG, 6, buffer) != 6) return false;
+  if (_bus->readFast(_addr, SPL06_PRESSURE_REG, 6, buffer) != 6)
+    return false;
 
-  _raw_pressure = buffer[2] | (buffer[1] << 8) | (buffer[0] << 16);
-  _raw_pressure = (_raw_pressure & 0x800000) ? (0xFF000000 | _raw_pressure) : _raw_pressure;
-
-  _raw_temp = buffer[5] | (buffer[4] << 8) | (buffer[3] << 16);
-  _raw_temp = (_raw_temp & 0x800000) ? (0xFF000000 | _raw_temp) : _raw_temp;
+  const uint32_t rawPressure = uint32_t(buffer[2]) |
+                               (uint32_t(buffer[1]) << 8) |
+                               (uint32_t(buffer[0]) << 16);
+  const uint32_t rawTemp = uint32_t(buffer[5]) |
+                           (uint32_t(buffer[4]) << 8) |
+                           (uint32_t(buffer[3]) << 16);
+  _raw_pressure = (rawPressure & 0x800000u)
+      ? static_cast<int32_t>(rawPressure | 0xff000000u)
+      : static_cast<int32_t>(rawPressure);
+  _raw_temp = (rawTemp & 0x800000u)
+      ? static_cast<int32_t>(rawTemp | 0xff000000u)
+      : static_cast<int32_t>(rawTemp);
+  _hasMeasurement = true;
   return true;
 }
 

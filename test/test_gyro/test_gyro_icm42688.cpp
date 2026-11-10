@@ -1,5 +1,6 @@
 #include "Device/Baro/BaroBMP280.hpp"
 #include "Device/Baro/BaroBMP085.hpp"
+#include "Device/Baro/BaroSPL06.hpp"
 #include "Device/Gyro/GyroICM42688.hpp"
 #include "Device/Gyro/GyroBMI160.hpp"
 #include "Device/Gyro/GyroLSM6DSO.hpp"
@@ -232,6 +233,45 @@ void test_mpu_derivatives_invalidate_failed_accel_filter_register()
   icmBus.failWriteReg = 0x1d;
   icm.setDLPFMode(4);
   TEST_ASSERT_FALSE(icm.configurationValid());
+}
+
+
+void test_spl06_requires_new_pressure_conversion_and_rejects_bus_failures()
+{
+  MockBusDevice bus;
+  bus.readRegs[0x0d] = 0x10; // SPL06 product ID
+  BaroSPL06 baro;
+  TEST_ASSERT_EQUAL_INT(1, baro.begin(&bus, 0x76));
+  TEST_ASSERT_TRUE(std::isnan(baro.readTemperature()));
+  TEST_ASSERT_TRUE(std::isnan(baro.readPressure())); // PRS_RDY is clear
+
+  bus.readRegs[0x08] = 0x10; // PRS_RDY asserted
+  TEST_ASSERT_TRUE(std::isfinite(baro.readPressure()));
+  TEST_ASSERT_TRUE(std::isfinite(baro.readTemperature()));
+
+  // In hardware PRS_RDY clears when pressure data is read.
+  bus.readRegs[0x08] = 0u;
+  TEST_ASSERT_TRUE(std::isnan(baro.readPressure()));
+
+  bus.readRegs[0x08] = 0x10;
+  bus.failReadReg = 0x00; // data read fails even if ready
+  TEST_ASSERT_TRUE(std::isnan(baro.readPressure()));
+  bus.failReadReg = 0x08; // status read fails
+  TEST_ASSERT_TRUE(std::isnan(baro.readPressure()));
+}
+
+void test_spl06_rejects_missing_calibration_and_configuration_writes()
+{
+  MockBusDevice bus;
+  bus.readRegs[0x0d] = 0x10;
+  bus.failReadReg = 0x10;
+  BaroSPL06 badCalibration;
+  TEST_ASSERT_EQUAL_INT(0, badCalibration.begin(&bus, 0x76));
+
+  bus.failReadReg = -1;
+  bus.failWriteReg = 0x08; // measurement-mode setup fails
+  BaroSPL06 badMode;
+  TEST_ASSERT_EQUAL_INT(0, badMode.begin(&bus, 0x76));
 }
 
 void test_whoami_match()
@@ -544,6 +584,8 @@ int main(int argc, char** argv)
   RUN_TEST(test_lsm6dso_configuration_requires_successful_writes_and_readback);
   RUN_TEST(test_bmp085_decodes_big_endian_and_rejects_invalid_samples);
   RUN_TEST(test_bmp085_rejects_truncated_calibration_or_reset_failure);
+  RUN_TEST(test_spl06_requires_new_pressure_conversion_and_rejects_bus_failures);
+  RUN_TEST(test_spl06_rejects_missing_calibration_and_configuration_writes);
   RUN_TEST(test_mpu_derivatives_invalidate_failed_accel_filter_register);
   RUN_TEST(test_whoami_match);
   RUN_TEST(test_whoami_mismatch);
