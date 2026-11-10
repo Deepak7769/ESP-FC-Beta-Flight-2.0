@@ -2716,8 +2716,12 @@ void test_controller_anti_gravity_yields_to_assisted_vertical_control()
 
   controller.update();
 
-  TEST_ASSERT_TRUE(
-      model.state.antiGravity.enabled);
+#if defined(ESPFC_ANTI_GRAVITY_ACTIVE)
+  TEST_ASSERT_TRUE(model.state.antiGravity.enabled);
+#else
+  // Disabled builds must not advertise or retain inactive authority.
+  TEST_ASSERT_FALSE(model.state.antiGravity.enabled);
+#endif
 
   TEST_ASSERT_FALSE(
       model.state.antiGravity.active);
