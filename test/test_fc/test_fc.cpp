@@ -4820,9 +4820,16 @@ static void checkNoRangeTouchdownAtHeight(float entry, float height)
     stepNoRangeLanding(model, actuator, START + i * 50000u);
     if (i < 43) TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
   }
+#if defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
   TEST_ASSERT_FALSE(model.isModeActive(MODE_ARMED));
   TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
   TEST_ASSERT_FALSE(model.state.failsafe.landingRequested);
+#else
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingGroundIdleRequested);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+#endif
   ArduinoFakeReset();
 }
 
@@ -4912,6 +4919,7 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
       model.state.failsafe.landingActive ? 1 : 0,
       model.state.assistedMode.altitudeActive ? 1 : 0,
       model.state.innerPid[AXIS_THRUST].dt);
+#if defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
   TEST_ASSERT_TRUE(sawStage1);
   TEST_ASSERT_TRUE(sawControllerIdle);
   TEST_ASSERT_TRUE(sawActualMixerIdle);
@@ -4919,6 +4927,16 @@ void test_land_real_controller_and_mixer_reach_ground_idle_before_disarm()
   TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDED, model.state.failsafe.phase);
   TEST_ASSERT_EQUAL_UINT32(DISARM_REASON_FAILSAFE,
                            model.state.mode.disarmReason);
+#else
+  // Controller → mixer → LAND supervisor, no implicit UNIT_TEST permission.
+  TEST_ASSERT_FALSE(sawStage1);
+  TEST_ASSERT_FALSE(sawControllerIdle);
+  TEST_ASSERT_FALSE(sawActualMixerIdle);
+  TEST_ASSERT_FALSE(disarmed);
+  TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
+  TEST_ASSERT_FALSE(model.state.failsafe.landingGroundIdleRequested);
+  TEST_ASSERT_FALSE(model.state.failsafe.landingTouchdownCandidate);
+#endif
   ArduinoFakeReset();
 #endif
 }
@@ -4996,6 +5014,7 @@ void test_land_without_rangefinder_vetoes_hover_rotation_and_gps_motion()
 
 void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
 {
+#if defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
   ArduinoFakeReset();
   constexpr uint32_t START = 7000000u;
   When(Method(ArduinoFake(), micros)).AlwaysReturn(START);
@@ -5027,6 +5046,7 @@ void test_land_without_rangefinder_requires_uninterrupted_imu_evidence()
   TEST_ASSERT_TRUE(model.isModeActive(MODE_ARMED));
   TEST_ASSERT_FALSE(model.state.failsafe.landingGroundContactCandidate);
   ArduinoFakeReset();
+#endif
 }
 
 

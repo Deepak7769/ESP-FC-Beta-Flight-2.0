@@ -698,7 +698,7 @@ auto& verticalPid =
     innerPid[AXIS_THRUST];
 
 #if defined(ESPFC_LAND_V2_ACTIVE) && \
-    (defined(UNIT_TEST) || defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK))
+    defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
 const bool groundIdleAuthority =
     landingV2RequestedForOutput && altHoldV2OutputActive &&
     _model.state.failsafe.landingGroundIdleRequested &&

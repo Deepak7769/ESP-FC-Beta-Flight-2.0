@@ -1373,7 +1373,9 @@ void Actuator::updateFailsafeLand()
         // barometer+IMU can never provide a terrain-independent guarantee.
         // Flight auto-disarm requires a deliberate build policy and measured
         // aircraft acceptance. Native tests are non-actuating.
-#if defined(UNIT_TEST) || defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
+// Only explicit aircraft acceptance can enable no-range auto-disarm.
+        // UNIT_TEST is never an implicit safety authorization.
+#if defined(ESPFC_LAND_NO_RANGE_AUTODISARM_ACK)
         constexpr bool noRangeAutoDisarmAuthorized = true;
 #else
         constexpr bool noRangeAutoDisarmAuthorized = false;
