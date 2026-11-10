@@ -556,11 +556,16 @@ int update(
       altitude.faultFlags |= ALTITUDE_FAULT_RANGEFINDER;
     }
 
-    if (rangeValid &&
-        !_rangefinderReferenceValid)
+    // Invalid or stale range data ends the old terrain reference.
+    // Reacquisition must agree with the current local altitude estimate.
+    if (!rangeValid)
+    {
+      _rangefinderReferenceValid = false;
+    }
+    else if (!_rangefinderReferenceValid)
     {
       _rangefinderReference =
-          range.distance * rangeTiltCos;
+          range.distance * rangeTiltCos - altitude.height;
       _rangefinderReferenceValid = true;
     }
 

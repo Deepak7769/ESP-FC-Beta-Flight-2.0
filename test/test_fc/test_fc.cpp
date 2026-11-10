@@ -10491,6 +10491,62 @@ void test_msp_armed_policy_rejects_writes_but_allows_config_reads()
   TEST_ASSERT_TRUE(reply.len > 0);
 }
 
+
+void test_altitude_range_reference_preserves_local_height_on_acquisition()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 100000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  model.state.gyro.clock = 1000;
+  model.config.loopSync = 1;
+  model.config.mixerSync = 1;
+  model.config.mixer.type = FC_MIXER_QUADX;
+  model.config.baro.dev = BARO_BMP280;
+  model.begin();
+  model.config.altHold.groundEffectHeight = 200;
+  model.state.attitude.healthy = true;
+  model.state.attitude.lastUpdateUs = NOW_US;
+  model.state.attitude.cosTheta = 1.0f;
+  model.state.accel.present = true;
+  model.state.accel.sampleValid = true;
+  model.state.accel.lastUpdateUs = NOW_US;
+  model.state.baro.present = true;
+  model.state.baro.sampleValid = true;
+  model.state.baro.altitudeBiasSamples = -1;
+  model.state.baro.rate = 100;
+  model.state.baro.lastUpdateUs = NOW_US;
+  model.state.baro.altitudeGround = 3.0f;
+  model.state.baro.vario = 0.0f;
+  Control::Altitude estimator(model);
+  estimator.begin();
+  estimator.update(true);
+  TEST_ASSERT_TRUE(model.state.altitude.height > 0.1f);
+  const float before = model.state.altitude.height;
+
+  auto& range = model.state.rangefinder;
+  range.present = true;
+  range.sampleValid = true;
+  range.lastUpdateUs = NOW_US;
+  range.distance = 1.0f;
+  range.quality = 100;
+  estimator.update(true);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f,
+                           model.state.altitude.rangefinderInnovation);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, before, model.state.altitude.height);
+
+  // A dropout invalidates the old plane. Reacquiring different clearance
+  // must align without a discontinuity in local altitude.
+  range.sampleValid = false;
+  estimator.update(true);
+  range.sampleValid = true;
+  range.distance = 1.5f;
+  estimator.update(true);
+  TEST_ASSERT_FLOAT_WITHIN(0.05f, 0.0f,
+                           model.state.altitude.rangefinderInnovation);
+  ArduinoFakeReset();
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10545,6 +10601,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_committed_land_ignores_subsequent_stage1_and_stage2);
   RUN_TEST(test_battery_cells_stay_fixed_while_armed_during_detection_window);
   RUN_TEST(test_custom_msp_config_rejects_malformed_payload_sizes);
+  RUN_TEST(test_altitude_range_reference_preserves_local_height_on_acquisition);
   RUN_TEST(test_msp_armed_policy_rejects_writes_but_allows_config_reads);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);

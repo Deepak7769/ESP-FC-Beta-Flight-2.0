@@ -248,6 +248,16 @@ int Blackbox::begin()
   updateModeFlag(&rcModeActivationPresent, BOXFAILSAFE, _model.state.mode.maskPresent & 1 << MODE_FAILSAFE);
   updateModeFlag(&rcModeActivationPresent, BOXBLACKBOX, _model.state.mode.maskPresent & 1 << MODE_BLACKBOX);
   updateModeFlag(&rcModeActivationPresent, BOXBLACKBOXERASE, _model.state.mode.maskPresent & 1 << MODE_BLACKBOX_ERASE);
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+  updateModeFlag(&rcModeActivationPresent, BOXALTHOLD,
+                 (_model.state.mode.maskPresent & (uint32_t{1} << MODE_ALTHOLD)) != 0);
+#endif
+  updateModeFlag(&rcModeActivationPresent, BOXPOSHOLD,
+                 (_model.state.mode.maskPresent & (uint32_t{1} << MODE_POSHOLD)) != 0);
+  updateModeFlag(&rcModeActivationPresent, BOXGPSRESCUE,
+                 (_model.state.mode.maskPresent & (uint32_t{1} << MODE_GPS_RESCUE)) != 0);
+  updateModeFlag(&rcModeActivationPresent, BOXANTIGRAVITY,
+                 (_model.state.mode.maskPresent & (uint32_t{1} << MODE_ANTI_GRAVITY)) != 0);
 
   blackboxInit();
 
@@ -431,6 +441,12 @@ void FAST_CODE_ATTR Blackbox::updateMode()
   updateModeFlag(&rcModeActivationMask, BOXBLACKBOX, _model.isSwitchActive(MODE_BLACKBOX));
   updateModeFlag(&rcModeActivationMask, BOXAIRMODE, _model.isModeActive(MODE_AIRMODE));
   updateModeFlag(&rcModeActivationMask, BOXBLACKBOXERASE, _model.isSwitchActive(MODE_BLACKBOX_ERASE));
+  updateModeFlag(&rcModeActivationMask, BOXPOSHOLD,
+                 _model.isModeActive(MODE_POSHOLD));
+  updateModeFlag(&rcModeActivationMask, BOXGPSRESCUE,
+                 _model.isModeActive(MODE_GPS_RESCUE));
+  updateModeFlag(&rcModeActivationMask, BOXANTIGRAVITY,
+                 _model.state.antiGravity.ratePidApplied);
 }
 
 } // namespace Espfc::Blackbox
