@@ -30,13 +30,16 @@ int GyroSensor::begin()
   _lastConnectionCheckUs = 0;
 
   _gyro = _model.state.gyro.dev;
-  if (!_gyro) return 0;
+  if (!_gyro)
+  {
+    _connectionFault = true;
+    return 0;
+  }
   if (_gyro->getBus() && _gyro->getBus()->isSPI() && !_gyro->testConnection())
   {
     _connectionFault = true;
     return 0;
   }
-  _connectionFault = false;
 
 _gyro->setDLPFMode(
     _model.config.gyro.dlpf);
@@ -70,6 +73,9 @@ reload(MODEL_CHANGE_FILTER);
       .log(_model.state.gyro.timer.rate)
       .logln(_model.state.gyro.timer.interval);
 
+  // Initialization and configuration must both succeed before clearing
+  // the latched identity fault.
+  _connectionFault = false;
   return 1;
 }
 
@@ -198,7 +204,11 @@ gyroState.notch2Filter[i].begin(
 
 int FAST_CODE_ATTR GyroSensor::read()
 {
-  if (!_model.gyroActive()) return 0;
+  if (!_model.gyroActive() || !_gyro)
+  {
+    _model.state.gyro.sampleValid = false;
+    return 0;
+  }
 
   if (_connectionFault)
   {
@@ -210,6 +220,7 @@ int FAST_CODE_ATTR GyroSensor::read()
 
   if (!_gyro->readGyro(_model.state.gyro.raw))
   {
+    _model.state.gyro.sampleValid = false;
     return 0;
   }
 
@@ -233,6 +244,7 @@ int FAST_CODE_ATTR GyroSensor::read()
       !std::isfinite(sampled.y) ||
       !std::isfinite(sampled.z))
   {
+    _model.state.gyro.sampleValid = false;
     return 0;
   }
 
