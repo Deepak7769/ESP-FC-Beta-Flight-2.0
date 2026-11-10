@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Model.h"
+#include "Sensor/LegacyGpsEpoch.hpp"
 #include "Utils/Timer.h"
 #include <GpsParser.hpp>
 #include <cstring>
@@ -81,10 +82,11 @@ private:
   void handleError();
   void handleNavPvt();
   void handleNavSat() const;
-  void handleNavSol() const;
+  void handleNavSol();
   void handleNavPosllh();
-  void handleNavVelned() const;
+  void handleNavVelned();
   void handleNavSvinfo() const;
+  void publishLegacyEpoch();
   void fallbackLegacyNav();
   void updateDebug() const;
   void handleVersion() const;
@@ -121,6 +123,7 @@ private:
   int _currentBaud = 0;
   int _targetBaud = 0;
 
+  LegacyGpsEpoch _legacyEpoch;
   Gps::UbxParser _ubxParser;
   Gps::UbxMessage _ubxMsg;
   // Raw GPS position diagnostic state.

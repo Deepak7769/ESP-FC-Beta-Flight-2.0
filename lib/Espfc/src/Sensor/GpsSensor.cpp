@@ -43,6 +43,7 @@ int GpsSensor::begin(Stream::ReadWritable* port, int baud)
   _counter = 0;
   _versionTries = 0;
   _legacyTried = false;
+  _legacyEpoch.reset();
   _rawPositionInitialized = false;
   _previousRawLat = 0;
   _previousRawLon = 0;
@@ -788,14 +789,18 @@ void GpsSensor::updateRawPositionDiagnostics(
     return;
   }
 
-  const uint32_t dtMs =
-      gpsTimeMs -
-      _previousRawGpsTimeMs;
-
-  if (dtMs == 0)
+  // UBX iTOW wraps at the GPS week boundary; raw speed diagnostics
+  // must not interpret that rollover as a 49-day data gap.
+  if (gpsTimeMs >= LegacyGpsEpoch::WEEK_MS ||
+      _previousRawGpsTimeMs >= LegacyGpsEpoch::WEEK_MS ||
+      !LegacyGpsEpoch::forward(gpsTimeMs, _previousRawGpsTimeMs))
   {
     return;
   }
+
+  const uint32_t dtMs = gpsTimeMs >= _previousRawGpsTimeMs
+      ? gpsTimeMs - _previousRawGpsTimeMs
+      : LegacyGpsEpoch::WEEK_MS - _previousRawGpsTimeMs + gpsTimeMs;
 
   const float dt =
       std::clamp(
@@ -993,56 +998,62 @@ void GpsSensor::handleNavSat() const
   }
 }
 
-void GpsSensor::handleNavSol() const
+void GpsSensor::handleNavSol()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavSol)) return;
-  const auto& m = *_ubxMsg.getAs<Gps::UbxNavSol>();
-
-  _model.state.gps.fix = m.gpsFix == 3 && (m.flags & 0x01);
-  _model.state.gps.fixType = m.gpsFix;
-  _model.state.gps.numSats = m.numSV;
-  _model.state.gps.time = m.iTow;
-  _model.state.gps.accuracy.pDop = m.pDOP;
-  _model.state.gps.accuracy.speed = m.sAcc * 10; // cm/s -> mm/s
-
-  const uint32_t now = micros();
-  _model.state.gps.interval = now - _model.state.gps.lastMsgTs;
-  _model.state.gps.lastMsgTs = now;
-
-  calculateHomeVector();
+  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavSol>()))
+    publishLegacyEpoch();
 }
 
 void GpsSensor::handleNavPosllh()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavPosllh)) return;
-  const auto& m = *_ubxMsg.getAs<Gps::UbxNavPosllh>();
-
-  _model.state.gps.location.raw.lat = m.lat;
-  _model.state.gps.location.raw.lon = m.lon;
-  _model.state.gps.location.raw.height = m.hMSL;
-  _model.state.gps.accuracy.horizontal = m.hAcc;
-  _model.state.gps.accuracy.vertical = m.vAcc;
-  _model.state.gps.time = m.iTow;
-
-  updateRawPositionDiagnostics(
-      m.lat,
-      m.lon,
-      m.iTow);
+  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavPosllh>()))
+    publishLegacyEpoch();
 }
 
-void GpsSensor::handleNavVelned() const
+void GpsSensor::handleNavVelned()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavVelned)) return;
-  const auto& m = *_ubxMsg.getAs<Gps::UbxNavVelned>();
+  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavVelned>()))
+    publishLegacyEpoch();
+}
 
-  // NAV-VELNED is in cm/s, internal state uses mm/s (as NAV-PVT)
-  _model.state.gps.velocity.raw.north = m.velN * 10;
-  _model.state.gps.velocity.raw.east = m.velE * 10;
-  _model.state.gps.velocity.raw.down = m.velD * 10;
-  _model.state.gps.velocity.raw.groundSpeed = static_cast<int32_t>(m.gSpeed) * 10;
-  _model.state.gps.velocity.raw.speed3d = static_cast<int32_t>(m.speed) * 10;
-  _model.state.gps.velocity.raw.heading = m.heading;
-  _model.state.gps.accuracy.heading = m.cAcc;
+void GpsSensor::publishLegacyEpoch()
+{
+  Gps::UbxNavSol sol{};
+  Gps::UbxNavPosllh pos{};
+  Gps::UbxNavVelned vel{};
+  if (!_legacyEpoch.take(sol, pos, vel)) return;
+
+  auto& gps = _model.state.gps;
+  gps.fix = sol.gpsFix == 3 && (sol.flags & 0x01);
+  gps.fixType = sol.gpsFix;
+  gps.numSats = sol.numSV;
+  gps.time = sol.iTow;
+  gps.accuracy.pDop = sol.pDOP;
+  gps.accuracy.speed = sol.sAcc * 10; // cm/s -> mm/s
+
+  gps.location.raw.lat = pos.lat;
+  gps.location.raw.lon = pos.lon;
+  gps.location.raw.height = pos.hMSL;
+  gps.accuracy.horizontal = pos.hAcc;
+  gps.accuracy.vertical = pos.vAcc;
+
+  // VELNED is in cm/s; all FC navigation velocities are mm/s.
+  gps.velocity.raw.north = vel.velN * 10;
+  gps.velocity.raw.east = vel.velE * 10;
+  gps.velocity.raw.down = vel.velD * 10;
+  gps.velocity.raw.groundSpeed = static_cast<int32_t>(vel.gSpeed) * 10;
+  gps.velocity.raw.speed3d = static_cast<int32_t>(vel.speed) * 10;
+  gps.velocity.raw.heading = vel.heading;
+  gps.accuracy.heading = vel.cAcc;
+
+  const uint32_t now = micros();
+  gps.interval = now - gps.lastMsgTs;
+  gps.lastMsgTs = now;
+  updateRawPositionDiagnostics(pos.lat, pos.lon, pos.iTow);
+  calculateHomeVector();
 }
 
 void GpsSensor::handleNavSvinfo() const
