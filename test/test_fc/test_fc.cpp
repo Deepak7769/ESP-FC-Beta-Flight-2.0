@@ -9616,9 +9616,9 @@ void test_fusion_mode_name_rejects_negative_enum()
 
 void test_althold_v2_rangefinder_config_is_sanitized()
 {
-  fprintf(stderr, "[F10 diagnostic] range sanitize: before Model construction\n"); fflush(stderr);
+  printf("[F10 diagnostic] range sanitize: before Model construction\n"); fflush(stdout);
   Model model;
-  fprintf(stderr, "[F10 diagnostic] range sanitize: after Model construction\n"); fflush(stderr);
+  printf("[F10 diagnostic] range sanitize: after Model construction\n"); fflush(stdout);
 
   model.config.rangefinder.type =
       255;
@@ -9633,9 +9633,9 @@ void test_althold_v2_rangefinder_config_is_sanitized()
   model.config.rangefinder.updateIntervalMs =
       1;
 
-  fprintf(stderr, "[F10 diagnostic] range sanitize: before sanitize\n"); fflush(stderr);
+  printf("[F10 diagnostic] range sanitize: before sanitize\n"); fflush(stdout);
   model.sanitize();
-  fprintf(stderr, "[F10 diagnostic] range sanitize: after sanitize\n"); fflush(stderr);
+  printf("[F10 diagnostic] range sanitize: after sanitize\n"); fflush(stdout);
 
   TEST_ASSERT_EQUAL_UINT8(
       RANGEFINDER_HCSR04,
