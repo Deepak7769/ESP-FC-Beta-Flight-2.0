@@ -537,6 +537,8 @@ void tearDown() {}
 void test_legacy_gps_epoch_rejects_mixed_tow_and_out_of_order_rewind()
 {
   Espfc::Sensor::LegacyGpsEpoch epochs;
+  uint32_t nowUs = 1000u;
+  uint32_t firstReceivedUs = 0;
   Gps::UbxNavSol sol{};
   Gps::UbxNavPosllh pos{};
   Gps::UbxNavVelned vel{};
@@ -547,58 +549,60 @@ void test_legacy_gps_epoch_rejects_mixed_tow_and_out_of_order_rewind()
   pos.lat = 10000000;
   vel.iTow = 2000;
   vel.velN = 100;
-  TEST_ASSERT_FALSE(epochs.put(pos));
-  TEST_ASSERT_FALSE(epochs.put(vel)); // supersedes incomplete 1000
-  TEST_ASSERT_FALSE(epochs.put(sol)); // delayed SOL 1000 is stale
+  TEST_ASSERT_FALSE(epochs.put(pos, nowUs));
+  TEST_ASSERT_FALSE(epochs.put(vel, nowUs)); // supersedes incomplete 1000
+  TEST_ASSERT_FALSE(epochs.put(sol, nowUs)); // delayed SOL 1000 is stale
   TEST_ASSERT_FALSE(epochs.ready());
 
   sol.iTow = 2000;
   pos.iTow = 2000;
   pos.lat = 20000000;
-  TEST_ASSERT_FALSE(epochs.put(pos));
-  TEST_ASSERT_TRUE(epochs.put(sol));
+  TEST_ASSERT_FALSE(epochs.put(pos, nowUs));
+  TEST_ASSERT_TRUE(epochs.put(sol, nowUs));
   Gps::UbxNavSol publishedSol{};
   Gps::UbxNavPosllh publishedPos{};
   Gps::UbxNavVelned publishedVel{};
-  TEST_ASSERT_TRUE(epochs.take(publishedSol, publishedPos, publishedVel));
+  TEST_ASSERT_TRUE(epochs.take(publishedSol, publishedPos, publishedVel, firstReceivedUs, nowUs));
   TEST_ASSERT_EQUAL_UINT32(2000u, publishedSol.iTow);
   TEST_ASSERT_EQUAL_INT32(20000000, publishedPos.lat);
   TEST_ASSERT_EQUAL_INT32(100, publishedVel.velN);
   TEST_ASSERT_FALSE(epochs.ready());
 
   // Previously published samples cannot produce a duplicate epoch.
-  TEST_ASSERT_FALSE(epochs.put(pos));
-  TEST_ASSERT_FALSE(epochs.put(vel));
-  TEST_ASSERT_FALSE(epochs.put(sol));
-  TEST_ASSERT_FALSE(epochs.take(publishedSol, publishedPos, publishedVel));
+  TEST_ASSERT_FALSE(epochs.put(pos, nowUs));
+  TEST_ASSERT_FALSE(epochs.put(vel, nowUs));
+  TEST_ASSERT_FALSE(epochs.put(sol, nowUs));
+  TEST_ASSERT_FALSE(epochs.take(publishedSol, publishedPos, publishedVel, firstReceivedUs, nowUs));
 }
 
 void test_legacy_gps_epoch_allows_week_wrap_but_rejects_late_old_week()
 {
   Espfc::Sensor::LegacyGpsEpoch epochs;
+  uint32_t nowUs = 1000u;
+  uint32_t firstReceivedUs = 0;
   Gps::UbxNavSol sol{};
   Gps::UbxNavPosllh pos{};
   Gps::UbxNavVelned vel{};
   sol.iTow = 604799900u;
   pos.iTow = sol.iTow;
   vel.iTow = sol.iTow;
-  TEST_ASSERT_FALSE(epochs.put(sol));
-  TEST_ASSERT_FALSE(epochs.put(pos));
-  TEST_ASSERT_TRUE(epochs.put(vel));
-  TEST_ASSERT_TRUE(epochs.take(sol, pos, vel));
+  TEST_ASSERT_FALSE(epochs.put(sol, nowUs));
+  TEST_ASSERT_FALSE(epochs.put(pos, nowUs));
+  TEST_ASSERT_TRUE(epochs.put(vel, nowUs));
+  TEST_ASSERT_TRUE(epochs.take(sol, pos, vel, firstReceivedUs, nowUs));
 
   sol.iTow = 50u;
   pos.iTow = 50u;
   vel.iTow = 50u;
-  TEST_ASSERT_FALSE(epochs.put(vel));
-  TEST_ASSERT_FALSE(epochs.put(sol));
-  TEST_ASSERT_TRUE(epochs.put(pos));
-  TEST_ASSERT_TRUE(epochs.take(sol, pos, vel));
+  TEST_ASSERT_FALSE(epochs.put(vel, nowUs));
+  TEST_ASSERT_FALSE(epochs.put(sol, nowUs));
+  TEST_ASSERT_TRUE(epochs.put(pos, nowUs));
+  TEST_ASSERT_TRUE(epochs.take(sol, pos, vel, firstReceivedUs, nowUs));
 
   // Packet delayed from previous week cannot rewind the new epoch.
   Gps::UbxNavSol stale{};
   stale.iTow = 604799950u;
-  TEST_ASSERT_FALSE(epochs.put(stale));
+  TEST_ASSERT_FALSE(epochs.put(stale, nowUs));
   TEST_ASSERT_FALSE(epochs.ready());
 }
 
@@ -659,6 +663,49 @@ void test_poshold_invalid_dt_removes_control_authority()
                           static_cast<uint8_t>(out.phase));
 }
 
+
+void test_legacy_gps_epoch_expires_and_retires_old_tow()
+{
+  Espfc::Sensor::LegacyGpsEpoch epochs;
+  Gps::UbxNavSol sol{};
+  Gps::UbxNavPosllh pos{};
+  Gps::UbxNavVelned vel{};
+  sol.iTow = pos.iTow = vel.iTow = 1234u;
+  uint32_t clock = 10000u;
+  uint32_t first = 0u;
+  TEST_ASSERT_FALSE(epochs.put(sol, clock));
+  clock += Espfc::Sensor::LegacyGpsEpoch::MAX_PENDING_AGE_US + 1u;
+  // A delayed POS must not restart the timed-out epoch.
+  TEST_ASSERT_FALSE(epochs.put(pos, clock));
+  TEST_ASSERT_FALSE(epochs.put(vel, clock));
+  TEST_ASSERT_FALSE(epochs.put(sol, clock));
+  TEST_ASSERT_FALSE(epochs.take(sol, pos, vel, first, clock));
+  TEST_ASSERT_FALSE(epochs.ready());
+
+  sol.iTow = pos.iTow = vel.iTow = 1434u;
+  TEST_ASSERT_FALSE(epochs.put(vel, clock));
+  TEST_ASSERT_FALSE(epochs.put(sol, clock + 500u));
+  TEST_ASSERT_TRUE(epochs.put(pos, clock + 800u));
+  TEST_ASSERT_TRUE(epochs.take(sol, pos, vel, first, clock + 800u));
+  TEST_ASSERT_EQUAL_UINT32(clock, first);
+}
+
+void test_legacy_gps_epoch_preserves_first_receipt_across_micros_wrap()
+{
+  Espfc::Sensor::LegacyGpsEpoch epochs;
+  Gps::UbxNavSol sol{};
+  Gps::UbxNavPosllh pos{};
+  Gps::UbxNavVelned vel{};
+  sol.iTow = pos.iTow = vel.iTow = 5000u;
+  uint32_t clock = 0xffffff00u;
+  uint32_t first = 0;
+  TEST_ASSERT_FALSE(epochs.put(vel, clock));
+  TEST_ASSERT_FALSE(epochs.put(pos, clock + 1000u));
+  TEST_ASSERT_TRUE(epochs.put(sol, clock + 2000u));
+  TEST_ASSERT_TRUE(epochs.take(sol, pos, vel, first, clock + 3000u));
+  TEST_ASSERT_EQUAL_UINT32(0xffffff00u, first);
+}
+
 int main(int, char**)
 {
   UNITY_BEGIN();
@@ -674,6 +721,8 @@ int main(int, char**)
   RUN_TEST(test_navigation_local_ned_for_rescue);
   RUN_TEST(test_legacy_gps_epoch_rejects_mixed_tow_and_out_of_order_rewind);
   RUN_TEST(test_legacy_gps_epoch_allows_week_wrap_but_rejects_late_old_week);
+  RUN_TEST(test_legacy_gps_epoch_expires_and_retires_old_tow);
+  RUN_TEST(test_legacy_gps_epoch_preserves_first_receipt_across_micros_wrap);
   RUN_TEST(test_gps_rescue_state_machine_reaches_return);
   RUN_TEST(test_gps_rescue_falls_back_to_land_on_gps_loss);
   RUN_TEST(test_gps_rescue_limits_horizontal_command);

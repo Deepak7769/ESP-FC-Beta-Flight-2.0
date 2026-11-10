@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <tuple>
 #include <cstring>
+#include <limits>
 
 namespace Espfc::Sensor {
 
@@ -1001,21 +1002,21 @@ void GpsSensor::handleNavSat() const
 void GpsSensor::handleNavSol()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavSol)) return;
-  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavSol>()))
+  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavSol>(), micros()))
     publishLegacyEpoch();
 }
 
 void GpsSensor::handleNavPosllh()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavPosllh)) return;
-  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavPosllh>()))
+  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavPosllh>(), micros()))
     publishLegacyEpoch();
 }
 
 void GpsSensor::handleNavVelned()
 {
   if (_ubxMsg.length < sizeof(Gps::UbxNavVelned)) return;
-  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavVelned>()))
+  if (_legacyEpoch.put(*_ubxMsg.getAs<Gps::UbxNavVelned>(), micros()))
     publishLegacyEpoch();
 }
 
@@ -1024,7 +1025,25 @@ void GpsSensor::publishLegacyEpoch()
   Gps::UbxNavSol sol{};
   Gps::UbxNavPosllh pos{};
   Gps::UbxNavVelned vel{};
-  if (!_legacyEpoch.take(sol, pos, vel)) return;
+  uint32_t firstReceivedUs = 0;
+  if (!_legacyEpoch.take(sol, pos, vel, firstReceivedUs, micros()))
+    return;
+
+  // Reject malformed scaling before changing ANY navigation state. Signed
+  // centimeter/s units multiplied by 10 must fit in int32_t, and UBX
+  // unsigned speed fields must not be cast into a negative signed value.
+  constexpr int64_t MIN_I32 = std::numeric_limits<int32_t>::min();
+  constexpr int64_t MAX_I32 = std::numeric_limits<int32_t>::max();
+  const auto safeVelocity = [](int32_t cmPerS) {
+    const int64_t mmPerS = static_cast<int64_t>(cmPerS) * 10;
+    return mmPerS >= MIN_I32 && mmPerS <= MAX_I32;
+  };
+  if (!safeVelocity(vel.velN) || !safeVelocity(vel.velE) ||
+      !safeVelocity(vel.velD) ||
+      vel.speed > static_cast<uint32_t>(MAX_I32 / 10) ||
+      vel.gSpeed > static_cast<uint32_t>(MAX_I32 / 10) ||
+      sol.sAcc > std::numeric_limits<uint32_t>::max() / 10u)
+    return;
 
   auto& gps = _model.state.gps;
   gps.fix = sol.gpsFix == 3 && (sol.flags & 0x01);
@@ -1049,9 +1068,8 @@ void GpsSensor::publishLegacyEpoch()
   gps.velocity.raw.heading = vel.heading;
   gps.accuracy.heading = vel.cAcc;
 
-  const uint32_t now = micros();
-  gps.interval = now - gps.lastMsgTs;
-  gps.lastMsgTs = now;
+  gps.interval = firstReceivedUs - gps.lastMsgTs;
+  gps.lastMsgTs = firstReceivedUs;
   updateRawPositionDiagnostics(pos.lat, pos.lon, pos.iTow);
   calculateHomeVector();
 }
