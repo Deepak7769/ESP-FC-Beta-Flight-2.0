@@ -56,6 +56,7 @@ struct Sim
     in.stickRoll = stickRoll;
     in.stickPitch = stickPitch;
     in.dt = dt;
+    in.nowUs = static_cast<uint32_t>(tick) * 20000u;
     const auto out = ph.update(in);
 
     float cmdRoll = out.controlling ? out.rollAngle : stickRoll * 0.4f;
@@ -81,6 +82,13 @@ struct Sim
 
   float posError() const { return std::hypot(n, e); }
 };
+
+GpsRescueOutput rescueStep(GpsRescue& rescue, GpsRescueInput& in,
+                           const GpsRescueParams& p)
+{
+  in.nowUs += 20000u;
+  return rescue.update(in, p);
+}
 
 } // namespace
 
@@ -295,7 +303,7 @@ void test_gps_rescue_state_machine_reaches_return()
   in.yawHeading = 3.14159265358979323846f;
   in.dt = 0.02f;
 
-  auto out = r.update(in, p);
+  auto out = rescueStep(r, in, p);
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(
           GpsRescuePhase::CLIMB),
@@ -305,14 +313,14 @@ void test_gps_rescue_state_machine_reaches_return()
   TEST_ASSERT_TRUE(out.verticalRate > 0.0f);
 
   in.altitudeAboveHome = 12.0f;
-  out = r.update(in, p);
+  out = rescueStep(r, in, p);
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(
           GpsRescuePhase::ALIGN),
       static_cast<uint8_t>(
           out.phase));
 
-  out = r.update(in, p);
+  out = rescueStep(r, in, p);
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(
           GpsRescuePhase::RETURN),
@@ -342,11 +350,11 @@ void test_gps_rescue_falls_back_to_land_on_gps_loss()
   in.yawHeading = 3.14159265358979323846f;
   in.dt = 0.02f;
 
-  r.update(in, p);
+  rescueStep(r, in, p);
   in.gpsValid = false;
 
   // One bad sample only starts the confirmation window.
-  auto out = r.update(in, p);
+  auto out = rescueStep(r, in, p);
   TEST_ASSERT_TRUE(out.active);
   TEST_ASSERT_TRUE(out.faultEvaluationPending);
   TEST_ASSERT_FALSE(out.requestLand);
@@ -357,16 +365,16 @@ void test_gps_rescue_falls_back_to_land_on_gps_loss()
 
   // A transient recovery inside the window cancels the handoff.
   in.gpsValid = true;
-  out = r.update(in, p);
+  out = rescueStep(r, in, p);
   TEST_ASSERT_FALSE(out.faultEvaluationPending);
   TEST_ASSERT_FALSE(out.requestLand);
 
   // A persistent failure is confirmed only after the evaluation window.
   in.gpsValid = false;
-  out = r.update(in, p);
+  out = rescueStep(r, in, p);
   for (int i = 0; i < 20 && !out.requestLand; ++i)
   {
-    out = r.update(in, p);
+    out = rescueStep(r, in, p);
   }
 
   TEST_ASSERT_EQUAL_UINT8(
@@ -401,8 +409,8 @@ void test_gps_rescue_limits_horizontal_command()
   in.yawHeading = 3.14159265358979323846f;
   in.dt = 0.02f;
 
-  r.update(in, p);
-  const auto out = r.update(in, p);
+  rescueStep(r, in, p);
+  const auto out = rescueStep(r, in, p);
   TEST_ASSERT_TRUE(
       std::fabs(out.pitchAngle) <=
       p.maxAngle + 1e-5f);
@@ -437,7 +445,7 @@ void test_gps_rescue_climb_holds_horizontal_position()
   in.yawHeading = 0.0f;
   in.dt = 0.02f;
 
-  const auto out = r.update(in, p);
+  const auto out = rescueStep(r, in, p);
 
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(GpsRescuePhase::CLIMB),
@@ -470,16 +478,16 @@ void test_gps_rescue_stops_return_after_no_progress()
   in.yawHeading = 3.14159265358979323846f;
   in.dt = 0.02f;
 
-  r.update(in, p);
+  rescueStep(r, in, p);
   in.altitudeAboveHome = 30.0f;
-  r.update(in, p);
-  r.update(in, p);
-  r.update(in, p);
+  rescueStep(r, in, p);
+  rescueStep(r, in, p);
+  rescueStep(r, in, p);
 
   GpsRescueOutput out{};
   for (int i = 0; i < 500 && out.phase != GpsRescuePhase::ABORT; ++i)
   {
-    out = r.update(in, p);
+    out = rescueStep(r, in, p);
   }
 
   TEST_ASSERT_EQUAL_UINT8(
@@ -515,7 +523,7 @@ void test_gps_rescue_inside_min_distance_skips_return_leg()
   in.yawHeading = 0.0f;
   in.dt = 0.02f;
 
-  const auto out = r.update(in, p);
+  const auto out = rescueStep(r, in, p);
 
   TEST_ASSERT_EQUAL_UINT8(
       static_cast<uint8_t>(GpsRescuePhase::APPROACH),
@@ -594,6 +602,63 @@ void test_legacy_gps_epoch_allows_week_wrap_but_rejects_late_old_week()
   TEST_ASSERT_FALSE(epochs.ready());
 }
 
+
+void test_rescue_fault_confirm_uses_wall_time_with_wrap()
+{
+  GpsRescue r;
+  GpsRescueInput in{};
+  GpsRescueParams p{};
+  in.requested = in.armed = in.homeValid = in.gpsValid = true;
+  in.attitudeHealthy = in.headingHealthy = in.altitudeHealthy = true;
+  in.positionValid = in.velocityValid = true;
+  in.sats = 10;
+  in.horizontalAccuracy = 1.0f;
+  in.north = 40.0f;
+  in.altitudeAboveHome = 20.0f;
+  in.yawHeading = PI_F;
+  in.nowUs = 0xffffff00u;
+  r.update(in, p);
+  in.gpsValid = false;
+  in.nowUs += 1000u; // Wraps micros().
+  TEST_ASSERT_TRUE(r.update(in, p).faultEvaluationPending);
+  in.nowUs += 249999u;
+  TEST_ASSERT_TRUE(r.update(in, p).faultEvaluationPending);
+  ++in.nowUs;
+  const auto result = r.update(in, p);
+  TEST_ASSERT_TRUE(result.requestLand);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(GpsRescuePhase::ABORT),
+                          static_cast<uint8_t>(result.phase));
+}
+
+void test_poshold_brake_timeout_uses_wall_time()
+{
+  PositionHold ph;
+  PositionHoldInput in{};
+  in.velNorth = 1.0f;
+  in.stickPitch = 0.5f;
+  in.nowUs = 1000u;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PosHoldPhase::PILOT),
+                          static_cast<uint8_t>(ph.update(in).phase));
+  in.stickPitch = 0.0f;
+  in.nowUs += 1000u;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PosHoldPhase::BRAKE),
+                          static_cast<uint8_t>(ph.update(in).phase));
+  in.nowUs += 3500000u;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PosHoldPhase::HOLD),
+                          static_cast<uint8_t>(ph.update(in).phase));
+}
+
+void test_poshold_invalid_dt_removes_control_authority()
+{
+  PositionHold ph;
+  PositionHoldInput in{};
+  in.dt = NAN;
+  const auto out = ph.update(in);
+  TEST_ASSERT_FALSE(out.controlling);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PosHoldPhase::OFF),
+                          static_cast<uint8_t>(out.phase));
+}
+
 int main(int, char**)
 {
   UNITY_BEGIN();
@@ -615,5 +680,8 @@ int main(int, char**)
   RUN_TEST(test_gps_rescue_climb_holds_horizontal_position);
   RUN_TEST(test_gps_rescue_stops_return_after_no_progress);
   RUN_TEST(test_gps_rescue_inside_min_distance_skips_return_leg);
+  RUN_TEST(test_rescue_fault_confirm_uses_wall_time_with_wrap);
+  RUN_TEST(test_poshold_brake_timeout_uses_wall_time);
+  RUN_TEST(test_poshold_invalid_dt_removes_control_authority);
   return UNITY_END();
 }

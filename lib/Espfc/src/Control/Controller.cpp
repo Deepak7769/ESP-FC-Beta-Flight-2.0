@@ -1752,6 +1752,7 @@ PositionHoldOutput posHoldOut{};
     phIn.stickRoll = input.ch[AXIS_ROLL];
     phIn.stickPitch = input.ch[AXIS_PITCH];
     phIn.dt = dt;
+    phIn.nowUs = now;
     phIn.gpsTimestampMs = gps.time;
     phIn.horizontalAccuracy =
         static_cast<float>(gps.accuracy.horizontal) * 0.001f;
@@ -2004,6 +2005,7 @@ rescueIn.courseOverGround =
 rescueIn.courseValid = rescueCourseValid;
 rescueIn.groundSpeed = rescueGroundSpeed;
 rescueIn.dt = dt;
+rescueIn.nowUs = now;
 
 const auto rescueOut =
     _gpsRescue.update(

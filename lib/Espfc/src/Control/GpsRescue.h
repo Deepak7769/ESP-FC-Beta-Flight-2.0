@@ -98,6 +98,7 @@ struct GpsRescueInput
   bool courseValid{false};
   float groundSpeed{0.0f};
   float dt{0.005f};
+  uint32_t nowUs{0}; // Monotonic clock for safety deadlines.
 };
 
 struct GpsRescueOutput
@@ -132,7 +133,10 @@ public:
     _returnStartDistance = 0.0f;
     _bestReturnDistance = 0.0f;
     _noProgressElapsed = 0.0f;
-    _faultEvaluationElapsed = 0.0f;
+    _faultStartedUs = 0;
+    _faultPending = false;
+    _phaseStartedUs = 0;
+    _progressStartedUs = 0;
     _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
   }
 
@@ -141,9 +145,6 @@ public:
       const GpsRescueParams& p)
   {
     GpsRescueOutput out{};
-    // Do not inflate submillisecond navigation time at high PID rates.
-    const float elapsedDt = std::isfinite(in.dt) && in.dt > 0.0f
-        ? std::min(in.dt, 0.25f) : 0.0f;
     out.active = in.requested && in.armed;
 
     if (!out.active)
@@ -160,16 +161,19 @@ public:
       // Do not turn one bad sample into a motor-off event. Keep Rescue
       // active while the navigation fault is confirmed.
       _faultFlagsLatched |= faults;
-      _faultEvaluationElapsed += elapsedDt;
+      if (!_faultPending)
+      {
+        _faultPending = true;
+        _faultStartedUs = in.nowUs;
+      }
 
       out.active = true;
       out.controlling = false;
       out.faultFlags = _faultFlagsLatched;
       out.targetAltitude = _targetAltitude;
 
-      constexpr float FAULT_CONFIRM_S = 0.25f;
-
-      if (_faultEvaluationElapsed < FAULT_CONFIRM_S)
+      constexpr uint32_t FAULT_CONFIRM_US = 250000u;
+      if (static_cast<uint32_t>(in.nowUs - _faultStartedUs) < FAULT_CONFIRM_US)
       {
         out.faultEvaluationPending = true;
         out.phase = _phase;
@@ -185,11 +189,12 @@ public:
 
     // A transient fault that clears inside the confirmation window recovers
     // Rescue instead of forcing a failsafe transition.
-    _faultEvaluationElapsed = 0.0f;
+    _faultPending = false;
     _faultFlagsLatched = GPS_RESCUE_FAULT_NONE;
 
     // Course over ground is a velocity vector, NOT body yaw.
-    _phaseElapsed += elapsedDt;
+    _phaseElapsed = static_cast<float>(
+        static_cast<uint32_t>(in.nowUs - _phaseStartedUs)) * 1e-6f;
 
     if (_phase == GpsRescuePhase::IDLE)
     {
@@ -240,14 +245,14 @@ public:
               altitude <= p.minLandingAltitude
                   ? GpsRescuePhase::LAND
                   : GpsRescuePhase::DESCEND;
-          _phaseElapsed = 0.0f;
+          _phaseStartedUs = in.nowUs;
         }
         else if (
             altitude >=
             _targetAltitude - p.altitudeTolerance)
         {
           _phase = GpsRescuePhase::ALIGN;
-          _phaseElapsed = 0.0f;
+          _phaseStartedUs = in.nowUs;
         }
         break;
 
@@ -278,7 +283,12 @@ public:
             _phaseElapsed >= 4.0f)
         {
           _phase = GpsRescuePhase::RETURN;
-          _phaseElapsed = 0.0f;
+          _phaseStartedUs = in.nowUs;
+          // Start the no-progress budget at RETURN, not during climb/align.
+          _returnStartDistance = distance;
+          _bestReturnDistance = distance;
+          _progressStartedUs = in.nowUs;
+          _noProgressElapsed = 0.0f;
         }
         break;
 
@@ -321,11 +331,13 @@ public:
         if (distance < _bestReturnDistance - 0.5f)
         {
           _bestReturnDistance = distance;
+          _progressStartedUs = in.nowUs;
           _noProgressElapsed = 0.0f;
         }
         else
         {
-          _noProgressElapsed += elapsedDt;
+          _noProgressElapsed = static_cast<float>(
+              static_cast<uint32_t>(in.nowUs - _progressStartedUs)) * 1e-6f;
         }
 
         const float progressTimeout =
@@ -355,7 +367,7 @@ public:
         if (distance <= p.approachDistance)
         {
           _phase = GpsRescuePhase::APPROACH;
-          _phaseElapsed = 0.0f;
+          _phaseStartedUs = in.nowUs;
           _noProgressElapsed = 0.0f;
         }
         break;
@@ -390,7 +402,7 @@ public:
                       p.minLandingAltitude + 0.5f
                   ? GpsRescuePhase::LAND
                   : GpsRescuePhase::DESCEND;
-          _phaseElapsed = 0.0f;
+          _phaseStartedUs = in.nowUs;
         }
         break;
 
@@ -416,7 +428,7 @@ public:
             altitude <= p.minLandingAltitude)
         {
           _phase = GpsRescuePhase::LAND;
-          _phaseElapsed = 0.0f;
+          _phaseStartedUs = in.nowUs;
         }
         break;
 
@@ -512,7 +524,7 @@ private:
             std::max(
                 p.maxAltitude,
                 altitude));
-    _phaseElapsed = 0.0f;
+    _phaseStartedUs = in.nowUs;
 
     const float distance =
         std::hypot(
@@ -692,7 +704,10 @@ private:
   float _returnStartDistance{0.0f};
   float _bestReturnDistance{0.0f};
   float _noProgressElapsed{0.0f};
-  float _faultEvaluationElapsed{0.0f};
+  uint32_t _phaseStartedUs{0};
+  uint32_t _progressStartedUs{0};
+  uint32_t _faultStartedUs{0};
+  bool _faultPending{false};
   uint16_t _faultFlagsLatched{GPS_RESCUE_FAULT_NONE};
 };
 

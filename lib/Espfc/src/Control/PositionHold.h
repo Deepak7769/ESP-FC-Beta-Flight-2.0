@@ -120,6 +120,7 @@ struct PositionHoldInput
   float stickPitch = 0.0f;
 
   float dt = 0.02f;
+  uint32_t nowUs = 0; // Monotonic wall clock, independent of integration dt.
 
   // GPS solution timestamp.
   // NEO-6M NAV-POSLLH iTOW is milliseconds.
@@ -171,7 +172,7 @@ void resetController()
 {
   _phase = PosHoldPhase::OFF;
   _iN = _iE = 0.0f;
-  _brakeTime = 0.0f;
+  _brakeStartedUs = 0;
   _latched = false;
 }
 
@@ -234,8 +235,13 @@ void reset()
 
     updateFilter(in, out);
 
-    const float dt = std::isfinite(in.dt) && in.dt > 0.0f
-        ? std::min(in.dt, 0.25f) : 0.0f;
+    // Never grant control authority with invalid integration timing.
+    if (!std::isfinite(in.dt) || in.dt <= 0.0f)
+    {
+      resetController();
+      return out;
+    }
+    const float dt = std::min(in.dt, 0.25f);
     const float speed = std::hypot(in.velNorth, in.velEast);
  
     const bool stickActive = std::fabs(in.stickRoll) > _p.deadband || std::fabs(in.stickPitch) > _p.deadband;
@@ -258,13 +264,14 @@ void reset()
     else if (_phase == PosHoldPhase::PILOT)
     {
       _phase = PosHoldPhase::BRAKE;
-      _brakeTime = 0.0f;
+      _brakeStartedUs = in.nowUs;
     }
  
     if (_phase == PosHoldPhase::BRAKE)
     {
-      _brakeTime += dt;
-      if (speed < _p.brakeSpeed || _brakeTime > _p.brakeTimeout)
+      const float brakeElapsedS = static_cast<float>(
+          static_cast<uint32_t>(in.nowUs - _brakeStartedUs)) * 1e-6f;
+      if (speed < _p.brakeSpeed || brakeElapsedS > _p.brakeTimeout)
       {
         latch(
             out.filteredLat,
@@ -676,7 +683,7 @@ private:
 
   float _iN = 0.0f;
   float _iE = 0.0f;
-  float _brakeTime = 0.0f;
+  uint32_t _brakeStartedUs = 0;
 
   bool _latched = false;
 
