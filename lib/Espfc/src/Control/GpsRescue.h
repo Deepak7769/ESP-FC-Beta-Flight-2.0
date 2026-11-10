@@ -33,7 +33,8 @@ enum GpsRescueFault : uint16_t
   GPS_RESCUE_FAULT_POSITION    = 1u << 7,
   GPS_RESCUE_FAULT_VELOCITY    = 1u << 8,
   GPS_RESCUE_FAULT_NUMERIC     = 1u << 9,
-  GPS_RESCUE_FAULT_NO_PROGRESS = 1u << 10
+  GPS_RESCUE_FAULT_NO_PROGRESS = 1u << 10,
+  GPS_RESCUE_FAULT_HEADING     = 1u << 11
 };
 
 enum GpsRescueAltitudeMode : uint8_t
@@ -79,6 +80,7 @@ struct GpsRescueInput
   bool homeValid{false};
   bool gpsValid{false};
   bool attitudeHealthy{false};
+  bool headingHealthy{false};
   bool altitudeHealthy{false};
   bool positionValid{false};
   bool velocityValid{false};
@@ -453,6 +455,7 @@ private:
         in.horizontalAccuracy > p.maxHorizontalAccuracy)
       f |= GPS_RESCUE_FAULT_ACCURACY;
     if (!in.attitudeHealthy) f |= GPS_RESCUE_FAULT_ATTITUDE;
+    if (!in.headingHealthy) f |= GPS_RESCUE_FAULT_HEADING;
     if (!in.altitudeHealthy) f |= GPS_RESCUE_FAULT_ALTITUDE;
     if (!in.positionValid) f |= GPS_RESCUE_FAULT_POSITION;
     if (!in.velocityValid) f |= GPS_RESCUE_FAULT_VELOCITY;

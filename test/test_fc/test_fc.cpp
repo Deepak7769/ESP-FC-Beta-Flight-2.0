@@ -10216,6 +10216,7 @@ void test_gps_rescue_never_treats_course_of_motion_as_body_yaw()
   in.homeValid = true;
   in.gpsValid = true;
   in.attitudeHealthy = true;
+  in.headingHealthy = true;
   in.altitudeHealthy = true;
   in.positionValid = true;
   in.velocityValid = true;
@@ -10243,6 +10244,117 @@ void test_gps_rescue_never_treats_course_of_motion_as_body_yaw()
     const auto out = rescue.update(in, params);
     TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f, out.navigationHeading);
   }
+}
+
+
+void test_gps_rescue_heading_loss_keeps_request_until_land()
+{
+  Espfc::Control::GpsRescue rescue;
+  Espfc::Control::GpsRescueParams params{};
+  Espfc::Control::GpsRescueInput in{};
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.headingHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 12;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.05f;
+  in.north = 100.0f;
+  in.altitudeAboveHome = 15.0f;
+  in.dt = 0.005f;
+  TEST_ASSERT_TRUE(rescue.update(in, params).active);
+
+  in.headingHealthy = false;
+  for (int i = 0; i < 49; ++i)
+  {
+    const auto out = rescue.update(in, params);
+    TEST_ASSERT_TRUE(out.active);
+    TEST_ASSERT_FALSE(out.controlling);
+    TEST_ASSERT_TRUE(out.faultEvaluationPending);
+    TEST_ASSERT_FALSE(out.requestLand);
+    TEST_ASSERT_TRUE((out.faultFlags &
+                      Espfc::Control::GPS_RESCUE_FAULT_HEADING) != 0);
+  }
+
+  const auto landedRequest = rescue.update(in, params);
+  TEST_ASSERT_TRUE(landedRequest.active);
+  TEST_ASSERT_TRUE(landedRequest.requestLand);
+  TEST_ASSERT_FALSE(landedRequest.faultEvaluationPending);
+  TEST_ASSERT_EQUAL(static_cast<int>(Espfc::Control::GpsRescuePhase::ABORT),
+                    static_cast<int>(landedRequest.phase));
+}
+
+void test_gps_rescue_transient_heading_loss_clears_before_land()
+{
+  Espfc::Control::GpsRescue rescue;
+  Espfc::Control::GpsRescueParams params{};
+  Espfc::Control::GpsRescueInput in{};
+  in.requested = true;
+  in.armed = true;
+  in.homeValid = true;
+  in.gpsValid = true;
+  in.attitudeHealthy = true;
+  in.headingHealthy = true;
+  in.altitudeHealthy = true;
+  in.positionValid = true;
+  in.velocityValid = true;
+  in.sats = 12;
+  in.horizontalAccuracy = 1.0f;
+  in.gpsAgeS = 0.05f;
+  in.north = 100.0f;
+  in.altitudeAboveHome = 15.0f;
+  in.dt = 0.005f;
+  TEST_ASSERT_TRUE(rescue.update(in, params).active);
+
+  in.headingHealthy = false;
+  for (int i = 0; i < 20; ++i)
+  {
+    const auto pending = rescue.update(in, params);
+    TEST_ASSERT_TRUE(pending.faultEvaluationPending);
+  }
+  in.headingHealthy = true;
+  const auto recovered = rescue.update(in, params);
+  TEST_ASSERT_TRUE(recovered.active);
+  TEST_ASSERT_FALSE(recovered.requestLand);
+  TEST_ASSERT_EQUAL(Espfc::Control::GPS_RESCUE_FAULT_NONE, recovered.faultFlags);
+}
+
+void test_committed_land_ignores_subsequent_stage1_and_stage2()
+{
+  ArduinoFakeReset();
+  constexpr uint32_t NOW_US = 5700000u;
+  When(Method(ArduinoFake(), micros)).AlwaysReturn(NOW_US);
+  Model model;
+  TelemetryManager telemetry(model);
+  Input input(model, telemetry);
+  model.config.failsafe.procedure = FAILSAFE_PROCEDURE_AUTO_LAND;
+  model.state.failsafe.rxEverValid = true;
+  model.state.failsafe.phase = FC_FAILSAFE_LANDING;
+  model.state.failsafe.landingRequested = true;
+  model.state.failsafe.landingRequestedUs = NOW_US - 2000000u;
+  model.state.failsafe.landingGroundContactCandidate = true;
+  model.state.failsafe.landingGroundContactStartedUs = NOW_US - 250000u;
+  model.state.failsafe.landingTouchdownCandidate = true;
+  model.state.failsafe.landingTouchdownStartedUs = NOW_US - 100000u;
+  model.updateModes(uint32_t{1} << MODE_ARMED);
+  input.failsafeStage1();
+  input.failsafeStage2();
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  TEST_ASSERT_EQUAL(FC_FAILSAFE_LANDING, model.state.failsafe.phase);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingRequested);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingGroundContactCandidate);
+  TEST_ASSERT_TRUE(model.state.failsafe.landingTouchdownCandidate);
+  TEST_ASSERT_EQUAL_UINT32(NOW_US - 250000u,
+                           model.state.failsafe.landingGroundContactStartedUs);
+  TEST_ASSERT_EQUAL_UINT32(NOW_US - 100000u,
+                           model.state.failsafe.landingTouchdownStartedUs);
+#endif
+  ArduinoFakeReset();
 }
 
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
@@ -10294,6 +10406,9 @@ int main(int argc, char** argv)
   RUN_TEST(test_heading_health_requires_fresh_valid_calibrated_magnetometer);
   RUN_TEST(test_gps_rescue_rejects_unqualified_absolute_heading);
   RUN_TEST(test_gps_rescue_never_treats_course_of_motion_as_body_yaw);
+  RUN_TEST(test_gps_rescue_heading_loss_keeps_request_until_land);
+  RUN_TEST(test_gps_rescue_transient_heading_loss_clears_before_land);
+  RUN_TEST(test_committed_land_ignores_subsequent_stage1_and_stage2);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);

@@ -1837,10 +1837,12 @@ PositionHoldOutput posHoldOut{};
 // GPS RESCUE / LOCAL NED NAVIGATION
 // =====================================================
 
+// Keep a committed Rescue request alive on compass loss; the Rescue
+// validator confirms a HEADING fault and requests LAND instead of
+// treating lost heading as a pilot cancelling the mode.
 const bool gpsRescueRequested =
     _model.isModeActive(MODE_GPS_RESCUE) &&
-    _model.isModeActive(MODE_ARMED) &&
-    _model.magHeadingHealthy();
+    _model.isModeActive(MODE_ARMED);
 
 Control::NavigationInput navigationIn{};
 navigationIn.homeValid = gps.isHomeValid();
@@ -1969,6 +1971,7 @@ rescueIn.armed =
 rescueIn.homeValid = navigation.homeValid;
 rescueIn.gpsValid = navigationIn.gpsValid;
 rescueIn.attitudeHealthy = attitudeFresh;
+rescueIn.headingHealthy = _model.magHeadingHealthy();
 rescueIn.altitudeHealthy = altitudeValid;
 rescueIn.positionValid = navigation.positionValid;
 rescueIn.velocityValid = navigation.velocityValid;
@@ -2019,6 +2022,7 @@ gpsRescueState.faultEvaluationPending =
     rescueOut.faultEvaluationPending;
 gpsRescueState.ready =
     navigationIn.gpsValid &&
+    rescueIn.headingHealthy &&
     navigationIn.attitudeValid &&
     navigationIn.altitudeValid &&
     navigation.positionValid &&

@@ -806,17 +806,24 @@ void FAST_CODE_ATTR Input::failsafeIdle()
 
 void FAST_CODE_ATTR Input::failsafeStage1()
 {
-  _model.state.failsafe.recoveryActive =
-      false;
+  auto& failsafe = _model.state.failsafe;
+  failsafe.recoveryActive = false;
+  _model.state.input.rxLoss = true;
 
-  _model.state.failsafe.phase =
-      FC_FAILSAFE_RX_LOSS_DETECTED;
-
-  _model.state.input.rxLoss =
-      true;
-  for (size_t i = 0; i < _model.state.input.channelCount; i++)
+#if defined(ESPFC_LAND_V2_ACTIVE)
+  // LAND is terminal for this armed flight. Later RX loss must not
+  // rewind contact dwell or overwrite the qualified ARM-off path.
+  if (failsafe.phase == FC_FAILSAFE_LANDING &&
+      failsafe.landingRequested)
   {
-    setInput((Axis)i, getFailsafeValue(i), true, true);
+    return;
+  }
+#endif
+
+  failsafe.phase = FC_FAILSAFE_RX_LOSS_DETECTED;
+  for (size_t i = 0; i < _model.state.input.channelCount; ++i)
+  {
+    setInput(static_cast<Axis>(i), getFailsafeValue(i), true, true);
   }
 }
 
