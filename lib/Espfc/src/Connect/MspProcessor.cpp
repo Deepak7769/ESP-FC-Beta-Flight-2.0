@@ -122,7 +122,7 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
       return size == 6;
 
     case MSP_SET_RX_MAP:
-      return size == 8 || size == INPUT_CHANNELS;
+      return size == 8 || size == Espfc::INPUT_CHANNELS;
 
     case MSP_SET_RSSI_CONFIG:
     case MSP_SET_PID_CONTROLLER:
