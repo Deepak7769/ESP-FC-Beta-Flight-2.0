@@ -11014,6 +11014,24 @@ void test_pid_nonfinite_inputs_reset_recursive_filter_history()
   TEST_ASSERT_TRUE(std::isfinite(pid.update(0.0f, 0.0f)));
 }
 
+void test_external_arduino_rangefinder_is_not_falsely_advertised()
+{
+  ArduinoFakeReset();
+  Model model;
+  model.config.rangefinder.type = RANGEFINDER_NONE;
+  Espfc::Sensor::RangefinderSensor sensor(model);
+  TEST_ASSERT_EQUAL(0, sensor.begin());
+  TEST_ASSERT_FALSE(model.state.rangefinder.present);
+  TEST_ASSERT_FALSE(model.state.rangefinder.sampleValid);
+
+  // A future/unknown companion ID must not silently become HCSR04 GPIO.
+  model.config.rangefinder.type = 254u;
+  TEST_ASSERT_EQUAL(0, sensor.begin());
+  TEST_ASSERT_FALSE(model.state.rangefinder.present);
+  TEST_ASSERT_FALSE(model.state.rangefinder.timestampValid);
+  ArduinoFakeReset();
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
@@ -11032,6 +11050,7 @@ int main(int argc, char** argv)
   RUN_TEST(test_custom_msp_config_rejects_malformed_payload_sizes);
   RUN_TEST(test_altitude_range_reference_preserves_local_height_on_acquisition);
   RUN_TEST(test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts);
+  RUN_TEST(test_external_arduino_rangefinder_is_not_falsely_advertised);
   RUN_TEST(test_msp_armed_policy_rejects_writes_but_allows_config_reads);
   RUN_TEST(test_msp_rejects_truncated_standard_config_without_partial_mutation);
   RUN_TEST(test_msp_rejects_invalid_meter_and_mode_payload_atomically);

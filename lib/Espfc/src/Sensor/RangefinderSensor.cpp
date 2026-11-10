@@ -19,11 +19,15 @@ int RangefinderSensor::activateBackend()
   switch (_type)
   {
     case RANGEFINDER_HCSR04:
+      // This is only the FC's *direct GPIO* trigger/echo driver.
+      // There is no Arduino companion receiver in this firmware.
       _device = &_hcsr04;
       break;
 
     case RANGEFINDER_NONE:
     default:
+      // Unknown/unsupported companion types are not aliased to
+      // direct GPIO sonar. Leave state.present=false.
       break;
   }
 

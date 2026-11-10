@@ -108,6 +108,18 @@ After flashing you need to configure few things first:
  * **RP2040** - experimantal, lack of performance, no FPU
  * **ESP8266** - obsolete, no longer developed
 
+## Rangefinder support on an external Arduino (F48)
+
+**Not implemented:** HC-SR04 measurements sent by a separate Arduino are
+**not accepted** by this firmware. The existing `RANGEFINDER_HCSR04` driver
+operates the trigger/echo pins **directly on the flight controller**; it is
+not a UART/I²C companion receiver. For the external-Arduino setup, leave the
+rangefinder setting at `NONE`. Navigation and LAND must not assume that
+terrain clearance is known from a missing sensor.
+
+See [Arduino companion rangefinder status and safety contract](docs/RANGEFINDER_ARDUINO_COMPANION.md)
+for the capability boundary and requirements before adding a real transport.
+
 ## Supported Sensors and Protocols
 
  * Gyro: MPU6050, MPU6000, MPU6500, MPU9250, ICM20602, ICM42688, BMI160
