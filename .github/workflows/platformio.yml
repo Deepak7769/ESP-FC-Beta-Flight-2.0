@@ -33,6 +33,7 @@ jobs:
           platformio test -e native_angle_v2 -f test_fc
           platformio test -e native_assisted_v2 -f test_fc
           platformio test -e native_assisted_v2_active -f test_fc
+          platformio test -e native_land_ack -f test_fc
           platformio run -e esp32_antigravity_bench
           platformio run -e esp32_assisted_v2_bench
           platformio run -e esp32_assisted_v2_candidate
