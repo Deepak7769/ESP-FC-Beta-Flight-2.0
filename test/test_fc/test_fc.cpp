@@ -11084,6 +11084,7 @@ void test_direct_hcsr04_rejects_invalid_pins_before_gpio_configuration()
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_althold_v2_rangefinder_config_is_sanitized);
   RUN_TEST(test_blackbox_serial_buffer_preserves_partial_writes_in_order);
   RUN_TEST(test_blackbox_serial_buffer_reports_full_backpressure_without_overflow);
   RUN_TEST(test_position_hold_preserves_filter_acceptance_between_gps_epochs);
@@ -11142,7 +11143,7 @@ RUN_TEST(
 
 RUN_TEST(test_controller_althold_v2_captures_current_altitude);
 RUN_TEST(test_althold_v2_configurable_limits_are_persisted);
-RUN_TEST(test_althold_v2_rangefinder_config_is_sanitized);
+// Temporarily isolate rangefinder sanitization test from preceding native fixtures.
 RUN_TEST(test_altitude_v2_rate_gate_reports_rejection);
 RUN_TEST(test_altitude_v2_acceleration_bias_observer_learns_residual);
 RUN_TEST(test_mixer_collective_throttle_limit_reports_vertical_saturation);
