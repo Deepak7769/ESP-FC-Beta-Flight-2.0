@@ -68,7 +68,7 @@ Hardware:
 * Buzzer and some electronic components (optional).
 
 Software:
-* [Betaflight Configurator](https://github.com/betaflight/betaflight-configurator/releases) (v10.10)
+* [Betaflight Configurator 10.10.0](https://github.com/betaflight/betaflight-configurator/releases/tag/10.10.0) — see the [API 1.46 candidate contract](docs/MSP_API_146_CANDIDATE.md).
 * [CH340 usb-serial converter driver](https://sparks.gogo.co.nz/ch340.html)
 
 ## Flashing
@@ -92,7 +92,7 @@ After flashing you need to configure few things first:
  4. Have fun ;)
 
 > [!NOTE]
-> Not all functions displayed in configurator are avalable in firmware. The rule of thumb is if you cannot change specific option in Betaflight Configurator, that means it is not supported. It usually rolls back to previous value after save. It is strongly recommended to follow [setup guide](/docs/setup.md).
+> This is ESP-FC, with a selected Configurator wire profile. Full Configurator feature parity and device integration are not certified. Read the [candidate contract](docs/MSP_API_146_CANDIDATE.md), including the EEPROM format change, and follow the [setup guide](/docs/setup.md).
 
 ## Wiring diagrams
 

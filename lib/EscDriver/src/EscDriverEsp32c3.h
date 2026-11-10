@@ -59,7 +59,7 @@ class EscDriverEsp32c3: public EscDriverBase
     int32_t minTicks(EscDriverTimer timer);
     void dshotWrite();
 
-    static void _isr_init(EscDriverTimer timer, void * driver);
+    static bool _isr_init(EscDriverTimer timer, void * driver);
     static bool _isr_wait(EscDriverTimer timer, const uint32_t ticks);
     static void _isr_start(EscDriverTimer timer);
     static void _isr_end(EscDriverTimer timer, void* p);

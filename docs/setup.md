@@ -14,7 +14,7 @@ Once you download and install [Betaflight configurator](https://github.com/betaf
 Then select your device from list and click connect.
 
 > [!NOTE]
-> Not all functions displayed in configurator are avalable in firmware. The rule of thumb is if you cannot change specific option in Betaflight Configurator, that means it is not supported. It usually rolls back to previous value after save.
+> Use the pinned [API 1.46 candidate contract](MSP_API_146_CANDIDATE.md). It lists implemented packets, unsupported controls, the EEPROM format change, and integration checks that remain open. A successful connection does not establish full feature parity.
 
 > [!NOTE]
 > Leaving some tabs, especially CLI requires you to click "Disconnect" button twice, and then click "Connect" again.

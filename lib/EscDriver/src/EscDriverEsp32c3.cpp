@@ -1,8 +1,10 @@
 #if defined(ESP32C3)
 
+#include "EscPinCapabilities.hpp"
 #include "EscDriverEsp32c3.h"
 #include <Arduino.h>
 #include <driver/timer.h>
+#include <driver/gpio.h>
 #include <algorithm>
 
 #define ESC_TIMER_DIVIDER 2
@@ -15,7 +17,7 @@
 #define TIMER_WAIT_EDGE 240UL
 #define TIMER_WAIT_COMP 90UL
 
-void EscDriverEsp32c3::_isr_init(EscDriverTimer timer, void * driver)
+bool EscDriverEsp32c3::_isr_init(EscDriverTimer timer, void * driver)
 {
   timer_group_t group = (timer_group_t)timer;
   timer_config_t config = {
@@ -26,11 +28,18 @@ void EscDriverEsp32c3::_isr_init(EscDriverTimer timer, void * driver)
     .auto_reload = TIMER_AUTORELOAD_DIS,
     .divider = ESC_TIMER_DIVIDER,
   };
-  timer_init(group, ESC_TIMER_IDX, &config);
-  timer_set_counter_value(group, ESC_TIMER_IDX, 0);
-  timer_isr_callback_add(group, ESC_TIMER_IDX, EscDriverEsp32c3::handle, driver, ESP_INTR_FLAG_IRAM);
-  timer_enable_intr(group, ESC_TIMER_IDX);
-  timer_start(group, ESC_TIMER_IDX);
+  if (timer_init(group, ESC_TIMER_IDX, &config) != ESP_OK) return false;
+  if (timer_set_counter_value(group, ESC_TIMER_IDX, 0) != ESP_OK ||
+      timer_isr_callback_add(group, ESC_TIMER_IDX, EscDriverEsp32c3::handle,
+                             driver, ESP_INTR_FLAG_IRAM) != ESP_OK ||
+      timer_enable_intr(group, ESC_TIMER_IDX) != ESP_OK ||
+      timer_start(group, ESC_TIMER_IDX) != ESP_OK)
+  {
+    timer_isr_callback_remove(group, ESC_TIMER_IDX);
+    timer_deinit(group, ESC_TIMER_IDX);
+    return false;
+  }
+  return true;
 }
 
 bool IRAM_ATTR EscDriverEsp32c3::_isr_wait(EscDriverTimer timer, const uint32_t ticks)
@@ -64,10 +73,14 @@ void EscDriverEsp32c3::_isr_end(EscDriverTimer timer, void* p)
 {
   timer_pause((timer_group_t)timer, ESC_TIMER_IDX);
   timer_disable_intr((timer_group_t)timer, ESC_TIMER_IDX);
+  timer_isr_callback_remove((timer_group_t)timer, ESC_TIMER_IDX);
+  timer_deinit((timer_group_t)timer, ESC_TIMER_IDX);
 }
 
 int IRAM_ATTR EscDriverEsp32c3::attach(size_t channel, int pin, int pulse)
 {
+  if (!escOutputPinAllowed(pin)) return 0;
+  if (pin < 0 || !GPIO_IS_VALID_OUTPUT_GPIO(pin)) return 0;
   if(channel < 0 || channel >= ESC_CHANNEL_COUNT) return 0;
   _slots[channel].pin = pin;
   _slots[channel].pulse = usToTicks(pulse);
@@ -288,7 +301,7 @@ int EscDriverEsp32c3::begin(const EscConfig& conf)
     case ESC_PROTOCOL_DISABLED:
       break;
     default: // analog
-      _isr_init(_timer, this);
+      if (!_isr_init(_timer, this)) return 0;
       if(_async) _isr_start(_timer);
   }
   return 1;

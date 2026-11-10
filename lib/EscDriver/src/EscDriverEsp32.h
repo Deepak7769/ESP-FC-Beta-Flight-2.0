@@ -87,7 +87,7 @@ class EscDriverEsp32: public EscDriverBase
     uint32_t telemetry(size_t channel) const;
 
   private:
-    void initChannel(int channel, gpio_num_t pin, int pulse);
+    int initChannel(int channel, gpio_num_t pin, int pulse);
     void modeTx(rmt_channel_t channel);
     void modeRx(rmt_channel_t channel);
     void enableTx(rmt_channel_t channel);

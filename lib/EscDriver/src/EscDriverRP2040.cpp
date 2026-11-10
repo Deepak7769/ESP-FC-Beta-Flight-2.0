@@ -1,5 +1,6 @@
 #if defined(ARCH_RP2040)
 
+#include "EscPinCapabilities.hpp"
 #include "EscDriverRP2040.h"
 #include <Arduino.h>
 #include <algorithm>
@@ -19,8 +20,9 @@
 
 int IRAM_ATTR EscDriverRP2040::attach(size_t channel, int pin, int pulse)
 {
+  if (!escOutputPinAllowed(pin)) return 0;
   if(channel >= ESC_CHANNEL_COUNT) return 0;
-  if(pin > 28) return 0;
+  if(pin < 0 || pin > 28) return 0;
 
   _slots[channel].pin = pin;
   _slots[channel].pulse = usToTicks(pulse);
@@ -60,7 +62,15 @@ int IRAM_ATTR EscDriverRP2040::attach(size_t channel, int pin, int pulse)
 
       // Setup DMA channel to drive the PWM
       _slots[channel].drive = true;
-      _slots[channel].pwm_dma_chan = dma_claim_unused_channel(true);
+      _slots[channel].pwm_dma_chan = dma_claim_unused_channel(false);
+      if (_slots[channel].pwm_dma_chan < 0)
+      {
+        pwm_set_chan_level(_slots[channel].slice, _slots[channel].channel, 0);
+        pwm_set_enabled(_slots[channel].slice, false);
+        gpio_init(pin); gpio_set_dir(pin, true); gpio_put(pin, false);
+        _slots[channel] = Slot();
+        return 0;
+      }
       _slots[channel].dma_config = dma_channel_get_default_config(_slots[channel].pwm_dma_chan);
 
       // Transfers 32-bits at a time, increment read address so we pick up a new fade value each
@@ -208,11 +218,22 @@ int EscDriverRP2040::begin(const EscConfig& conf)
 
 void EscDriverRP2040::end()
 {
-  for(size_t i = 0; i < ESC_CHANNEL_COUNT; ++i)
+  for (size_t i = 0; i < ESC_CHANNEL_COUNT; ++i)
   {
-    if(!_slots[i].active()) continue;
-    digitalWrite(_slots[i].pin, LOW);
+    auto& slot = _slots[i];
+    if (!slot.active()) continue;
+    pwm_set_enabled(slot.slice, false);
+    if (slot.drive && slot.pwm_dma_chan >= 0)
+    {
+      dma_channel_abort(slot.pwm_dma_chan);
+      dma_channel_unclaim(slot.pwm_dma_chan);
+    }
+    gpio_init(slot.pin);
+    gpio_set_dir(slot.pin, GPIO_OUT);
+    gpio_put(slot.pin, 0);
+    slot = Slot();
   }
+  _protocol = ESC_PROTOCOL_DISABLED;
 }
 
 void EscDriverRP2040::clearDmaBuffer()

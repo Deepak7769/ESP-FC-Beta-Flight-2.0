@@ -1,5 +1,6 @@
 #if defined(ESP8266)
 
+#include "EscPinCapabilities.hpp"
 #include "EscDriverEsp8266.h"
 #include <Arduino.h>
 #include <algorithm>
@@ -155,6 +156,8 @@ void EscDriverEsp8266::_isr_end(EscDriverTimer timer, void* p)
 
 int IRAM_ATTR EscDriverEsp8266::attach(size_t channel, int pin, int pulse)
 {
+  if (!escOutputPinAllowed(pin)) return 0;
+  if (pin < 0 || pin > 16 || (pin >= 6 && pin <= 11)) return 0;
   if(channel < 0 || channel >= ESC_CHANNEL_COUNT) return 0;
   _slots[channel].pin = pin;
   _slots[channel].pulse = usToTicks(pulse);

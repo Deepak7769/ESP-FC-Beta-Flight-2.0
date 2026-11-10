@@ -1,5 +1,6 @@
 #if defined(ESP32) && !defined(ESP32C3)
 
+#include "EscPinCapabilities.hpp"
 #include <Arduino.h>
 #include <algorithm>
 #include "EscDriverEsp32.h"
@@ -87,8 +88,12 @@ void EscDriverEsp32::end()
   {
     if (!_channel[i].attached()) continue;
     if (_protocol == ESC_PROTOCOL_DISABLED) continue;
-    // TODO: handle splitted case
     rmt_driver_uninstall((rmt_channel_t)i);
+    const rmt_channel_t rx = (rmt_channel_t)RMT_ENCODE_RX_CHANNEL(i);
+    if (_digital && _dshot_tlm && rx != (rmt_channel_t)i) rmt_driver_uninstall(rx);
+    digitalWrite(_channel[i].pin, LOW);
+    _channel[i].pin = gpio_num_t(-1);
+    instances[i] = nullptr;
   }
   _protocol = ESC_PROTOCOL_DISABLED;
 }
@@ -107,9 +112,9 @@ int EscDriverEsp32::begin(const EscConfig& conf)
 
 int EscDriverEsp32::attach(size_t channel, int pin, int pulse)
 {
-  if (channel < 0 || channel >= ESC_CHANNEL_COUNT) return 0;
-  initChannel(channel, (gpio_num_t)pin, pulse);
-  return 1;
+  if (!escOutputPinAllowed(pin)) return 0;
+  if (channel >= ESC_CHANNEL_COUNT || !GPIO_IS_VALID_OUTPUT_GPIO(pin)) return 0;
+  return initChannel(channel, static_cast<gpio_num_t>(pin), pulse);
 }
 
 int IRAM_ATTR EscDriverEsp32::write(size_t channel, int pulse)
@@ -138,9 +143,9 @@ uint32_t IRAM_ATTR EscDriverEsp32::telemetry(size_t channel) const
   return _channel[channel].telemetryValue;
 }
 
-void EscDriverEsp32::initChannel(int i, gpio_num_t pin, int pulse)
+int EscDriverEsp32::initChannel(int i, gpio_num_t pin, int pulse)
 {
-  if (pin == -1) return;
+  if (!GPIO_IS_VALID_OUTPUT_GPIO(pin)) return 0;
 
   pinMode(pin, OUTPUT);
   digitalWrite(pin, _dshot_tlm ? HIGH : LOW);
@@ -179,12 +184,13 @@ void EscDriverEsp32::initChannel(int i, gpio_num_t pin, int pulse)
     rxconf.rx_config.filter_en = true;
     rxconf.rx_config.idle_threshold = nsToTicks(30000); // max bit len, (30us)
     rxconf.rx_config.filter_ticks_thresh = 40; // min bit len, 80 ticks = 1us for div = 1, max value = 255
-    rmt_config(&rxconf);
+    if (rmt_config(&rxconf) != ESP_OK) { _channel[i].pin = gpio_num_t(-1); instances[i] = nullptr; digitalWrite(pin, LOW); return 0; }
     gpio_pullup_en((gpio_num_t)pin); // needed ?
 
     if(splitted)
     {
-      rmt_driver_install((rmt_channel_t)rx_ch, ESPFC_RMT_RX_BUFFER_SIZE, ESP_INTR_FLAG_IRAM);
+      if (rmt_driver_install(rx_ch, ESPFC_RMT_RX_BUFFER_SIZE, ESP_INTR_FLAG_IRAM) != ESP_OK)
+      { _channel[i].pin = gpio_num_t(-1); instances[i] = nullptr; digitalWrite(pin, LOW); return 0; }
     }
   }
 
@@ -192,8 +198,14 @@ void EscDriverEsp32::initChannel(int i, gpio_num_t pin, int pulse)
   rmt_config_t txconf = RMT_DEFAULT_CONFIG_TX(pin, (rmt_channel_t)i);
   txconf.clk_div = _channel[i].divider;
   txconf.tx_config.idle_level = _dshot_tlm ? RMT_IDLE_LEVEL_HIGH : RMT_IDLE_LEVEL_LOW;
-  rmt_config(&txconf);
-  rmt_driver_install((rmt_channel_t)i, splitted ? 0 : ESPFC_RMT_RX_BUFFER_SIZE, ESP_INTR_FLAG_IRAM);
+  if (rmt_config(&txconf) != ESP_OK ||
+      rmt_driver_install((rmt_channel_t)i, splitted ? 0 : ESPFC_RMT_RX_BUFFER_SIZE,
+                         ESP_INTR_FLAG_IRAM) != ESP_OK)
+  {
+    if (_digital && _dshot_tlm && splitted) rmt_driver_uninstall(rx_ch);
+    _channel[i].pin = gpio_num_t(-1); instances[i] = nullptr; digitalWrite(pin, LOW);
+    return 0;
+  }
 
 #if 0 && SOC_RMT_SUPPORT_TX_SYNCHRO
   // sync all channels
@@ -212,8 +224,10 @@ void EscDriverEsp32::initChannel(int i, gpio_num_t pin, int pulse)
     // install only once
     if(!_tx_end_installed)
     {
-      _tx_end_installed = true;
+      // IDF 4.4 returns the previous callback settings, not esp_err_t.
+      // The fallible driver installation has already succeeded above.
       rmt_register_tx_end_callback(txDoneCallback, NULL);
+      _tx_end_installed = true;
     }
     rmt_ll_enable_tx_end_interrupt(&RMT, i, true);
     if (_async)
@@ -221,6 +235,7 @@ void EscDriverEsp32::initChannel(int i, gpio_num_t pin, int pulse)
       txDoneCallback((rmt_channel_t)i, NULL); // start generating pulses
     }
   }
+  return 1;
 }
 
 void IRAM_ATTR EscDriverEsp32::modeTx(rmt_channel_t channel)

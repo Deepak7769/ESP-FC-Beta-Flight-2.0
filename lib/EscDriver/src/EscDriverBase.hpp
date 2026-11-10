@@ -64,9 +64,13 @@ class EscDriverBase
     static const char * const getProtocolName(EscProtocol protocol);
 
 #if defined(UNIT_TEST)
-    int begin(const EscConfig& conf) { return 1; }
-    void end() {}
-    int attach(size_t channel, int pin, int pulse) { return 1; }
+    inline static bool testBeginSucceeds = true;
+    inline static int testFailAttachChannel = -1;
+    inline static unsigned testEndCalls = 0;
+    int begin(const EscConfig& conf) { return testBeginSucceeds; }
+    void end() { ++testEndCalls; }
+    int attach(size_t channel, int pin, int pulse)
+    { return static_cast<int>(channel) != testFailAttachChannel; }
     int write(size_t channel, int pulse) { return 1; }
     void apply() {}
     int pin(size_t channel) const { return -1; }
