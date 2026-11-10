@@ -23,7 +23,7 @@ void InputPPM::begin(int pin, int mode)
   _frameValid = true;
   _writeIndex = 0;
   _readIndex = 1;
-#if defined(ESP8266)
+#if defined(ESP8266) || defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
   _mailbox = 2u;
 #else
   _mailbox.store(2u, std::memory_order_relaxed);
@@ -62,6 +62,16 @@ InputStatus FAST_CODE_ATTR InputPPM::update()
   const uint32_t published = _mailbox;
   if (published & FRAME_DIRTY) _mailbox = _readIndex;
   interrupts();
+  if (!(published & FRAME_DIRTY)) return INPUT_IDLE;
+  _readIndex = published & FRAME_INDEX_MASK;
+  return INPUT_RECEIVED;
+#elif defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
+  // FreeRTOS spinlock works when the receiver ISR and decoder task execute
+  // on different ESP32 cores; no libatomic fallback in ISR context.
+  portENTER_CRITICAL(&_mailboxMux);
+  const uint32_t published = _mailbox;
+  if (published & FRAME_DIRTY) _mailbox = _readIndex;
+  portEXIT_CRITICAL(&_mailboxMux);
   if (!(published & FRAME_DIRTY)) return INPUT_IDLE;
   _readIndex = published & FRAME_INDEX_MASK;
   return INPUT_RECEIVED;
@@ -170,6 +180,11 @@ void IRAM_ATTR InputPPM::handle()
         // ISR already excludes the task on this single-core target.
         const uint32_t available = _mailbox;
         _mailbox = uint32_t(_writeIndex) | FRAME_DIRTY;
+#elif defined(ESP32) || defined(ESP32S2) || defined(ESP32S3) || defined(ESP32C3)
+        portENTER_CRITICAL_ISR(&_mailboxMux);
+        const uint32_t available = _mailbox;
+        _mailbox = uint32_t(_writeIndex) | FRAME_DIRTY;
+        portEXIT_CRITICAL_ISR(&_mailboxMux);
 #else
         const uint32_t available = _mailbox.exchange(
             uint32_t(_writeIndex) | FRAME_DIRTY,
