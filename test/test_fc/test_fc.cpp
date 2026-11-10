@@ -10603,6 +10603,102 @@ void test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts
   TEST_ASSERT_EQUAL_UINT32(0u, state.lastUpdateUs);
 }
 
+
+void test_msp_rejects_truncated_standard_config_without_partial_mutation()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  const auto original = model.config;
+  const struct { uint16_t cmd; uint8_t invalidSize; } invalid[] = {
+      {MSP_SET_MODE_RANGE, 4u},
+      {MSP_SET_BATTERY_CONFIG, 6u},
+      {MSP_SET_FEATURE_CONFIG, 3u},
+      {MSP_SET_VOLTAGE_METER_CONFIG, 3u},
+      {MSP_SET_CURRENT_METER_CONFIG, 4u},
+      {MSP_SET_GPS_CONFIG, 5u},
+      {MSP_SET_BOARD_ALIGNMENT_CONFIG, 5u},
+      {MSP_SET_RX_MAP, 7u},
+      {MSP_SET_RSSI_CONFIG, 0u},
+      {MSP_SET_SENSOR_CONFIG, 2u},
+      {MSP_SET_BEEPER_CONFIG, 3u}
+  };
+  for (const auto& t : invalid)
+  {
+    Connect::MspMessage m;
+    m.version = Connect::MSP_V2;
+    m.cmd = t.cmd;
+    m.received = t.invalidSize;
+    Connect::MspResponse response;
+    processor.processCommand(m, response, serial);
+    TEST_ASSERT_EQUAL_INT(-1, response.result);
+  }
+  TEST_ASSERT_EQUAL_UINT8(original.vbat.scale, model.config.vbat.scale);
+  TEST_ASSERT_EQUAL_INT16(original.vbat.cellWarning, model.config.vbat.cellWarning);
+  TEST_ASSERT_EQUAL_INT8(original.ibat.source, model.config.ibat.source);
+  TEST_ASSERT_EQUAL_UINT32(original.featureMask, model.config.featureMask);
+  TEST_ASSERT_EQUAL_UINT8(original.gps.setHomeOnce, model.config.gps.setHomeOnce);
+  TEST_ASSERT_EQUAL_INT16(original.boardAlignment[0], model.config.boardAlignment[0]);
+  TEST_ASSERT_EQUAL_UINT8(original.conditions[0].id, model.config.conditions[0].id);
+}
+
+void test_msp_rejects_invalid_meter_and_mode_payload_atomically()
+{
+  Model model;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  auto send = [&](uint16_t cmd, std::initializer_list<uint8_t> data) {
+    Connect::MspMessage m;
+    m.version = Connect::MSP_V2;
+    m.cmd = cmd;
+    m.received = static_cast<uint16_t>(data.size());
+    std::copy(data.begin(), data.end(), m.buffer);
+    Connect::MspResponse resp;
+    processor.processCommand(m, resp, serial);
+    return resp.result;
+  };
+  const auto oldVbat = model.config.vbat;
+  const auto oldIbat = model.config.ibat;
+  const auto oldMode = model.config.conditions[0];
+  TEST_ASSERT_EQUAL_INT(-1, send(MSP_SET_VOLTAGE_METER_CONFIG,
+                                {10, 100, 0, 1}));
+  TEST_ASSERT_EQUAL_UINT8(oldVbat.scale, model.config.vbat.scale);
+  TEST_ASSERT_EQUAL_UINT8(oldVbat.resDiv, model.config.vbat.resDiv);
+  TEST_ASSERT_EQUAL_INT(-1, send(MSP_SET_CURRENT_METER_CONFIG,
+                                {10, 0, 0, 0, 0}));
+  TEST_ASSERT_EQUAL_INT16(oldIbat.scale, model.config.ibat.scale);
+  TEST_ASSERT_EQUAL_INT(-1, send(MSP_SET_MODE_RANGE,
+                                {0, MODE_ANGLE, 0, 45, 1}));
+  TEST_ASSERT_EQUAL_UINT8(oldMode.id, model.config.conditions[0].id);
+  TEST_ASSERT_EQUAL_INT16(oldMode.min, model.config.conditions[0].min);
+  TEST_ASSERT_EQUAL_INT(-1, send(MSP_SET_BATTERY_CONFIG,
+                                {34, 42, 35, 0, 0, 1, 3}));
+  TEST_ASSERT_EQUAL_INT8(oldIbat.source, model.config.ibat.source);
+}
+
+
+void test_msp_legacy_mode_range_preserves_optional_link_fields()
+{
+  Model model;
+  model.config.conditions[0].logicMode = 1;
+  model.config.conditions[0].linkId = MODE_ANGLE;
+  Connect::MspProcessor processor(model);
+  TestPartialSerialSink serial;
+  Connect::MspMessage m;
+  m.version = Connect::MSP_V2;
+  m.cmd = MSP_SET_MODE_RANGE;
+  m.received = 5;
+  const uint8_t payload[] = {0, MODE_ALTHOLD, 0, 4, 8};
+  std::copy(payload, payload + sizeof(payload), m.buffer);
+  Connect::MspResponse response;
+  processor.processCommand(m, response, serial);
+  TEST_ASSERT_EQUAL_INT(1, response.result);
+  TEST_ASSERT_EQUAL_UINT8(1u, model.config.conditions[0].logicMode);
+  TEST_ASSERT_EQUAL_UINT8(MODE_ANGLE, model.config.conditions[0].linkId);
+  TEST_ASSERT_EQUAL_INT16(1000, model.config.conditions[0].min);
+  TEST_ASSERT_EQUAL_INT16(1100, model.config.conditions[0].max);
+}
+
 void test_pid_nonfinite_inputs_reset_recursive_filter_history()
 {
   Espfc::Control::Pid pid;
@@ -10660,6 +10756,9 @@ int main(int argc, char** argv)
   RUN_TEST(test_altitude_range_reference_preserves_local_height_on_acquisition);
   RUN_TEST(test_rangefinder_publication_preserves_capture_age_and_invalidates_timeouts);
   RUN_TEST(test_msp_armed_policy_rejects_writes_but_allows_config_reads);
+  RUN_TEST(test_msp_rejects_truncated_standard_config_without_partial_mutation);
+  RUN_TEST(test_msp_rejects_invalid_meter_and_mode_payload_atomically);
+  RUN_TEST(test_msp_legacy_mode_range_preserves_optional_link_fields);
   RUN_TEST(test_pid_nonfinite_inputs_reset_recursive_filter_history);
   RUN_TEST(test_actuator_land_health_rejects_nonfinite_estimator_components);
   RUN_TEST(test_timer_rate_100hz);

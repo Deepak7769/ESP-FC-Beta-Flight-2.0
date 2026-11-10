@@ -93,6 +93,49 @@ static bool mspCommandRequiresDisarmed(uint16_t cmd, int payloadSize)
   }
 }
 
+// The low-level MSP read helpers deliberately return zero for truncated
+// data, so validate fixed or versioned payload lengths BEFORE any setter
+// mutates configuration. Never interpret a short packet as a real zero value.
+static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
+{
+  switch (cmd)
+  {
+    case MSP_SET_FEATURE_CONFIG:
+    case MSP_SET_ACC_TRIM:
+    case MSP_SET_BEEPER_CONFIG:
+    case MSP_SET_VOLTAGE_METER_CONFIG:
+    case MSP_SET_GPS_CONFIG:
+      if (cmd == MSP_SET_GPS_CONFIG) return size == 4 || size == 6;
+      if (cmd == MSP_SET_BEEPER_CONFIG) return size == 4 || size == 9;
+      return size == 4;
+
+    case MSP_SET_CURRENT_METER_CONFIG:
+      return size == 5;
+
+    case MSP_SET_MODE_RANGE:
+      return size == 5 || size == 7;
+
+    case MSP_SET_BATTERY_CONFIG:
+      return size == 7 || size == 13;
+
+    case MSP_SET_BOARD_ALIGNMENT_CONFIG:
+      return size == 6;
+
+    case MSP_SET_RX_MAP:
+      return size == 8 || size == INPUT_CHANNELS;
+
+    case MSP_SET_RSSI_CONFIG:
+    case MSP_SET_PID_CONTROLLER:
+      return size == 1;
+
+    case MSP_SET_SENSOR_CONFIG:
+      return size >= 3 && size <= 5;
+
+    default:
+      return true; // Other setters have their own variable-length contracts.
+  }
+}
+
 enum SerialSpeedIndex
 {
   SERIAL_SPEED_INDEX_AUTO = 0,
@@ -319,6 +362,11 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
   r.cmd = m.cmd;
   r.version = m.version;
   r.result = 1;
+  if (!mspMutatorPayloadSizeValid(m.cmd, m.remain()))
+  {
+    r.result = -1;
+    return;
+  }
   if (_model.isModeActive(MODE_ARMED) &&
       mspCommandRequiresDisarmed(m.cmd, m.remain()))
   {
@@ -544,23 +592,35 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SET_MODE_RANGE: {
-      size_t i = m.readU8();
-      if (i < ACTUATOR_CONDITIONS)
-      {
-        _model.config.conditions[i].id = m.readU8();
-        _model.config.conditions[i].ch = m.readU8() + AXIS_AUX_1;
-        _model.config.conditions[i].min = m.readU8() * 25 + 900;
-        _model.config.conditions[i].max = m.readU8() * 25 + 900;
-        if (m.remain() >= 2)
-        {
-          _model.config.conditions[i].logicMode = m.readU8(); // mode logic
-          _model.config.conditions[i].linkId = m.readU8();    // link to
-        }
-      }
-      else
+      const size_t i = m.readU8();
+      if (i >= ACTUATOR_CONDITIONS)
       {
         r.result = -1;
+        break;
       }
+      // Legacy 5-byte packets leave the optional link/logic values intact.
+      ActuatorCondition candidate = _model.config.conditions[i];
+      candidate.id = m.readU8();
+      const int channel = static_cast<int>(m.readU8()) + AXIS_AUX_1;
+      candidate.min = static_cast<int16_t>(m.readU8() * 25 + 900);
+      candidate.max = static_cast<int16_t>(m.readU8() * 25 + 900);
+      if (m.remain() == 2)
+      {
+        candidate.logicMode = m.readU8();
+        candidate.linkId = m.readU8();
+      }
+      if (i >= ACTUATOR_CONDITIONS ||
+          candidate.id >= MODE_COUNT ||
+          channel < AXIS_AUX_1 || channel >= AXIS_COUNT ||
+          candidate.min > candidate.max ||
+          candidate.max > 2100 ||
+          candidate.logicMode > 1)
+      {
+        r.result = -1;
+        break;
+      }
+      candidate.ch = static_cast<uint8_t>(channel);
+      _model.config.conditions[i] = candidate;
     }
     break;
 
@@ -596,6 +656,15 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SET_BATTERY_CONFIG:
+      // Supported meter-source IDs: none/ADC voltage, none/ADC/MSP current.
+      // Do not silently replace an unsupported setting with NONE.
+      if (m.buffer[m.read + 5u] > 1u ||
+          static_cast<int>(toIbatSource(m.buffer[m.read + 6u])) !=
+              m.buffer[m.read + 6u])
+      {
+        r.result = -1;
+        break;
+      }
       m.readU8();                                           // vbatmincellvoltage
       m.readU8();                                           // vbatmaxcellvoltage
       _model.config.vbat.cellWarning = m.readU8() * 10;     // vbatwarningcellvoltage
@@ -679,13 +748,18 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SET_VOLTAGE_METER_CONFIG: {
-      int id = m.readU8();
-      if (id == 10 + 0) // id (10-19 vbat adc, allow only 10)
+      const uint8_t id = m.readU8();
+      const uint8_t scale = m.readU8();
+      const uint8_t divisor = m.readU8();
+      const uint8_t multiplier = m.readU8();
+      if (id != 10u || divisor == 0u || multiplier == 0u)
       {
-        _model.config.vbat.scale = m.readU8();
-        _model.config.vbat.resDiv = m.readU8();
-        _model.config.vbat.resMult = m.readU8();
+        r.result = -1;
+        break;
       }
+      _model.config.vbat.scale = scale;
+      _model.config.vbat.resDiv = divisor;
+      _model.config.vbat.resMult = multiplier;
     }
     break;
 
@@ -702,12 +776,16 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_SET_CURRENT_METER_CONFIG: {
-      int id = m.readU8();
-      if (id == 10 + 0) // id (10-19 ibat adc, allow only 10)
+      const uint8_t id = m.readU8();
+      const uint16_t scale = m.readU16();
+      const uint16_t offset = m.readU16();
+      if (id != 10u || scale == 0u || scale > INT16_MAX)
       {
-        _model.config.ibat.scale = m.readU16();
-        _model.config.ibat.offset = m.readU16();
+        r.result = -1;
+        break;
       }
+      _model.config.ibat.scale = static_cast<int16_t>(scale);
+      _model.config.ibat.offset = static_cast<int16_t>(offset);
     }
     break;
 
