@@ -40,7 +40,7 @@ private:
   void updateAltitude();
   int readSample();
   int reloadFilter();
-  BaroState& runtimeState();
+  Espfc::BaroState& runtimeState();
 
   Model& _model;
 
@@ -67,10 +67,10 @@ bool _pressurePrimed{false};
   uint32_t _lastAltitudeUs{0};
 #if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
   struct BackgroundSample {
-    BaroState baro{};
+    Espfc::BaroState baro{};
     uint32_t elapsedUs{0};
   };
-  BaroState _backgroundState{};
+  Espfc::BaroState _backgroundState{};
   QueueHandle_t _backgroundQueue{nullptr};
   bool _backgroundEnabled{false};
   std::atomic<bool> _backgroundReloadPending{false};

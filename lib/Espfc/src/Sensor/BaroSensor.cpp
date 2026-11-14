@@ -217,7 +217,7 @@ int BaroSensor::update()
   return read();
 }
 
-BaroState& BaroSensor::runtimeState()
+Espfc::BaroState& BaroSensor::runtimeState()
 {
 #if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
   if (_backgroundEnabled) return _backgroundState;
