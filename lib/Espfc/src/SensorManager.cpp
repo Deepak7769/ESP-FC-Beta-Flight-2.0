@@ -21,6 +21,20 @@ int SensorManager::begin()
   _altitude.begin();
   _button.begin(_model.config.pin[PIN_BUTTON]);
 
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  // A SPI IMU is the only supported worker configuration; an I2C gyro
+  // retains exclusive soft-I2C bus ownership on core 1.
+  const auto* gyroBus = _model.state.gyro.dev ? _model.state.gyro.dev->getBus() : nullptr;
+  if (gyroBus && gyroBus->isSPI())
+  {
+    // The mag/baro share an I2C bus. Move both together or neither.
+    if (!_mag.enableBackground() || !_baro.enableBackground())
+    {
+      _mag.disableBackground();
+      _baro.disableBackground();
+    }
+  }
+#endif
   return 1;
 }
 
@@ -95,6 +109,15 @@ if (accelReadOk)
   }
 
   return flags;
+}
+
+int SensorManager::updateBackground()
+{
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  _mag.updateBackground();
+  _baro.updateBackground();
+#endif
+  return 1;
 }
 
 int FAST_CODE_ATTR SensorManager::preLoop()

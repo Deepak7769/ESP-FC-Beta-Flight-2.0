@@ -24,6 +24,7 @@ public:
   int begin();
   int update(bool externalTrigger = false);
   int updateOther();
+  int updateBackgroundSensors() { return _sensor.updateBackground(); }
   void noteFlightDeadlineMisses(uint32_t count) {
     _resourceManager.noteFlightDeadlineMisses(count);
     _model.state.stats.noteMissedDeadlines(count);

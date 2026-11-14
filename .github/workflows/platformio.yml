@@ -41,6 +41,7 @@ jobs:
           platformio run -e esp32_antigravity_bench
           platformio run -e esp32_assisted_v2_bench
           platformio run -e esp32_assisted_v2_candidate
+          platformio run -e esp32_async_i2c_bench
       - uses: actions/setup-node@v6
         with:
           node-version: '24'

@@ -66,6 +66,22 @@ int MagSensor::update()
 
 int MagSensor::read()
 {
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  if (_backgroundEnabled)
+  {
+    BackgroundSample sample{};
+    if (xQueueReceive(_backgroundQueue, &sample, 0) != pdTRUE) return 0;
+    _model.state.stats.record(COUNTER_MAG_READ, sample.elapsedUs);
+    _model.state.stats.record(COUNTER_CPU_1, sample.elapsedUs);
+    if (!sample.valid)
+    {
+      _model.state.mag.sampleValid = false;
+      return 0;
+    }
+    _model.state.mag.raw = sample.raw;
+    return 1;
+  }
+#endif
   if (!_mag || !_model.magActive() || !_model.state.mag.timer.check()) return 0;
 
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_MAG_READ);
@@ -73,6 +89,40 @@ int MagSensor::read()
   if (!ok) _model.state.mag.sampleValid = false;
   return ok ? 1 : 0;
 }
+
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+bool MagSensor::enableBackground()
+{
+  if (!_mag || !_model.magActive() || !_mag->getBus() ||
+      _mag->getBus()->getType() != BUS_I2C) return true;
+  if (_backgroundEnabled) return true;
+  _backgroundQueue = xQueueCreate(1, sizeof(BackgroundSample));
+  _backgroundEnabled = _backgroundQueue != nullptr;
+  return _backgroundEnabled;
+}
+
+void MagSensor::disableBackground()
+{
+  _backgroundEnabled = false;
+  if (_backgroundQueue) vQueueDelete(_backgroundQueue);
+  _backgroundQueue = nullptr;
+}
+
+int MagSensor::updateBackground()
+{
+  if (!_backgroundEnabled || !_mag || !_model.state.mag.timer.check()) return 0;
+  BackgroundSample sample{};
+  const uint32_t start = micros();
+  sample.valid = _mag->readMag(sample.raw) != 0;
+  sample.elapsedUs = micros() - start;
+  xQueueOverwrite(_backgroundQueue, &sample);
+  return sample.valid ? 1 : 0;
+}
+#else
+bool MagSensor::enableBackground() { return true; }
+void MagSensor::disableBackground() {}
+int MagSensor::updateBackground() { return 0; }
+#endif
 
 int MagSensor::filter()
 {

@@ -65,6 +65,8 @@ public:
 
   void start(StatCounter c);
   void end(StatCounter c);
+  // Background time is published by the flight core, never written from core 0.
+  void record(StatCounter c, uint32_t elapsedUs);
 
   void update();
 

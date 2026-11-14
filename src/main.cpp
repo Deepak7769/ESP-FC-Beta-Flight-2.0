@@ -33,10 +33,12 @@ Espfc::Espfc espfc;
     #include <freertos/FreeRTOS.h>
     #include <freertos/task.h>
     #include <driver/timer.h>
+    #include <atomic>
 
   TaskHandle_t gyroTaskHandle = NULL;
 TaskHandle_t backgroundTaskHandle = NULL;
 volatile uint32_t gyroTaskMissedDeadlines = 0;
+std::atomic<bool> gyroTaskInitialized{false};
 
 static const timer_group_t TIMER_GROUP = TIMER_GROUP_0;
 static const timer_idx_t TIMER_IDX = TIMER_0;
@@ -103,6 +105,7 @@ void gyroTask(void* pvParameters)
   gyroTimerInit(
       gyroTimerIsr,
       espfc.getGyroInterval());
+  gyroTaskInitialized.store(true, std::memory_order_release);
 
   while (true)
   {
@@ -128,6 +131,12 @@ void backgroundTask(void* pvParameters)
 
   while (true)
   {
+    if (!gyroTaskInitialized.load(std::memory_order_acquire))
+    {
+      vTaskDelay(1);
+      continue;
+    }
+    espfc.updateBackgroundSensors();
     while (espfc.updateOther())
     {
       // Drain non-flight-critical queued events.

@@ -34,6 +34,12 @@ void FAST_CODE_ATTR Stats::end(StatCounter c)
   _count[c]++;
 }
 
+void Stats::record(StatCounter c, uint32_t elapsedUs)
+{
+  _sum[c] += elapsedUs;
+  _count[c]++;
+}
+
 void Stats::loopTick()
 {
   uint32_t now = micros();

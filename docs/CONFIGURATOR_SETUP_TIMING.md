@@ -37,6 +37,14 @@ Configurator itself owns its 3D renderer and the calibration instruction panels.
   or bounded bus design is validated on real MPU6500/SPI + BMP280/QMC5883P
   hardware, including bus ownership and sensor freshness. Do not extrapolate
   to MPU6050/I2C, where the gyro shares the I2C bus.
+* The **non-actuating** build target `esp32_async_i2c_bench` now compiles an
+  experimental SPI-only Core-0 slow-I2C worker. In this candidate, magnetometer
+  and barometer bus reads share one background thread and deliver samples to
+  the flight core using nonblocking, depth-one FreeRTOS queues. The flight
+  core owns calibration, AHRS and the altitude estimator. MPU6050/I2C retains
+  the existing single-owner bus path. This is NOT yet enabled in production:
+  it needs actual bus-fault, sensor freshness and hard-deadline tests on the
+  three-device ESP32 hardware before enabling in a motor-driving firmware.
 
 ## Acceptance measurements (motor power disconnected)
 

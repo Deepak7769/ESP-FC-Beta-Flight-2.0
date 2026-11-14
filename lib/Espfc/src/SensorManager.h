@@ -32,6 +32,7 @@ public:
   int update();
   // sub task
   int updateDelayed();
+  int updateBackground();
 
   int reload(ModelChangeEvent event);
 

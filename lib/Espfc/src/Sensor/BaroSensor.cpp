@@ -133,11 +133,19 @@ const int rate =
 int BaroSensor::reload(
     ModelChangeEvent event)
 {
-  if (event != MODEL_CHANGE_FILTER)
+  if (event != MODEL_CHANGE_FILTER) return 1;
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  if (_backgroundEnabled)
   {
+    _backgroundReloadPending.store(true, std::memory_order_release);
     return 1;
   }
+#endif
+  return reloadFilter();
+}
 
+int BaroSensor::reloadFilter()
+{
   const int rate =
       std::max<int>(
           _model.state.baro.rate,
@@ -194,9 +202,27 @@ int BaroSensor::reload(
 
 int BaroSensor::update()
 {
-  int status = read();
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  if (_backgroundEnabled)
+  {
+    BackgroundSample sample{};
+    if (xQueueReceive(_backgroundQueue, &sample, 0) != pdTRUE) return 0;
+    // Atomic queue snapshot, installed only on the control core.
+    _model.state.baro = sample.baro;
+    _model.state.stats.record(COUNTER_BARO, sample.elapsedUs);
+    _model.state.stats.record(COUNTER_CPU_1, sample.elapsedUs);
+    return 1;
+  }
+#endif
+  return read();
+}
 
-  return status;
+BaroState& BaroSensor::runtimeState()
+{
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  if (_backgroundEnabled) return _backgroundState;
+#endif
+  return _model.state.baro;
 }
 
 int BaroSensor::read()
@@ -211,8 +237,15 @@ if ((int32_t)(now - _wait) < 0)
   return 0;
 }
 
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  if (_backgroundEnabled) return readSample();
+#endif
   Utils::Stats::Measure measure(_model.state.stats, COUNTER_BARO);
+  return readSample();
+}
 
+int BaroSensor::readSample()
+{
   // if(_model.config.debug.mode == DEBUG_BARO)
   // {
   //   _model.state.debug[0] = _state;
@@ -298,10 +331,10 @@ void BaroSensor::readTemperature()
     return;
   }
 
-  _model.state.baro.temperatureRaw =
+  runtimeState().temperatureRaw =
       temp;
 
-  _model.state.baro.temperature =
+  runtimeState().temperature =
       filtered;
 }
 
@@ -359,20 +392,20 @@ else
     return false;
   }
 
-  _model.state.baro.pressureRaw =
+  runtimeState().pressureRaw =
       press;
 
-  _model.state.baro.pressure =
+  runtimeState().pressure =
       filteredPressure;
 
-  _model.state.baro.sampleValid =
+  runtimeState().sampleValid =
       true;
 
   return true;
 }
 void BaroSensor::updateAltitude()
 {
-  auto& baro = _model.state.baro;
+  auto& baro = runtimeState();
 
   baro.altitudeRaw = Utils::toAltitude(baro.pressure);
   float altitude = baro.altitudeRaw;
@@ -411,7 +444,10 @@ if (baro.altitudeBiasSamples > 0)
 }
   else if (baro.altitudeBiasSamples == 0)
   {
-    _model.logger.info().log("BARO BIAS").logln(baro.altitudeBias);
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+    if (!_backgroundEnabled)
+#endif
+      _model.logger.info().log("BARO BIAS").logln(baro.altitudeBias);
     baro.altitudeBiasSamples--;
   }
 
@@ -464,7 +500,11 @@ else
       altitude;
 }
 
-  if (_model.config.debug.mode == DEBUG_BARO)
+  if (_model.config.debug.mode == DEBUG_BARO
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+      && !_backgroundEnabled
+#endif
+     )
   {
     _model.state.debug[0] = lrintf(baro.vario * 100.0f);     // cm/s
     _model.state.debug[1] = lrintf(baro.pressureRaw * 0.1f); // hPa x 10
@@ -473,5 +513,46 @@ else
     _model.state.debug[3] = lrintf(baro.altitudeGround * 100.f); // cm
   }
 }
+
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+bool BaroSensor::enableBackground()
+{
+  if (!_baro || !_model.baroActive() || !_baro->getBus() ||
+      _baro->getBus()->getType() != BUS_I2C) return true;
+  if (_backgroundEnabled) return true;
+  _backgroundQueue = xQueueCreate(1, sizeof(BackgroundSample));
+  if (!_backgroundQueue) return false;
+  _backgroundState = _model.state.baro;
+  _backgroundEnabled = true;
+  return true;
+}
+
+void BaroSensor::disableBackground()
+{
+  _backgroundEnabled = false;
+  if (_backgroundQueue) vQueueDelete(_backgroundQueue);
+  _backgroundQueue = nullptr;
+}
+
+int BaroSensor::updateBackground()
+{
+  if (!_backgroundEnabled) return 0;
+  if (_backgroundReloadPending.exchange(false, std::memory_order_acq_rel)) reloadFilter();
+  const uint32_t start = micros();
+  const int updated = read();
+  if (updated)
+  {
+    BackgroundSample sample{};
+    sample.baro = _backgroundState;
+    sample.elapsedUs = micros() - start;
+    xQueueOverwrite(_backgroundQueue, &sample);
+  }
+  return updated;
+}
+#else
+bool BaroSensor::enableBackground() { return true; }
+void BaroSensor::disableBackground() {}
+int BaroSensor::updateBackground() { return 0; }
+#endif
 
 } // namespace Espfc::Sensor

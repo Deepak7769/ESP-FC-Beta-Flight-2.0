@@ -4,6 +4,11 @@
 #include "Model.h"
 #include "Sensor/BaseSensor.hpp"
 #include "Utils/Filter.h"
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+#include <atomic>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#endif
 
 namespace Espfc::Sensor {
 
@@ -23,6 +28,9 @@ public:
   int update();
   int read();
   int reload(ModelChangeEvent event);
+  bool enableBackground();
+  void disableBackground();
+  int updateBackground();
 
 #ifndef UNIT_TEST
 private:
@@ -30,6 +38,9 @@ private:
   void readTemperature();
   bool readPressure();
   void updateAltitude();
+  int readSample();
+  int reloadFilter();
+  BaroState& runtimeState();
 
   Model& _model;
 
@@ -54,6 +65,16 @@ bool _filtersInitialized{false};
 bool _pressurePrimed{false};
 
   uint32_t _lastAltitudeUs{0};
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+  struct BackgroundSample {
+    BaroState baro{};
+    uint32_t elapsedUs{0};
+  };
+  BaroState _backgroundState{};
+  QueueHandle_t _backgroundQueue{nullptr};
+  bool _backgroundEnabled{false};
+  std::atomic<bool> _backgroundReloadPending{false};
+#endif
 };
 
 } // namespace Espfc::Sensor
