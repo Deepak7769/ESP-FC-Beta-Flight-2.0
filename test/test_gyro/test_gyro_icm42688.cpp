@@ -5,6 +5,8 @@
 #include "Device/Gyro/GyroBMI160.hpp"
 #include "Device/Gyro/GyroLSM6DSO.hpp"
 #include "Device/Gyro/GyroMPU9250.hpp"
+#include "Device/Gyro/GyroMPU6050.hpp"
+#include "Device/Gyro/GyroMPU6500.hpp"
 #include "Device/Gyro/GyroICM20602.hpp"
 #include "Device/GyroDevice.hpp"
 #include "Device/Mag/MagHMC5883L.hpp"
@@ -666,9 +668,39 @@ void test_qmc5883p_requires_ready_and_no_overflow()
   TEST_ASSERT_EQUAL_INT(0, mag.readMag(v));
 }
 
+void test_mpu6050_i2c_and_mpu6500_spi_init_read_and_faults()
+{
+  for (bool spi : {false, true}) {
+    MockBusDevice bus;
+    bus.busType = spi ? BUS_SPI : BUS_I2C;
+    bus.mirrorWritesToRead = true;
+    bus.readRegs[0x75] = spi ? 0x70 : 0x68;
+    GyroMPU6050 mpu6050;
+    GyroMPU6500 mpu6500;
+    GyroDevice& gyro = spi ? static_cast<GyroDevice&>(mpu6500) : mpu6050;
+    TEST_ASSERT_EQUAL_INT(1, gyro.begin(&bus, 0x68));
+    TEST_ASSERT_TRUE(gyro.configurationValid());
+    TEST_ASSERT_EQUAL_HEX8(spi ? 0x10 : 0, bus.writeRegs[0x6a] & 0x10);
+    bus.readRegs[0x43]=0x01; bus.readRegs[0x44]=0x23;
+    bus.readRegs[0x3b]=0x08; bus.readRegs[0x3c]=0;
+    VectorInt16 v;
+    TEST_ASSERT_EQUAL_INT(1, gyro.readGyro(v));TEST_ASSERT_EQUAL_INT16(0x123, v.x);
+    TEST_ASSERT_EQUAL_INT(1, gyro.readAccel(v));TEST_ASSERT_EQUAL_INT16(2048, v.x);
+    bus.failRead=true;v=VectorInt16(12,34,56);
+    TEST_ASSERT_EQUAL_INT(0, gyro.readGyro(v));TEST_ASSERT_EQUAL_INT16(12, v.x);
+    TEST_ASSERT_EQUAL_INT(0, gyro.readAccel(v));TEST_ASSERT_EQUAL_INT16(12, v.x);
+    TEST_ASSERT_EQUAL_INT(0, gyro.begin(&bus, 0x68));
+    bus.failRead=false;bus.failWriteReg=0x6b;
+    TEST_ASSERT_EQUAL_INT(0, gyro.begin(&bus, 0x68));
+    bus.failWriteReg=-1;
+    TEST_ASSERT_EQUAL_INT(1, gyro.begin(&bus, 0x68));
+  }
+}
+
 int main(int argc, char** argv)
 {
   UNITY_BEGIN();
+  RUN_TEST(test_mpu6050_i2c_and_mpu6500_spi_init_read_and_faults);
   RUN_TEST(test_bmi160_configuration_requires_successful_writes_and_readback);
   RUN_TEST(test_lsm6dso_configuration_requires_successful_writes_and_readback);
   RUN_TEST(test_bmp085_decodes_big_endian_and_rejects_invalid_samples);

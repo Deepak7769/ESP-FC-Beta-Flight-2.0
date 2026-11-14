@@ -69,7 +69,9 @@
 
 #define ESPFC_FEATURE_MASK (FEATURE_RX_SERIAL | FEATURE_GPS)
 
-#define ESPFC_GYRO_I2C_RATE_MAX 2000
+// Bit-banged 400kHz I2C shares flight-task time with MSP and accel reads.
+// SPI has its own independent limit below.
+#define ESPFC_GYRO_I2C_RATE_MAX 1000
 #define ESPFC_GYRO_SPI_RATE_MAX 4000
 
 #define ESPFC_DSHOT_TELEMETRY

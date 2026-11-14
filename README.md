@@ -12,7 +12,7 @@ The mini, DIY, Low cost, ESP32 based, high performance flight controller for hob
 * Flight modes (ACRO, ANGLE V2, AIRMODE, ALTHOLD V2, GPS POSHOLD; failsafe LAND V2 controller implemented)
 * Anti-Gravity feature/mode, MSP configuration and Blackbox diagnostics
 * Frames (Quad X)
-* Betaflight configuration tool compatible (v10.10)
+* Betaflight MSP/CLI compatibility (API 1.46 subset; [tested contract](docs/MSP_API_146_CANDIDATE.md))
 * Configurable Gyro Filters (LPF, Dynamic Notches, dTerm, RPM)
 * Blackbox recording (OpenLog/OpenLager/Flash)
 * Up to 4kHz gyro/loop on ESP32 with SPI gyro
@@ -24,7 +24,7 @@ The mini, DIY, Low cost, ESP32 based, high performance flight controller for hob
 
 # Documentation
 
-In this repository you can find firmware code that allows you to build your own flight controller. For convenience it mimics Betaflight 4.2 compability, so that it can be configured using [betaflight-configurator](https://github.com/betaflight/betaflight-configurator). Also [online blackbox-log-viewer](https://blackbox.betaflight.com/) can be used to analyze blackbox logs. In most aspects it is similar to Betaflight, so that many configuration and tuning advices are helpfull here too. But you must be aware, that this software is not the same as Betaflight, there are some limitations and differences in functionality and performance.
+This repository contains ESP-FC firmware for building a flight controller. Its MSP API 1.46 subset is tested against the Betaflight 2026.6.1 decoder/serializer so it can be configured using [betaflight-configurator](https://github.com/betaflight/betaflight-configurator). The [online Blackbox viewer](https://blackbox.betaflight.com/) can analyze supported logs. ESP-FC is a different firmware with its own control architecture and supported feature set; read the [compatibility contract](docs/MSP_API_146_CANDIDATE.md) before applying Betaflight settings or presets.
 
 > [!IMPORTANT]
 > Before you begin, **read the following documentation carefully first!**.
@@ -130,6 +130,12 @@ for the capability boundary and requirements before adding a real transport.
  * GPS: M8, M9, F9 & M10(dual band, all constellations configurable by cli)
  * Other protocols: MSP, CLI, BLACKBOX, ESPNOW
  * Battery current: ADC or MSP companion telemetry (including INA219 on a companion processor)
+
+The MPU6000 entry above is a legacy listing: the inspected `Hardware::detectGyro`
+does not instantiate an MPU6000 detection path. Its enum is not proof of driver
+support. SPI MPU6500 and I2C MPU6050 have separate regression coverage; real-board
+connection and timing validation remain required. SPL06 and QMC5883P selection
+uses ESP-FC CLI because API 1.46's fixed Configurator lists do not name them.
 
 ## Issues
 

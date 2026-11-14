@@ -213,7 +213,13 @@ void ResourceManager::update()
 }
 
 bool ResourceManager::blackboxAllowed() const { return _blackboxAllowed; }
-bool ResourceManager::mspAllowed() const { return _mspAllowed; }
+bool ResourceManager::mspAllowed() const
+{
+  // SerialManager already bounds MSP/CLI work per visit. Disarmed overload
+  // must leave a diagnostic/configuration recovery path; armed load shedding
+  // and the CPU-LAND policy retain their existing priority.
+  return !_model.isModeActive(MODE_ARMED) || _mspAllowed;
+}
 bool ResourceManager::telemetryAllowed() const { return _telemetryAllowed; }
 bool ResourceManager::optionalAllowed() const { return _optionalAllowed; }
 bool ResourceManager::navigationAllowed() const { return !_cpuLandActive; }

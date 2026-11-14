@@ -27,18 +27,33 @@ jobs:
         run: python -m pip install --upgrade "platformio==6.2.0"
       - name: Validate ESP32 flash backend fault paths
         run: python bin/check_flash_backend.py
+      - name: Validate software I2C fault paths
+        run: python bin/check_soft_i2c.py
       - name: Run PlatformIO Tests
         run: |
-          platformio test -e native
+          ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-packets.json" platformio test -e native
           platformio test -e native_poshold
           platformio test -e native_antigravity_bench -f test_fc
           platformio test -e native_angle_v2 -f test_fc
           platformio test -e native_assisted_v2 -f test_fc
-          platformio test -e native_assisted_v2_active -f test_fc
+          platformio test -e native_assisted_v2_active -f test_fc -f test_closure
           platformio test -e native_land_ack -f test_fc
           platformio run -e esp32_antigravity_bench
           platformio run -e esp32_assisted_v2_bench
           platformio run -e esp32_assisted_v2_candidate
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Check exact Betaflight 2026.6.1 protocol read/write compatibility
+        shell: bash
+        run: |
+          client="$RUNNER_TEMP/betaflight-app"
+          git clone --depth 1 --branch 2026.6.1 https://github.com/betaflight/betaflight-configurator.git "$client"
+          test "$(git -C "$client" rev-parse HEAD)" = 14a057ffc58417c5128199fc1233284982a64be3
+          npm --prefix "$client" ci --ignore-scripts --no-audit --no-fund
+          ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-packets.json" ESPFC_MSP_WRITES="$RUNNER_TEMP/espfc-writes.txt" python bin/check_configurator.py "$client"
+          ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-readback.json" ESPFC_MSP_WRITES="$RUNNER_TEMP/espfc-writes.txt" platformio test -e native -f test_closure
+          ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-readback.json" ESPFC_VERIFY_READBACK=1 python bin/check_configurator.py "$client"
 
   antigravity_validation_artifact:
     needs: test

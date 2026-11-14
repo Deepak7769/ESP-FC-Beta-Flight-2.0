@@ -1,7 +1,11 @@
 # API 1.46 review candidate
 
-This source candidate targets Betaflight Configurator 10.10.0, commit
-c97deaf7146837b2378e683a7f5b429fea34d5a9. The reference firmware wire definitions
+This source uses the MSP API 1.46 subset. Its decoder/serializer regression now
+runs against Betaflight App 2026.6.1, commit
+14a057ffc58417c5128199fc1233284982a64be3 (the version visible in the reference
+videos). The version packet is also checked against Configurator 10.10.0,
+commit c97deaf7146837b2378e683a7f5b429fea34d5a9; that does not establish complete
+legacy UI validation. The reference firmware wire definitions
 are Betaflight 4.5.2, commit 024f8e13d4e642eb6a380308685b9ea3aa3ef1a2.
 These references define byte layouts; they do not certify this firmware as
 Betaflight or establish full feature parity. Complete supported-tab interaction
@@ -11,14 +15,21 @@ with a physical controller has not been run for this candidate.
 
 MSP_API_VERSION returns 0,1,46. MSP_FC_VARIANT retains the BTFL family envelope
 required by the unmodified Configurator handshake. The project name is ESP-FC;
-MSP_FC_VERSION is the three-byte ESP-FC version 26,6,1. It is not Betaflight 4.5.2.
+MSP_FC_VERSION is the three-byte ESP-FC version 26,6,1 followed by the
+length-prefixed text `2026.6.1`. Calendar-version clients require this text;
+omitting it prevents Features/Beeper initialization. It is not Betaflight 4.5.2.
 STATUS/STATUS_EX use the API 1.46 26-bit arming-disable namespace. Private newer
 inhibits map to REBOOT_REQUIRED; internal ARM_SWITCH bit 29 maps to wire bit 25.
 The CPU-temperature field terminates STATUS at 24 bytes with no extended modes.
 
 | Packet | Candidate payload bytes |
 | --- | ---: |
-| MSP_FC_VERSION | 3 |
+| MSP_FC_VERSION | 12 |
+| MSP_PID | 30 (ten slots, stored indices preserved) |
+| MSP_SET_PID | 15 legacy or 30 full; unsupported nonzero slots rejected |
+| MSP_SENSOR_ALIGNMENT | 7 |
+| MSP_SET_SENSOR_ALIGNMENT | 3 legacy or 6; first gyro only |
+| MSP_MODE_RANGES_EXTRA | 25 (count byte 8, eight three-byte entries) |
 | MSP_RX_MAP | 8 |
 | MSP_RX_CONFIG | 38 |
 | MSP_RC_TUNING | 23 |
@@ -32,6 +43,64 @@ Truncated optional groups, trailing bytes, invalid selectors and invalid
 composite values fail before commit. Reload, notifications and reboot-required
 side effects follow successful commit. This does not turn ignored historical
 reserved fields into implemented flight features.
+
+API 1.46 receiver smoothing uses the feedforward cutoff at offset 26, not
+API 1.47's separate throttle cutoff. The adapter updates the real derivative
+filter and reloads its coefficients. Provider changes require reboot; UART
+framing is not switched live. Throttle smoothing remains configurable in CLI.
+
+Accelerometer and active-gyro hardware IDs are translated explicitly to the
+legacy client lists. For example, internal MPU6500=4 becomes accelerometer=8
+and gyro=7. Unsupported selections fail instead of selecting a different chip.
+SPL06 and QMC5883P have no names in the legacy lists: their selectors report
+255 and an unchanged GET/SET preserves the stored device. Configure these
+devices in ESP-FC CLI; they must not be mislabeled as LPS/LIS2MDL. The legacy
+MPU6000/MS5611/AK8975 enums do not imply implemented detection drivers.
+
+RAW_IMU acceleration is 2048 counts/g. Gyro packets invert the supported
+clients' `4/16.4` conversion so a 120 degrees/second internal observation
+displays as 120 degrees/second, not about 29.3. This changes reporting only.
+ATTITUDE retains deci-degree roll/pitch and degree yaw with its existing sign
+convention. Packet tests inject known state; they are not physical IMU tests.
+
+## Diagnostic access and bus policy
+
+ESP32 and ESP32-S3 retain a 4 kHz SPI ceiling. Software I2C uses at most 1 kHz
+at 400 kHz bus clock, with a lower polling budget at slower bus clocks. This
+does not disable filters or flight modes. Stuck-clock faults propagate from
+EspWire; empty reads cannot underflow; SDA recovery has a finite pulse count.
+GPIO fault injection checks software bounds, not real bus timing or electrical
+recovery. Actual MPU6050-I2C and MPU6500-SPI connection tests remain required.
+
+Disarmed MSP/CLI remains serviceable during load shedding, using the existing
+bounded serial parser. Armed load shedding and CPU-LAND priority are unchanged.
+PID loop statistics are updated on successful control iterations independently
+of ESC readiness, so a disabled motor protocol does not falsely report 0 Hz.
+
+## Capability limits
+
+There is one stored PID configuration and one stored rate configuration.
+Profile banks, names, copy/reset/select operations, Adjustments and Autotune
+are not implemented. The legacy client can still display four rate selectors;
+API 1.46 has no rate-profile-count field. A visible selector does not prove
+that a profile exists. Permanent AIRMODE feature-bit selection is unsupported;
+the implemented AIRMODE uses the AUX mode. OSD, optical flow, reversible 3D,
+arbitrary motor reordering and DShot direction commands are not implemented.
+
+Other legacy fields remain reserved/no-op, including independent yaw deadband,
+FPV camera angle, selected advanced tuning fields, PID-controller selection
+and RTC setting. These are not validated as functioning flight features.
+Stock presets are not certified for the ESP-FC CLI/configuration model.
+RACEFLIGHT curve preview with expo differs between the pinned client's formula
+and the Betaflight-derived firmware formula; do not infer exact curve parity
+from a successful rate-packet roundtrip. Physical graphs/model rendering,
+serial reconnection, actual reboot persistence and actuator behavior remain
+bench acceptance items.
+
+The videos identify firmware `7bf8293`, built September 25, 2026, advertising
+API 1.48. That commit is unavailable in this repository's accessible history.
+The videos prove visible behavior, not every setting's original implementation
+or persistence. Regressions attributed to later commits use source diffs.
 
 ## Modes and capabilities
 

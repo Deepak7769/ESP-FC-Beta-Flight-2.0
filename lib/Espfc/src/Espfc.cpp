@@ -117,6 +117,7 @@ int FAST_CODE_ATTR Espfc::update(bool externalTrigger)
   {
     _resourceManager.update();
     _controller.update();
+    _model.state.stats.loopTick();
 
     if (_model.state.mixer.timer.syncTo(
             _model.state.loopTimer))
@@ -191,6 +192,7 @@ if (_model.state.actuatorTimer.check())
     _sensor.preLoop();
     _resourceManager.update();
     _controller.update();
+    _model.state.stats.loopTick();
 
     if (_model.state.mixer.timer.syncTo(
             _model.state.loopTimer))

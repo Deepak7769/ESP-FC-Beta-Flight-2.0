@@ -12,13 +12,20 @@
 #include "Sensor/VoltageSensor.hpp"
 #include "Sensor/GyroSensor.hpp"
 #include "Device/InputPPM.h"
+#include "Device/InputIBUS.hpp"
+#include "ResourceManager.h"
+#include "Control/Controller.h"
 #include "msp/msp_protocol.h"
+#include "msp/msp_protocol_v2_betaflight.h"
 #include "Utils/Crc.hpp"
 #include <ArduinoFake.h>
 #include <unity.h>
 #include <vector>
 #include <deque>
 #include <cstring>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 using namespace Espfc;
 using namespace fakeit;
 static unsigned long clockUs;
@@ -86,7 +93,12 @@ void test_msp_api46_shapes_and_roundtrips() {
   auto s=process(m,p.set,std::vector<uint8_t>(r.data,r.data+r.len));TEST_ASSERT_EQUAL_INT_MESSAGE(1,s.result,"Configurator roundtrip rejected");
  }
  auto api=process(m,MSP_API_VERSION);TEST_ASSERT_EQUAL_UINT8(46,api.data[2]);
- auto version=process(m,MSP_FC_VERSION);TEST_ASSERT_EQUAL_UINT(3,version.len);
+ auto version=process(m,MSP_FC_VERSION);
+ const char* text="2026.6.1";
+ TEST_ASSERT_EQUAL_UINT(4+strlen(text),version.len);
+ TEST_ASSERT_EQUAL_UINT8(26,version.data[0]);TEST_ASSERT_EQUAL_UINT8(6,version.data[1]);
+ TEST_ASSERT_EQUAL_UINT8(1,version.data[2]);TEST_ASSERT_EQUAL_UINT8(strlen(text),version.data[3]);
+ TEST_ASSERT_EQUAL_MEMORY(text,version.data+4,strlen(text));
 }
 void test_msp_all_truncated_stock_rescue_packets_are_atomic() {
  Model m; auto r=process(m,MSP_GPS_RESCUE);
@@ -410,7 +422,8 @@ void test_msp_motor_range_cannot_silently_reduce_existing_idle()
 class ClosureMockSpiBus : public Device::BusDevice
 {
 public:
-  BusType getType() const override { return BUS_SPI; }
+  BusType busType{BUS_SPI};
+  BusType getType() const override { return busType; }
   int8_t read(uint8_t, uint8_t, uint8_t, uint8_t*) override { return 0; }
   int8_t readFast(uint8_t, uint8_t, uint8_t, uint8_t*) override { return 0; }
   bool write(uint8_t, uint8_t, uint8_t, const uint8_t*) override { return true; }
@@ -578,7 +591,196 @@ void test_mixer_rule_validator_checks_all_rules_and_terminator()
   TEST_ASSERT_TRUE(Utils::configurationValid(config));
 }
 
+namespace Espfc {
+class ResourceManagerTestAccess {
+public:
+ static void apply(ResourceManager& manager, float load, uint32_t now) { manager.applyPolicy(load, now); }
+};
+}
+void test_disarmed_msp_survives_overload_peak_and_deadline_stress() {
+ Model m;ResourceManager manager(m);manager.begin();
+ ResourceManagerTestAccess::apply(manager,82,clockUs);
+ TEST_ASSERT_TRUE(manager.mspAllowed());TEST_ASSERT_FALSE(manager.blackboxAllowed());
+ m.updateModes(1u<<MODE_ARMED);TEST_ASSERT_FALSE(manager.mspAllowed());
+ m.updateModes(0);TEST_ASSERT_TRUE(manager.mspAllowed());
+ manager.noteFlightDeadlineMisses(2);clockUs+=10000;
+ ResourceManagerTestAccess::apply(manager,73,clockUs);
+ TEST_ASSERT_TRUE(manager.mspAllowed());
+ m.updateModes(1u<<MODE_ARMED);TEST_ASSERT_FALSE(manager.mspAllowed());
+ clockUs+=1100000;ResourceManagerTestAccess::apply(manager,30,clockUs);
+ TEST_ASSERT_TRUE(manager.mspAllowed());
+}
+void test_i2c_bus_clock_budget_and_spi_rate_are_independent() {
+ Model m;ClosureMockSpiBus bus;ClosureMockGyro gyro;gyro.setBus(&bus,0x68);
+ m.state.gyro.dev=&gyro;m.state.gyro.clock=8000;m.config.loopSync=1;
+ for (int speed : {400,100,10}) {
+  bus.busType=BUS_I2C;m.config.i2cSpeed=speed;m.begin();
+  TEST_ASSERT_LESS_OR_EQUAL_UINT(speed*1000/400,m.state.gyro.timer.rate);
+  TEST_ASSERT_EQUAL_UINT(m.state.gyro.timer.rate,m.state.loopTimer.rate);
+  TEST_ASSERT_LESS_OR_EQUAL_UINT(m.state.gyro.timer.rate,m.state.accel.timer.rate);
+ }
+ bus.busType=BUS_SPI;m.begin();
+ TEST_ASSERT_EQUAL_UINT(ESPFC_GYRO_SPI_RATE_MAX,m.state.gyro.timer.rate);
+}
+void test_mode_extra_reports_every_condition_including_last_links() {
+ Model m;m.config.conditions[7].id=MODE_ANGLE;m.config.conditions[7].logicMode=1;
+ m.config.conditions[7].linkId=MODE_AIRMODE;
+ auto r=process(m,MSP_MODE_RANGES_EXTRA);
+ TEST_ASSERT_EQUAL_UINT(1+3*ACTUATOR_CONDITIONS,r.len);
+ TEST_ASSERT_EQUAL_UINT8(ACTUATOR_CONDITIONS,r.data[0]);
+ TEST_ASSERT_EQUAL_UINT8(1,r.data[1+7*3+1]);
+ TEST_ASSERT_EQUAL_UINT8(Connect::MspBoxMapping::encode(MODE_AIRMODE),r.data[1+7*3+2]);
+}
+void test_pid_ten_slot_packets_update_runtime_and_preserve_stored_indices() {
+ Model m;m.state.gyro.clock=1000;m.config.loopSync=1;m.begin();
+ Control::Controller controller(m);controller.begin();
+ m.setConfigChangeListener([&](ModelChangeEvent event){controller.reload(event);});
+ auto r=process(m,MSP_PID);TEST_ASSERT_EQUAL_UINT(30,r.len);
+ TEST_ASSERT_EQUAL_UINT8(m.config.pid[FC_PID_LEVEL].P,r.data[3*3]);
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+ TEST_ASSERT_EQUAL_UINT8(m.config.pid[FC_PID_ALT].P,r.data[FC_PID_ALT*3]);
+ TEST_ASSERT_EQUAL_UINT8(m.config.pid[FC_PID_VEL].P,r.data[FC_PID_VEL*3]);
+#else
+ TEST_ASSERT_EQUAL_UINT8(0,r.data[FC_PID_ALT*3]);
+#endif
+ std::vector<uint8_t> p(r.data,r.data+r.len);p[0]=37;p[3*3]=42;
+ const float before=m.state.innerPid[0].Kp;
+ TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_PID,p).result);
+ TEST_ASSERT_EQUAL_UINT8(42,m.config.pid[FC_PID_LEVEL].P);
+ TEST_ASSERT_FLOAT_WITHIN(0.00001f,before*37.0f/45.0f,m.state.innerPid[0].Kp);
+ const ModelConfig stored=m.config;p[FC_PID_MAG*3]=1;
+ TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_PID,p).result);
+ TEST_ASSERT_EQUAL_MEMORY(&stored,&m.config,sizeof(stored));
+ TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_PID,std::vector<uint8_t>(16,0)).result);
+ p[FC_PID_MAG*3]=0;p.resize(15);
+ TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_PID,p).result);
+}
+void test_api46_feedforward_cutoff_reloads_real_filter_and_provider_requires_reboot() {
+ Model m;m.state.gyro.clock=1000;m.config.loopSync=1;m.config.input.filterThrottle.freq=90;m.begin();
+ Control::Controller controller(m);controller.begin();
+ m.setConfigChangeListener([&](ModelChangeEvent event){controller.reload(event);});
+ auto r=process(m,MSP_RX_CONFIG);std::vector<uint8_t> p(r.data,r.data+r.len);
+ p[0]=SERIALRX_IBUS;p[26]=25;
+ TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_RX_CONFIG,p).result);
+ TEST_ASSERT_EQUAL_UINT16(25,m.config.input.filterDerivative.freq);
+ TEST_ASSERT_EQUAL_UINT16(90,m.config.input.filterThrottle.freq);
+ TEST_ASSERT_EQUAL_UINT16(25,m.state.innerPid[0].ftermFilter._conf.freq);
+ TEST_ASSERT_TRUE(m.getRebootRequired());
+ const ModelConfig before=m.config;m.updateModes(1u<<MODE_ARMED);p[26]=30;
+ TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_RX_CONFIG,p).result);
+ TEST_ASSERT_EQUAL_MEMORY(&before,&m.config,sizeof(before));
+}
+void test_ibus_decodes_real_frame_and_rejects_corruption() {
+ TestWire wire;Device::InputIBUS ibus;ibus.begin(&wire);
+ std::vector<uint8_t> frame={32,0x40};uint16_t checksum=0xffff-32-0x40;
+ for (unsigned i=0;i<14;++i) {
+  unsigned value=1000+i*50;frame.push_back(value&255);frame.push_back(value>>8);
+  checksum-=(value&255)+(value>>8);
+ }
+ frame.push_back(checksum&255);frame.push_back(checksum>>8);
+ for (uint8_t b:frame)wire.rx.push_back(b);
+ TEST_ASSERT_EQUAL_INT(INPUT_RECEIVED,ibus.update());
+ for(unsigned i=0;i<14;++i)TEST_ASSERT_EQUAL_UINT16(1000+i*50,ibus.get(i));
+ clockUs+=1000;frame[8]^=1;for(uint8_t b:frame)wire.rx.push_back(b);
+ TEST_ASSERT_EQUAL_INT(INPUT_IDLE,ibus.update());
+ TEST_ASSERT_EQUAL_UINT16(1150,ibus.get(3));
+}
+void test_api46_sensor_alignment_preserves_device_and_rejects_second_gyro() {
+ Model m;auto r=process(m,MSP_SENSOR_ALIGNMENT);
+ TEST_ASSERT_EQUAL_UINT(7,r.len);TEST_ASSERT_EQUAL_UINT8(0,r.data[4]);
+ const auto dev=m.config.gyro.dev;
+ std::vector<uint8_t> p={0,0,0,0,2,0};
+ TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_SENSOR_ALIGNMENT,p).result);
+ TEST_ASSERT_EQUAL_INT(dev,m.config.gyro.dev);TEST_ASSERT_EQUAL_UINT8(2,m.config.gyro.align);
+ TEST_ASSERT_TRUE(m.getRebootRequired());const ModelConfig before=m.config;
+ p[3]=1;TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_SENSOR_ALIGNMENT,p).result);
+ TEST_ASSERT_EQUAL_MEMORY(&before,&m.config,sizeof(before));
+ p[3]=0;p[5]=1;TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_SENSOR_ALIGNMENT,p).result);
+ TEST_ASSERT_EQUAL_MEMORY(&before,&m.config,sizeof(before));
+ p.resize(5);TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_SENSOR_ALIGNMENT,p).result);
+}
+// Optional export is consumed by the exact Configurator decoder/serializer
+// regression. Values come from real handlers and state, never a copied MSP model.
+void test_configurator_packet_export_and_client_write_readback() {
+ Model m;m.state.currentMixer=Output::Mixers::getMixer(FC_MIXER_QUADX,MixerConfig{});
+ ClosureMockSpiBus bus;ClosureMockGyro gyro;gyro.setBus(&bus,0x68);
+ m.state.gyro.dev=&gyro;m.state.gyro.clock=8000;m.state.gyro.present=true;m.state.accel.present=true;
+ m.config.accel.dev=GYRO_MPU6500;
+ m.state.gyro.adc=VectorFloat(Utils::toRad(120.0f),Utils::toRad(-45.0f),0);
+ m.state.accel.adc.store({0,0,ACCEL_G});
+ m.state.attitude.euler=VectorFloat(Utils::toRad(10.0f),Utils::toRad(-20.0f),Utils::toRad(30.0f));
+ m.config.featureMask=Espfc::FEATURE_RX_SERIAL|Espfc::FEATURE_TELEMETRY;
+ m.config.input.serialRxProvider=SERIALRX_IBUS;m.state.input.channelCount=14;
+ for(unsigned i=0;i<14;++i)m.state.input.us[i]=1000+i*50;
+ if(const char* input=std::getenv("ESPFC_MSP_WRITES")) {
+  std::ifstream writes(input);TEST_ASSERT_TRUE(writes.good());
+  unsigned command,length,value;while(writes>>command>>length) {
+   std::vector<uint8_t> payload;
+   for(unsigned i=0;i<length;++i){writes>>value;payload.push_back(value);}
+   auto response=process(m,command,payload);
+   char context[80];snprintf(context,sizeof(context),"Real Configurator command %u length %u",command,length);
+   TEST_ASSERT_EQUAL_INT_MESSAGE(1,response.result,context);
+  }
+  uint8_t record[2048];ModelConfig restored;
+  TEST_ASSERT_TRUE(Utils::ConfigRecord::encode(m.config,record,sizeof(record)));
+  TEST_ASSERT_TRUE(Utils::ConfigRecord::decode(record,sizeof(record),restored));
+  m.config=restored; // readback after the production record codec
+ }
+ if(const char* output=std::getenv("ESPFC_MSP_FIXTURES")) {
+  std::ofstream out(output);TEST_ASSERT_TRUE(out.good());out<<"[";bool first=true;
+  for(uint16_t command : {MSP_API_VERSION,MSP_FC_VARIANT,MSP_FC_VERSION,MSP_BOARD_INFO,
+   MSP_BUILD_INFO,MSP_STATUS_EX,MSP_RAW_IMU,MSP_ATTITUDE,MSP_FEATURE_CONFIG,MSP_BEEPER_CONFIG,MSP_MIXER_CONFIG,
+   MSP_MOTOR_CONFIG,MSP_MOTOR,MSP_MOTOR_TELEMETRY,MSP_MOTOR_3D_CONFIG,MSP_ADVANCED_CONFIG,
+   MSP_RX_CONFIG,MSP_RX_MAP,MSP_RC,MSP_RC_DEADBAND,MSP_RSSI_CONFIG,MSP_RC_TUNING,
+   MSP_PID,MSP_PID_ADVANCED,MSP_PIDNAMES,MSP_FILTER_CONFIG,MSP_SIMPLIFIED_TUNING,
+   MSP_BATTERY_CONFIG,MSP_BATTERY_STATE,MSP_FAILSAFE_CONFIG,MSP_RXFAIL_CONFIG,
+   MSP_MODE_RANGES,MSP_MODE_RANGES_EXTRA,MSP_BOXNAMES,MSP_BOXIDS,MSP_SENSOR_CONFIG,
+   MSP_SENSOR_ALIGNMENT,MSP2_SENSOR_CONFIG_ACTIVE,MSP_BOARD_ALIGNMENT_CONFIG,MSP_ARMING_CONFIG,MSP_BLACKBOX_CONFIG,
+   MSP_DATAFLASH_SUMMARY,MSP_CF_SERIAL_CONFIG,MSP_GPS_CONFIG}) {
+   auto r=process(m,command);TEST_ASSERT_EQUAL_INT(1,r.result);
+   if(!first)out<<",";first=false;out<<"{\"code\":"<<command<<",\"payload\":[";
+   for(unsigned i=0;i<r.len;++i){if(i)out<<",";out<<unsigned(r.data[i]);}out<<"]}";
+  }
+  out<<"]";
+ }
+}
+
+void test_api46_sensor_ids_roundtrip_without_changing_driver_enums() {
+ Model m;struct Sensor {uint8_t internal,wire;};
+ for(Sensor s : {Sensor{GYRO_NONE,1},Sensor{GYRO_AUTO,0},Sensor{GYRO_MPU6050,3},
+  Sensor{GYRO_MPU6500,8},Sensor{GYRO_MPU9250,9},Sensor{GYRO_LSM6DSO,19},
+  Sensor{GYRO_ICM20602,11},Sensor{GYRO_BMI160,17},Sensor{GYRO_ICM42688,16}}) {
+  m.config.accel.dev=s.internal;auto r=process(m,MSP_SENSOR_CONFIG);
+  TEST_ASSERT_EQUAL_UINT8(s.wire,r.data[0]);
+  TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_SENSOR_CONFIG,{s.wire,0,0}).result);
+  TEST_ASSERT_EQUAL_UINT8(s.internal,m.config.accel.dev);
+ }
+ auto before=m.config;
+ for(std::vector<uint8_t> p : {std::vector<uint8_t>{2,0,0}, {0,5,0}, {0,0,6}, {0,0,0,1}, {0,0,0,0,1}}) {
+  TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_SENSOR_CONFIG,p).result);
+  TEST_ASSERT_EQUAL_MEMORY(&before,&m.config,sizeof(before));
+ }
+ m.config.baro.dev=BARO_SPL06;m.config.mag.dev=MAG_QMC5883P;
+ auto r=process(m,MSP_SENSOR_CONFIG);
+ TEST_ASSERT_EQUAL_UINT8(255,r.data[1]);TEST_ASSERT_EQUAL_UINT8(255,r.data[2]);
+ TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_SENSOR_CONFIG,{r.data,r.data+r.len}).result);
+ TEST_ASSERT_EQUAL_UINT8(BARO_SPL06,m.config.baro.dev);TEST_ASSERT_EQUAL_UINT8(MAG_QMC5883P,m.config.mag.dev);
+ ClosureMockSpiBus bus;ClosureMockGyro gyro;gyro.setBus(&bus,0x68);
+ m.state.gyro.dev=&gyro;m.state.gyro.present=true;m.state.accel.present=true;
+ auto active=process(m,MSP2_SENSOR_CONFIG_ACTIVE);
+ TEST_ASSERT_EQUAL_UINT8(7,active.data[0]);TEST_ASSERT_EQUAL_UINT8(8,active.data[1]);
+}
+
 int main(){UNITY_BEGIN();
+ RUN_TEST(test_api46_sensor_ids_roundtrip_without_changing_driver_enums);
+ RUN_TEST(test_disarmed_msp_survives_overload_peak_and_deadline_stress);
+ RUN_TEST(test_i2c_bus_clock_budget_and_spi_rate_are_independent);
+ RUN_TEST(test_mode_extra_reports_every_condition_including_last_links);
+ RUN_TEST(test_pid_ten_slot_packets_update_runtime_and_preserve_stored_indices);
+ RUN_TEST(test_api46_feedforward_cutoff_reloads_real_filter_and_provider_requires_reboot);
+ RUN_TEST(test_ibus_decodes_real_frame_and_rejects_corruption);
+ RUN_TEST(test_api46_sensor_alignment_preserves_device_and_rejects_second_gyro);
+ RUN_TEST(test_configurator_packet_export_and_client_write_readback);
  RUN_TEST(test_gyro_spi_identity_fault_latches_until_disarmed_begin);
  RUN_TEST(test_ppm_publishes_complete_immutable_receiver_snapshots);
  RUN_TEST(test_rate_type_and_msp_rate_limits_reject_invalid_atomic_writes);
