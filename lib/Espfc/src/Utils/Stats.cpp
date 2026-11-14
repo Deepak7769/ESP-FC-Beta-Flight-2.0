@@ -27,6 +27,9 @@ void FAST_CODE_ATTR Stats::start(StatCounter c)
 void FAST_CODE_ATTR Stats::end(StatCounter c)
 {
   uint32_t diff = micros() - _start[c];
+  // End-to-end flight task time includes every service pass, not only PID time.
+  if (c == COUNTER_CPU_0 && diff > _windowMaxFlightTaskUs)
+    _windowMaxFlightTaskUs = diff;
   _sum[c] += diff;
   _count[c]++;
 }
@@ -35,6 +38,8 @@ void Stats::loopTick()
 {
   uint32_t now = micros();
   uint32_t diff = now - _loop_last;
+  if (_loop_last != 0 && diff > _windowMaxControlPeriodUs)
+    _windowMaxControlPeriodUs = diff;
   //_loop_time = diff;
   _loop_time += (((int32_t)diff - _loop_time + 4) >> 3);
   _loop_last = now;
@@ -75,6 +80,32 @@ void Stats::update()
 
     _sum[i] = 0;
     _count[i] = 0;
+  }
+
+  // The 10 ms statistical windows alias with 50/100 Hz peripheral transactions.
+  // Smooth only the number exposed by MSP; resource management still reads
+  // the unsmoothed load for prompt overload response.
+  const float load = getCpuLoad();
+  if (!_reportedCpuPrimed)
+  {
+    _reportedCpuLoad = load;
+    _reportedCpuPrimed = true;
+  }
+  else
+  {
+    // ~250 ms time constant with the 100 Hz stats update period.
+    _reportedCpuLoad += 0.04f * (load - _reportedCpuLoad);
+  }
+
+  const uint32_t now = micros();
+  if (_lastPeakUpdateUs == 0) _lastPeakUpdateUs = now;
+  if (static_cast<uint32_t>(now - _lastPeakUpdateUs) >= 1000000u)
+  {
+    _maxControlPeriodUs = _windowMaxControlPeriodUs;
+    _maxFlightTaskUs = _windowMaxFlightTaskUs;
+    _windowMaxControlPeriodUs = 0;
+    _windowMaxFlightTaskUs = 0;
+    _lastPeakUpdateUs = now;
   }
 }
 
@@ -140,6 +171,31 @@ if (total <= 0.f)
 const float alpha =
     maxLoad / total;
   return alpha * maxLoad + (1.f - alpha) * minLoad;
+}
+
+float Stats::getReportedCpuLoad() const
+{
+  return _reportedCpuPrimed ? _reportedCpuLoad : getCpuLoad();
+}
+
+void Stats::noteMissedDeadlines(uint32_t count)
+{
+  _missedDeadlines += count;
+}
+
+uint32_t Stats::missedDeadlines() const
+{
+  return _missedDeadlines;
+}
+
+uint32_t Stats::maxControlPeriodUs() const
+{
+  return _maxControlPeriodUs;
+}
+
+uint32_t Stats::maxFlightTaskUs() const
+{
+  return _maxFlightTaskUs;
 }
 
 float Stats::getCpuTime() const

@@ -656,7 +656,7 @@ case MSP_BUILD_INFO:
                  0 << 4 | _model.gyroActive() << 5);
       r.writeU32(MspBoxMapping::statusMask(_model.state.mode.mask)); // MSP_BOXIDS-indexed bits
       r.writeU8(0);                       // pid profile
-      r.writeU16(lrintf(_model.state.stats.getCpuLoad()));
+      r.writeU16(lrintf(_model.state.stats.getReportedCpuLoad()));
       if (m.cmd == MSP_STATUS_EX)
       {
         r.writeU8(1); // max profile count

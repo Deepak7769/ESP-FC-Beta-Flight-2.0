@@ -1803,6 +1803,17 @@ void Cli::execute(CliCmd& cmd, Stream::Printer& s)
     s.print(_model.state.stats.getCpuLoad(), 1);
     s.print("%");
     s.println();
+    s.print("  display load (250ms): ");
+    s.print(_model.state.stats.getReportedCpuLoad(), 1);
+    s.println("%");
+    s.print("  max control period (last 1s): ");
+    s.print(_model.state.stats.maxControlPeriodUs());
+    s.println("us");
+    s.print("  max flight task (last 1s): ");
+    s.print(_model.state.stats.maxFlightTaskUs());
+    s.println("us");
+    s.print("  missed flight deadlines (since boot): ");
+    s.println(_model.state.stats.missedDeadlines());
   }
   else if (std::strcmp(cmd.args[0], "reboot") == 0 || std::strcmp(cmd.args[0], "exit") == 0)
   {

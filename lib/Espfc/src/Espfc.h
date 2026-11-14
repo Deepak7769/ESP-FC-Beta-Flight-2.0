@@ -24,7 +24,10 @@ public:
   int begin();
   int update(bool externalTrigger = false);
   int updateOther();
-  void noteFlightDeadlineMisses(uint32_t count) { _resourceManager.noteFlightDeadlineMisses(count); }
+  void noteFlightDeadlineMisses(uint32_t count) {
+    _resourceManager.noteFlightDeadlineMisses(count);
+    _model.state.stats.noteMissedDeadlines(count);
+  }
 
   int getGyroInterval() const
   {

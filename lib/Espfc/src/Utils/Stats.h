@@ -81,7 +81,13 @@ public:
   float getTotalLoad() const;
   float getTotalTime() const;
   float getCpuLoad() const;
+  // A display-only 250 ms low-pass. Never feed this into load shedding or failsafe.
+  float getReportedCpuLoad() const;
   float getCpuTime() const;
+  void noteMissedDeadlines(uint32_t count);
+  uint32_t missedDeadlines() const;
+  uint32_t maxControlPeriodUs() const;
+  uint32_t maxFlightTaskUs() const;
   const char* getName(StatCounter c) const;
 
   Utils::Timer timer;
@@ -95,6 +101,14 @@ private:
   float _real[COUNTER_COUNT];
   uint32_t _loop_last;
   int32_t _loop_time;
+  float _reportedCpuLoad{0.0f};
+  bool _reportedCpuPrimed{false};
+  uint32_t _lastPeakUpdateUs{0};
+  uint32_t _windowMaxControlPeriodUs{0};
+  uint32_t _windowMaxFlightTaskUs{0};
+  uint32_t _maxControlPeriodUs{0};
+  uint32_t _maxFlightTaskUs{0};
+  uint32_t _missedDeadlines{0};
 };
 
 } // namespace Utils
