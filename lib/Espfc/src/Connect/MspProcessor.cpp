@@ -2264,7 +2264,11 @@ case MSP_SET_FAILSAFE_CONFIG:
       }
       for (int i = 0; i < AXIS_COUNT_RPY; i++)
       {
-        r.writeU16(lrintf(Utils::toDeg(_model.state.gyro.adc[i])));
+        // Both supported Configurator decoders convert this legacy wire
+        // value by 4/16.4. Internal gyro state is radians/second.
+        const float wireRate = Utils::toDeg(_model.state.gyro.adc[i]) * (16.4f / 4.0f);
+        r.writeU16(std::isfinite(wireRate)
+            ? lrintf(std::clamp(wireRate, -32768.0f, 32767.0f)) : 0);
       }
       for (int i = 0; i < AXIS_COUNT_RPY; i++)
       {

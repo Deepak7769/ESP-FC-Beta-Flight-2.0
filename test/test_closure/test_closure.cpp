@@ -706,6 +706,9 @@ void test_configurator_packet_export_and_client_write_readback() {
  ClosureMockSpiBus bus;ClosureMockGyro gyro;gyro.setBus(&bus,0x68);
  m.state.gyro.dev=&gyro;m.state.gyro.clock=8000;m.state.gyro.present=true;m.state.accel.present=true;
  m.config.accel.dev=GYRO_MPU6500;
+ m.state.gyro.adc=VectorFloat(Utils::toRad(120.0f),Utils::toRad(-45.0f),0);
+ m.state.accel.adc.store({0,0,ACCEL_G});
+ m.state.attitude.euler=VectorFloat(Utils::toRad(10.0f),Utils::toRad(-20.0f),Utils::toRad(30.0f));
  m.config.featureMask=Espfc::FEATURE_RX_SERIAL|Espfc::FEATURE_TELEMETRY;
  m.config.input.serialRxProvider=SERIALRX_IBUS;m.state.input.channelCount=14;
  for(unsigned i=0;i<14;++i)m.state.input.us[i]=1000+i*50;
@@ -726,7 +729,7 @@ void test_configurator_packet_export_and_client_write_readback() {
  if(const char* output=std::getenv("ESPFC_MSP_FIXTURES")) {
   std::ofstream out(output);TEST_ASSERT_TRUE(out.good());out<<"[";bool first=true;
   for(uint16_t command : {MSP_API_VERSION,MSP_FC_VARIANT,MSP_FC_VERSION,MSP_BOARD_INFO,
-   MSP_BUILD_INFO,MSP_STATUS_EX,MSP_FEATURE_CONFIG,MSP_BEEPER_CONFIG,MSP_MIXER_CONFIG,
+   MSP_BUILD_INFO,MSP_STATUS_EX,MSP_RAW_IMU,MSP_ATTITUDE,MSP_FEATURE_CONFIG,MSP_BEEPER_CONFIG,MSP_MIXER_CONFIG,
    MSP_MOTOR_CONFIG,MSP_MOTOR,MSP_MOTOR_TELEMETRY,MSP_MOTOR_3D_CONFIG,MSP_ADVANCED_CONFIG,
    MSP_RX_CONFIG,MSP_RX_MAP,MSP_RC,MSP_RC_DEADBAND,MSP_RSSI_CONFIG,MSP_RC_TUNING,
    MSP_PID,MSP_PID_ADVANCED,MSP_PIDNAMES,MSP_FILTER_CONFIG,MSP_SIMPLIFIED_TUNING,

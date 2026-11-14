@@ -45,6 +45,10 @@ it('decodes real firmware packets and serializes supported edits', async () => {
     expect(types.acc.elements[FC.SENSOR_CONFIG.acc_hardware]).toBe('MPU6500');
     expect(types.gyro.elements[FC.SENSOR_CONFIG_ACTIVE.gyro_hardware]).toBe('MPU6500');
     expect(types.acc.elements[FC.SENSOR_CONFIG_ACTIVE.acc_hardware]).toBe('MPU6500');
+    expect(FC.SENSOR_DATA.accelerometer[2]).toBe(1);
+    expect(FC.SENSOR_DATA.gyroscope[0]).toBeCloseTo(120, 1);
+    expect(Math.abs(FC.SENSOR_DATA.gyroscope[1]+45)).toBeLessThan(0.25);
+    expect(FC.SENSOR_DATA.kinematics).toEqual([10,-20,-30]);
 
     if (process.env.ESPFC_MSP_WRITES) {
         FC.RX_CONFIG.serialrx_provider=7;
