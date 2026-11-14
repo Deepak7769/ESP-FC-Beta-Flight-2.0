@@ -27,6 +27,7 @@
 uint16_t esp_twi_dcount = 18;
 static unsigned char esp_twi_sda, esp_twi_scl;
 static uint32_t esp_twi_clockStretchLimit;
+static bool esp_twi_clockFault;
 
 #if defined(ESP8266)
   #define SDA_LOW()   (GPES = (1 << esp_twi_sda)) //Enable SDA (becomes output and since GPO is 0 for the pin, it will pull the line low)
@@ -59,12 +60,12 @@ static uint32_t esp_twi_clockStretchLimit;
   #define SCL_HIGH()  (pinMode(esp_twi_scl, INPUT_PULLUP))
   #define SCL_READ()  (digitalRead(esp_twi_scl))
 #elif defined(UNIT_TEST)
-  #define SDA_LOW()   //Enable SDA (becomes output and since GPO is 0 for the pin, it will pull the line low)
-  #define SDA_HIGH()  //Disable SDA (becomes input and since it has pullup it will go high)
-  #define SDA_READ()  (1)
-  #define SCL_LOW()   
-  #define SCL_HIGH()  
-  #define SCL_READ()  (1)
+  #define SDA_LOW()   pinMode(esp_twi_sda, OUTPUT)
+  #define SDA_HIGH()  pinMode(esp_twi_sda, INPUT_PULLUP)
+  #define SDA_READ()  digitalRead(esp_twi_sda)
+  #define SCL_LOW()   pinMode(esp_twi_scl, OUTPUT)
+  #define SCL_HIGH()  pinMode(esp_twi_scl, INPUT_PULLUP)
+  #define SCL_READ()  digitalRead(esp_twi_scl)
 #else
   #error "Unsupported platform"
 #endif
@@ -208,9 +209,21 @@ static inline IRAM_ATTR void esp_twi_delay(unsigned int v)
   }
 }
 
+static IRAM_ATTR bool esp_twi_wait_scl(void) {
+  uint32_t attempts = 0;
+  while (SCL_READ() == 0) {
+    if (attempts++ >= esp_twi_clockStretchLimit) {
+      esp_twi_clockFault = true;
+      return false;
+    }
+  }
+  return true;
+}
+
 static IRAM_ATTR bool esp_twi_write_start(void) {
   SCL_HIGH();
   SDA_HIGH();
+  if (!esp_twi_wait_scl()) return false;
   if (SDA_READ() == 0) return false;
   esp_twi_delay(esp_twi_dcount);
   SDA_LOW();
@@ -219,12 +232,12 @@ static IRAM_ATTR bool esp_twi_write_start(void) {
 }
 
 static IRAM_ATTR bool esp_twi_write_stop(void){
-  uint32_t i = 0;
+  if (esp_twi_clockFault) { SDA_HIGH(); SCL_HIGH(); return false; }
   SCL_LOW();
   SDA_LOW();
   esp_twi_delay(esp_twi_dcount);
   SCL_HIGH();
-  while (SCL_READ() == 0 && (i++) < esp_twi_clockStretchLimit); // Clock stretching
+  if (!esp_twi_wait_scl()) { SDA_HIGH(); return false; }
   esp_twi_delay(esp_twi_dcount);
   SDA_HIGH();
   esp_twi_delay(esp_twi_dcount);
@@ -232,24 +245,24 @@ static IRAM_ATTR bool esp_twi_write_stop(void){
 }
 
 static IRAM_ATTR bool esp_twi_write_bit(bool bit) {
-  uint32_t i = 0;
+  if (esp_twi_clockFault) return false;
   SCL_LOW();
   if (bit) SDA_HIGH();
   else SDA_LOW();
   esp_twi_delay(esp_twi_dcount); //esp_twi_delay(esp_twi_dcount+1);
   SCL_HIGH();
-  while (SCL_READ() == 0 && (i++) < esp_twi_clockStretchLimit);// Clock stretching
+  if (!esp_twi_wait_scl()) return false;
   esp_twi_delay(esp_twi_dcount);
   return true;
 }
 
 static IRAM_ATTR bool esp_twi_read_bit(void) {
-  uint32_t i = 0;
+  if (esp_twi_clockFault) return true;
   SCL_LOW();
   SDA_HIGH();
   esp_twi_delay(esp_twi_dcount); //esp_twi_delay(esp_twi_dcount+2);
   SCL_HIGH();
-  while (SCL_READ() == 0 && (i++) < esp_twi_clockStretchLimit);// Clock stretching
+  if (!esp_twi_wait_scl()) return true;
   bool bit = SDA_READ();
   esp_twi_delay(esp_twi_dcount);
   return bit;
@@ -258,10 +271,11 @@ static IRAM_ATTR bool esp_twi_read_bit(void) {
 static IRAM_ATTR bool esp_twi_write_byte(unsigned char byte) {
   unsigned char bit;
   for (bit = 0; bit < 8; bit++) {
-    esp_twi_write_bit(byte & 0x80);
+    if (!esp_twi_write_bit(byte & 0x80)) return false;
     byte <<= 1;
   }
-  return !esp_twi_read_bit();//NACK/ACK
+  const bool nack = esp_twi_read_bit();
+  return !esp_twi_clockFault && !nack;
 }
 
 static IRAM_ATTR unsigned char esp_twi_read_byte(bool nack) {
@@ -274,18 +288,20 @@ static IRAM_ATTR unsigned char esp_twi_read_byte(bool nack) {
 
 unsigned char IRAM_ATTR esp_twi_writeTo(unsigned char address, unsigned char * buf, unsigned int len, unsigned char sendStop){
   unsigned int i;
+  esp_twi_clockFault = false;
+  if (len && !buf) return 4;
   if(!esp_twi_write_start()) return 4;//line busy
   if(!esp_twi_write_byte(((address << 1) | 0) & 0xFF)) {
     if (sendStop) esp_twi_write_stop();
-    return 2; //received NACK on transmit of address
+    return esp_twi_clockFault ? 4 : 2; // bus fault or address NACK
   }
   for(i=0; i<len; i++) {
     if(!esp_twi_write_byte(buf[i])) {
       if (sendStop) esp_twi_write_stop();
-      return 3;//received NACK on transmit of data
+      return esp_twi_clockFault ? 4 : 3;
     }
   }
-  if(sendStop) esp_twi_write_stop();
+  if(sendStop && !esp_twi_write_stop()) return 4;
   i = 0;
   while(SDA_READ() == 0 && (i++) < 10){
     SCL_LOW();
@@ -298,14 +314,22 @@ unsigned char IRAM_ATTR esp_twi_writeTo(unsigned char address, unsigned char * b
 
 unsigned char IRAM_ATTR esp_twi_readFrom(unsigned char address, unsigned char* buf, unsigned int len, unsigned char sendStop){
   unsigned int i;
+  // Avoid len-1 underflow and buf[-1] for empty reads.
+  if (!len) return 0;
+  if (!buf) return 4;
+  esp_twi_clockFault = false;
   if(!esp_twi_write_start()) return 4;//line busy
   if(!esp_twi_write_byte(((address << 1) | 1) & 0xFF)) {
     if (sendStop) esp_twi_write_stop();
-    return 2;//received NACK on transmit of address
+    return esp_twi_clockFault ? 4 : 2;
   }
-  for(i=0; i<(len-1); i++) buf[i] = esp_twi_read_byte(false);
+  for(i=0; i<(len-1); i++) {
+    buf[i] = esp_twi_read_byte(false);
+    if (esp_twi_clockFault) { esp_twi_write_stop(); return 4; }
+  }
   buf[len-1] = esp_twi_read_byte(true);
-  if(sendStop) esp_twi_write_stop();
+  if (esp_twi_clockFault) { esp_twi_write_stop(); return 4; }
+  if(sendStop && !esp_twi_write_stop()) return 4;
   i = 0;
   while(SDA_READ() == 0 && (i++) < 10){
     SCL_LOW();
@@ -317,10 +341,12 @@ unsigned char IRAM_ATTR esp_twi_readFrom(unsigned char address, unsigned char* b
 }
 
 uint8_t esp_twi_status(){
+    esp_twi_clockFault = false;
     if (SCL_READ()==0)     return I2C_SCL_HELD_LOW;       		//SCL held low by another device, no procedure available to recover
     int clockCount = 20;
 
     while (SDA_READ()==0 && clockCount>0){                      //if SDA low, read the bits slaves have to sent to a max
+        --clockCount;
         esp_twi_read_bit();
         if (SCL_READ()==0) return I2C_SCL_HELD_LOW_AFTER_READ;  //I2C bus error. SCL held low beyond slave clock stretch time
     }
@@ -328,5 +354,5 @@ uint8_t esp_twi_status(){
     if (SDA_READ()==0)     return I2C_SDA_HELD_LOW;       		//I2C bus error. SDA line held low by slave/another_master after n bits.
 
     if(!esp_twi_write_start()) return I2C_SDA_HELD_LOW_AFTER_INIT;  //line busy. SDA again held low by another device. 2nd master?
-    else                   return I2C_OK;       				//all ok
+    else return esp_twi_write_stop() ? I2C_OK : I2C_SCL_HELD_LOW;
 }

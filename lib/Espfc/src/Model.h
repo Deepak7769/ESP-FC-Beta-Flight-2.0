@@ -791,7 +791,13 @@ void setOutputSaturation(
       }
       else
       {
-        state.gyro.rate = Utils::alignToClock(state.gyro.clock, ESPFC_GYRO_I2C_RATE_MAX);
+        // Reserve bus time for accel/peripherals even at slower configured
+        // I2C clocks. A six-byte register read costs at least 81 SCL clocks.
+        // The 400-clock budget per gyro period leaves margin for overhead.
+        const uint32_t busRateLimit =
+            static_cast<uint32_t>(std::clamp<int>(config.i2cSpeed, 10, 400)) * 1000u / 400u;
+        state.gyro.rate = Utils::alignToClock(state.gyro.clock,
+            std::min<uint32_t>(ESPFC_GYRO_I2C_RATE_MAX, busRateLimit));
         // first usage
         if(_storageResult == STORAGE_ERR_BAD_MAGIC || _storageResult == STORAGE_ERR_BAD_SIZE || _storageResult == STORAGE_ERR_BAD_VERSION)
         {

@@ -117,8 +117,6 @@ int FAST_CODE_ATTR Mixer::update()
     _model.state.debug[3] = micros() - startTime;
   }
 
-  _model.state.stats.loopTick();
-
   if (_model.config.debug.mode == DEBUG_CYCLETIME)
   {
     _model.state.debug[0] = _model.state.stats.loopTime();

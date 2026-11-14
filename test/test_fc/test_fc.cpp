@@ -272,11 +272,11 @@ void test_model_gyro_init_1k_256dlpf()
   model.begin();
 
   TEST_ASSERT_EQUAL_INT32(8000, model.state.gyro.clock);
-  TEST_ASSERT_EQUAL_INT32(2000, model.state.gyro.rate);
-  TEST_ASSERT_EQUAL_INT32(2000, model.state.gyro.timer.rate);
-  TEST_ASSERT_EQUAL_INT32(2000, model.state.loopRate);
-  TEST_ASSERT_EQUAL_INT32(2000, model.state.loopTimer.rate);
-  TEST_ASSERT_EQUAL_INT32(2000, model.state.mixer.timer.rate);
+  TEST_ASSERT_EQUAL_INT32(1000, model.state.gyro.rate);
+  TEST_ASSERT_EQUAL_INT32(1000, model.state.gyro.timer.rate);
+  TEST_ASSERT_EQUAL_INT32(1000, model.state.loopRate);
+  TEST_ASSERT_EQUAL_INT32(1000, model.state.loopTimer.rate);
+  TEST_ASSERT_EQUAL_INT32(1000, model.state.mixer.timer.rate);
 }
 
 void test_model_gyro_init_1k_188dlpf()
@@ -11029,7 +11029,7 @@ void test_msp_permanent_mode_ids_and_persisted_enum_remain_distinct()
   TEST_ASSERT_EQUAL_UINT8(16, ranges.data[2]);
   TEST_ASSERT_EQUAL_UINT8(32, ranges.data[3]);
   const auto extra = query(MSP_MODE_RANGES_EXTRA);
-  TEST_ASSERT_EQUAL_UINT8(3, extra.data[0]); // bytes per row, not count of rows
+  TEST_ASSERT_EQUAL_UINT8(ACTUATOR_CONDITIONS, extra.data[0]); // count of three-byte rows
   TEST_ASSERT_EQUAL_UINT8(46, extra.data[1]);
   TEST_ASSERT_EQUAL_UINT8(1, extra.data[3]); // linked-to ANGLE permanent ID
   TEST_ASSERT_EQUAL_UINT8(MODE_GPS_RESCUE, model.config.conditions[0].id);

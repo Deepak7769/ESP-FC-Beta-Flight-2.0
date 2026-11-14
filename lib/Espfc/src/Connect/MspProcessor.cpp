@@ -143,6 +143,8 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
 
     case MSP_SET_RX_MAP:
       return size == 8;
+    case MSP_SET_PID:
+      return size == 15 || size == Espfc::FC_PID_ITEM_COUNT * 3;
 
     case MSP_SET_RSSI_CONFIG:
     case MSP_SET_PID_CONTROLLER:
@@ -150,6 +152,8 @@ static bool mspMutatorPayloadSizeValid(uint16_t cmd, int size)
 
     case MSP_SET_SENSOR_CONFIG:
       return size >= 3 && size <= 5;
+    case MSP_SET_SENSOR_ALIGNMENT:
+      return size == 3 || size == 6;
 
     // Legal payload versions stop at whole optional field groups. A partial
     // group must never silently leave some parameters changed.
@@ -389,9 +393,12 @@ static uint16_t toIbatCurrent(float current)
 constexpr uint8_t MSP_PASSTHROUGH_ESC_4WAY = 0xff;
 
 // ESP-FC project version in the three-byte MSP version envelope.
-constexpr uint8_t MSP_FC_VERSION_YEAR = 2026 - 2000;
-constexpr uint8_t MSP_FC_VERSION_MONTH = 6;
+constexpr uint8_t MSP_FC_VERSION_YEAR = FC_VERSION_MAJOR - 2000;
+constexpr uint8_t MSP_FC_VERSION_MONTH = FC_VERSION_MINOR;
 constexpr uint8_t MSP_FC_VERSION_PATCH = FC_VERSION_PATCH_LEVEL;
+// Calendar-version clients consume the length-prefixed text after the
+// legacy three-byte envelope. Keep both representations in agreement.
+constexpr char MSP_FC_VERSION_STRING[] = FC_VERSION_STRING;
 
 // MCU type id sentinel telling the configurator the name follows as a string
 constexpr uint8_t MCU_TYPE_ID_PROVIDED_BY_NAME = 255;
@@ -516,6 +523,7 @@ void MspProcessor::processCommand(MspMessage& m, MspResponse& r, Stream::ReadWri
       r.writeU8(MSP_FC_VERSION_YEAR);
       r.writeU8(MSP_FC_VERSION_MONTH);
       r.writeU8(MSP_FC_VERSION_PATCH);
+      r.writePString(MSP_FC_VERSION_STRING);
       break;
 
     case MSP2_MCU_INFO:
@@ -716,7 +724,7 @@ case MSP_BUILD_INFO:
       break;
 
     case MSP_MODE_RANGES_EXTRA:
-      r.writeU8(3); // bytes per entry: permanentId, logicMode, linkedPermanentId
+      r.writeU8(ACTUATOR_CONDITIONS); // number of three-byte entries
       for (size_t i = 0; i < ACTUATOR_CONDITIONS; i++)
       {
         r.writeU8(MspBoxMapping::encode(config.conditions[i].id));
@@ -1059,29 +1067,26 @@ case MSP_BUILD_INFO:
       r.writeU8(config.mag.align);  // mag align
       // 1.41+
       r.writeU8(_model.state.gyro.present ? 1 : 0); // gyro detection mask GYRO_1_MASK
-      r.writeU8(_model.state.gyro.present ? 1 : 0); // gyro_enable_mask, was gyro_to_use
-      r.writeU16(0);                                // mag align roll
-      r.writeU16(0);                                // mag align pitch
-      r.writeU16(0);                                // mag align yaw
+      r.writeU8(0);                  // API 1.46 gyro_to_use: FIRST (not an enable mask)
+      r.writeU8(config.gyro.align);   // first gyro alignment
+      r.writeU8(0);                  // second gyro unavailable
       break;
 
     case MSP_SET_SENSOR_ALIGNMENT: {
       uint8_t gyroAlign = m.readU8();       // gyro align
       m.readU8();                           // discard deprecated acc align
       config.mag.align = m.readU8(); // mag align
-      // API >= 1.41 - support the gyro_to_use and alignment for gyros 1 & 2
-      if (m.remain() >= 1)
+      // API 1.46 uses a gyro selector plus two alignment bytes. The 1.47
+      // enable-mask/custom-mag layout must not disable the detected device.
+      if (m.remain() == 3)
       {
-        uint8_t gyroEnableMask = m.readU8(); // gyro_enable_mask
-        config.gyro.dev = gyroEnableMask & 1 ? GYRO_AUTO : GYRO_NONE;
-      }
-      if (m.remain() >= 6)
-      {
-        m.readU16(); // gyro 1 roll
-        m.readU16(); // gyro 1 pitch
-        m.readU16(); // gyro 1 yaw
+        const uint8_t gyroToUse = m.readU8();
+        gyroAlign = m.readU8();
+        const uint8_t gyro2Align = m.readU8();
+        if (gyroToUse != 0 || gyro2Align != 0) { r.result = -1; break; }
       }
       config.gyro.align = gyroAlign;
+      needsReboot = true;
       break;
     }
 
@@ -1402,8 +1407,8 @@ case MSP_BUILD_INFO:
       r.writeU8(2);                                                         // rc iterpolation channels: RPYT
       r.writeU8(0);                                                         // deprecated: rc_smoothing_type
       r.writeU8(config.input.filter.freq);                           // rc_smoothing_setpoint_cutoff
-      r.writeU8(config.input.filterThrottle.freq);                   // rc_smoothing_throtle_cutoff
-      r.writeU8(config.input.filterAutoThrottleFactor);              // rc_smoothing_auto_factor_throttle
+      r.writeU8(config.input.filterDerivative.freq);                 // API 1.46 feedforward cutoff
+      r.writeU8(0);                                                 // deprecated smoothing input type
       r.writeU8(0);                                                         // rc_smoothing_derivative_type
       r.writeU8(0);                                                         // usb type
       // 1.42+
@@ -1419,6 +1424,7 @@ case MSP_BUILD_INFO:
 
     case MSP_SET_RX_CONFIG:
       if (m.remain() < 12) { r.result = -1; break; }
+      needsReboot = m.buffer[m.read] != config.input.serialRxProvider;
       config.input.serialRxProvider = m.readU8(); // serialrx_provider
       config.input.maxCheck = m.readU16();        // maxcheck
       config.input.midRc = m.readU16();           // midrc
@@ -1448,8 +1454,8 @@ case MSP_BUILD_INFO:
         m.readU8();                                                // was rc iterpolation channels
         m.readU8();                                                // was rc_smoothing_type
         config.input.filter.freq = m.readU8();              // rc_smoothing_setpoint_cutoff
-        config.input.filterThrottle.freq = m.readU8();      // rc_smoothing_throttle_cutoff
-        config.input.filterAutoThrottleFactor = m.readU8(); // rc_smoothing_auto_factor_throttle
+        config.input.filterDerivative.freq = m.readU8();    // API 1.46 feedforward cutoff
+        m.readU8();                                        // deprecated smoothing input type
         m.readU8();                                                // was rc_smoothing_derivative_type
       }
       if (m.remain() >= 1)
@@ -1473,6 +1479,7 @@ case MSP_BUILD_INFO:
       }
 
       events[static_cast<size_t>(MODEL_CHANGE_INPUT)] = true;
+      events[static_cast<size_t>(MODEL_CHANGE_FILTER)] = true;
       break;
 
   case MSP_FAILSAFE_CONFIG:
@@ -1849,50 +1856,56 @@ case MSP_SET_FAILSAFE_CONFIG:
       break;
 
     case MSP_PIDNAMES:
-      r.writeString("ROLL;PITCH;YAW;LEVEL;MAG;ALT;VEL;Pos;PosR;NavR;");
+      r.writeString("ROLL;PITCH;YAW;LEVEL;");
+      // Keep stored indices stable; empty names omit unimplemented controllers.
+      for (size_t i = FC_PID_MAG; i < FC_PID_ITEM_COUNT; ++i)
+      {
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+        if (i == FC_PID_ALT) r.writeString("ALT");
+        if (i == FC_PID_VEL) r.writeString("VEL");
+#endif
+        r.writeU8(';');
+      }
       break;
 
     case MSP_PID:
-      for (size_t i = 0; i < PID_ITEM_COUNT; i++)
+      for (size_t i = 0; i < FC_PID_ITEM_COUNT; ++i)
       {
-        r.writeU8(config.pid[i].P);
-        r.writeU8(config.pid[i].I);
-        r.writeU8(config.pid[i].D);
+        const bool supported = i <= FC_PID_LEVEL
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+            || i == FC_PID_ALT || i == FC_PID_VEL
+#endif
+            ;
+        r.writeU8(supported ? config.pid[i].P : 0);
+        r.writeU8(supported ? config.pid[i].I : 0);
+        r.writeU8(supported ? config.pid[i].D : 0);
       }
       break;
 
-     case MSP_SET_PID:
+    case MSP_SET_PID:
     {
-constexpr int PID_BYTES_PER_ITEM =
-    3;
-
-constexpr int REQUIRED_PID_BYTES =
-    PID_ITEM_COUNT *
-    PID_BYTES_PER_ITEM;
-
-           if (m.remain() <
-          REQUIRED_PID_BYTES)
+      // Configurator retains ten PID slots even for Betaflight's five-slot
+      // controller. Accept that canonical packet and the legacy 15-byte one,
+      // without moving LEVEL or the project's altitude/velocity controllers.
+      const size_t count = m.remain() / 3;
+      for (size_t i = 0; i < count; ++i)
       {
-        r.result = -1;
-        break;
+        const uint8_t p = m.readU8(), integral = m.readU8(), d = m.readU8();
+        const bool supported = i <= FC_PID_LEVEL
+#if defined(ESPFC_ALTHOLD_V2_ACTIVE)
+            || i == FC_PID_ALT || i == FC_PID_VEL
+#endif
+            ;
+        if (!supported)
+        {
+          if (p || integral || d) r.result = -1;
+          continue;
+        }
+        config.pid[i].P = p;
+        config.pid[i].I = integral;
+        config.pid[i].D = d;
       }
-
-      for (int i = 0;
-           i < PID_ITEM_COUNT;
-           i++)
-      {
-        config.pid[i].P =
-            m.readU8();
-
-        config.pid[i].I =
-            m.readU8();
-
-        config.pid[i].D =
-            m.readU8();
-      }
-
       events[static_cast<size_t>(MODEL_CHANGE_PID)] = true;
-
       break;
     }
 
