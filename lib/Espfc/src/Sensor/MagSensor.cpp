@@ -79,6 +79,7 @@ int MagSensor::read()
       return 0;
     }
     _model.state.mag.raw = sample.raw;
+    _backgroundPublishedUs = sample.sampleTimeUs;
     return 1;
   }
 #endif
@@ -114,7 +115,8 @@ int MagSensor::updateBackground()
   BackgroundSample sample{};
   const uint32_t start = micros();
   sample.valid = _mag->readMag(sample.raw) != 0;
-  sample.elapsedUs = micros() - start;
+  sample.sampleTimeUs = micros();
+  sample.elapsedUs = sample.sampleTimeUs - start;
   xQueueOverwrite(_backgroundQueue, &sample);
   return sample.valid ? 1 : 0;
 }
@@ -154,7 +156,16 @@ int MagSensor::filter()
       sample.x * sample.x + sample.y * sample.y + sample.z * sample.z;
   const bool valid = std::isfinite(normSq) && normSq > 1.0e-12f;
   _model.state.mag.sampleValid = valid;
-  if (valid) _model.state.mag.lastUpdateUs = micros();
+  if (valid)
+  {
+#if defined(ESPFC_SPI_SLOW_SENSOR_WORKER) && defined(ESPFC_MULTI_CORE) && defined(ESPFC_FREE_RTOS)
+    // Preserve acquisition age: a delayed queue delivery must not appear fresh
+    // to Rescue/heading-health checks merely because it was consumed late.
+    _model.state.mag.lastUpdateUs = _backgroundEnabled ? _backgroundPublishedUs : micros();
+#else
+    _model.state.mag.lastUpdateUs = micros();
+#endif
+  }
   return valid ? 1 : 0;
 }
 

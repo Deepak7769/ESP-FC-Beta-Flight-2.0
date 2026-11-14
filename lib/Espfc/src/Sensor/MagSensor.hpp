@@ -36,10 +36,13 @@ private:
   struct BackgroundSample {
     VectorInt16 raw{};
     uint32_t elapsedUs{0};
+    uint32_t sampleTimeUs{0};
     bool valid{false};
   };
   QueueHandle_t _backgroundQueue{nullptr};
   bool _backgroundEnabled{false};
+  // Latest timestamp accepted by the main/flight core, not the queue receive time.
+  uint32_t _backgroundPublishedUs{0};
 #endif
 };
 
