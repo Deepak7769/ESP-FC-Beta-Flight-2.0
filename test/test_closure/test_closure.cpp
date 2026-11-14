@@ -16,6 +16,7 @@
 #include "ResourceManager.h"
 #include "Control/Controller.h"
 #include "msp/msp_protocol.h"
+#include "msp/msp_protocol_v2_betaflight.h"
 #include "Utils/Crc.hpp"
 #include <ArduinoFake.h>
 #include <unity.h>
@@ -702,6 +703,9 @@ void test_api46_sensor_alignment_preserves_device_and_rejects_second_gyro() {
 // regression. Values come from real handlers and state, never a copied MSP model.
 void test_configurator_packet_export_and_client_write_readback() {
  Model m;m.state.currentMixer=Output::Mixers::getMixer(FC_MIXER_QUADX,MixerConfig{});
+ ClosureMockSpiBus bus;ClosureMockGyro gyro;gyro.setBus(&bus,0x68);
+ m.state.gyro.dev=&gyro;m.state.gyro.clock=8000;m.state.gyro.present=true;m.state.accel.present=true;
+ m.config.accel.dev=GYRO_MPU6500;
  m.config.featureMask=Espfc::FEATURE_RX_SERIAL|Espfc::FEATURE_TELEMETRY;
  m.config.input.serialRxProvider=SERIALRX_IBUS;m.state.input.channelCount=14;
  for(unsigned i=0;i<14;++i)m.state.input.us[i]=1000+i*50;
@@ -728,7 +732,7 @@ void test_configurator_packet_export_and_client_write_readback() {
    MSP_PID,MSP_PID_ADVANCED,MSP_PIDNAMES,MSP_FILTER_CONFIG,MSP_SIMPLIFIED_TUNING,
    MSP_BATTERY_CONFIG,MSP_BATTERY_STATE,MSP_FAILSAFE_CONFIG,MSP_RXFAIL_CONFIG,
    MSP_MODE_RANGES,MSP_MODE_RANGES_EXTRA,MSP_BOXNAMES,MSP_BOXIDS,MSP_SENSOR_CONFIG,
-   MSP_SENSOR_ALIGNMENT,MSP_BOARD_ALIGNMENT_CONFIG,MSP_ARMING_CONFIG,MSP_BLACKBOX_CONFIG,
+   MSP_SENSOR_ALIGNMENT,MSP2_SENSOR_CONFIG_ACTIVE,MSP_BOARD_ALIGNMENT_CONFIG,MSP_ARMING_CONFIG,MSP_BLACKBOX_CONFIG,
    MSP_DATAFLASH_SUMMARY,MSP_CF_SERIAL_CONFIG,MSP_GPS_CONFIG}) {
    auto r=process(m,command);TEST_ASSERT_EQUAL_INT(1,r.result);
    if(!first)out<<",";first=false;out<<"{\"code\":"<<command<<",\"payload\":[";
@@ -738,7 +742,34 @@ void test_configurator_packet_export_and_client_write_readback() {
  }
 }
 
+void test_api46_sensor_ids_roundtrip_without_changing_driver_enums() {
+ Model m;struct Sensor {uint8_t internal,wire;};
+ for(Sensor s : {Sensor{GYRO_NONE,1},Sensor{GYRO_AUTO,0},Sensor{GYRO_MPU6050,3},
+  Sensor{GYRO_MPU6500,8},Sensor{GYRO_MPU9250,9},Sensor{GYRO_LSM6DSO,19},
+  Sensor{GYRO_ICM20602,11},Sensor{GYRO_BMI160,17},Sensor{GYRO_ICM42688,16}}) {
+  m.config.accel.dev=s.internal;auto r=process(m,MSP_SENSOR_CONFIG);
+  TEST_ASSERT_EQUAL_UINT8(s.wire,r.data[0]);
+  TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_SENSOR_CONFIG,{s.wire,0,0}).result);
+  TEST_ASSERT_EQUAL_UINT8(s.internal,m.config.accel.dev);
+ }
+ auto before=m.config;
+ for(std::vector<uint8_t> p : {std::vector<uint8_t>{2,0,0}, {0,5,0}, {0,0,6}, {0,0,0,1}, {0,0,0,0,1}}) {
+  TEST_ASSERT_EQUAL_INT(-1,process(m,MSP_SET_SENSOR_CONFIG,p).result);
+  TEST_ASSERT_EQUAL_MEMORY(&before,&m.config,sizeof(before));
+ }
+ m.config.baro.dev=BARO_SPL06;m.config.mag.dev=MAG_QMC5883P;
+ auto r=process(m,MSP_SENSOR_CONFIG);
+ TEST_ASSERT_EQUAL_UINT8(255,r.data[1]);TEST_ASSERT_EQUAL_UINT8(255,r.data[2]);
+ TEST_ASSERT_EQUAL_INT(1,process(m,MSP_SET_SENSOR_CONFIG,{r.data,r.data+r.len}).result);
+ TEST_ASSERT_EQUAL_UINT8(BARO_SPL06,m.config.baro.dev);TEST_ASSERT_EQUAL_UINT8(MAG_QMC5883P,m.config.mag.dev);
+ ClosureMockSpiBus bus;ClosureMockGyro gyro;gyro.setBus(&bus,0x68);
+ m.state.gyro.dev=&gyro;m.state.gyro.present=true;m.state.accel.present=true;
+ auto active=process(m,MSP2_SENSOR_CONFIG_ACTIVE);
+ TEST_ASSERT_EQUAL_UINT8(7,active.data[0]);TEST_ASSERT_EQUAL_UINT8(8,active.data[1]);
+}
+
 int main(){UNITY_BEGIN();
+ RUN_TEST(test_api46_sensor_ids_roundtrip_without_changing_driver_enums);
  RUN_TEST(test_disarmed_msp_survives_overload_peak_and_deadline_stress);
  RUN_TEST(test_i2c_bus_clock_budget_and_spi_rate_are_independent);
  RUN_TEST(test_mode_extra_reports_every_condition_including_last_links);

@@ -408,16 +408,53 @@ constexpr uint8_t SENSOR_NOT_AVAILABLE = 0xff;
 
 static uint8_t toAccHw(uint8_t dev)
 {
-  if (dev == 0) return 1;
-  if (dev == 1) return 0;
-  return dev;
+  // API 1.46's fixed Configurator list is NOT the internal driver enum.
+  constexpr uint8_t ids[] = {1, 0, 7, 3, 8, 9, 19, 11, 17, 16};
+  static_assert(sizeof(ids) == Espfc::GYRO_MAX, "Update legacy sensor mapping");
+  return dev < sizeof(ids) ? ids[dev] : SENSOR_NOT_AVAILABLE;
 }
 
-static uint8_t fromAccHw(uint8_t dev)
+static int8_t fromAccHw(uint8_t dev)
 {
-  if (dev == 0) return 1;
-  if (dev == 1) return 0;
-  return dev;
+  for (int8_t internal = 0; internal < Espfc::GYRO_MAX; ++internal)
+    if (internal != Espfc::GYRO_MPU6000 && toAccHw(internal) == dev) return internal;
+  return -1; // no ADXL345/MMA8452/etc. driver; never select a different chip
+}
+
+static uint8_t toGyroHw(uint8_t dev)
+{
+  constexpr uint8_t ids[] = {1, 0, 6, 2, 7, 8, 18, 10, 16, 15};
+  static_assert(sizeof(ids) == Espfc::GYRO_MAX, "Update legacy gyro mapping");
+  return dev < sizeof(ids) ? ids[dev] : SENSOR_NOT_AVAILABLE;
+}
+
+static uint8_t toBaroHw(uint8_t dev)
+{
+  // SPL06 has no name in the API 1.46 list (slot 5 is LPS).
+  return dev == Espfc::BARO_SPL06 ? SENSOR_NOT_AVAILABLE : dev;
+}
+
+static uint8_t toMagHw(uint8_t dev)
+{
+  // QMC5883P must not be mislabeled as the unrelated LIS2MDL (slot 6).
+  return dev == Espfc::MAG_QMC5883P ? SENSOR_NOT_AVAILABLE : dev;
+}
+
+static int8_t fromBaroHw(uint8_t wire, uint8_t current)
+{
+  if (wire == SENSOR_NOT_AVAILABLE && current == Espfc::BARO_SPL06) return current;
+  if (wire == Espfc::BARO_DEFAULT || wire == Espfc::BARO_NONE ||
+      wire == Espfc::BARO_BMP085 || wire == Espfc::BARO_BMP280) return wire;
+  return -1;
+}
+
+static int8_t fromMagHw(uint8_t wire, uint8_t current)
+{
+  if (wire == SENSOR_NOT_AVAILABLE && current == Espfc::MAG_QMC5883P) return current;
+  if (wire == Espfc::MAG_DEFAULT || wire == Espfc::MAG_NONE ||
+      wire == Espfc::MAG_HMC5883L || wire == Espfc::MAG_AK8963 ||
+      wire == Espfc::MAG_QMC5883L) return wire;
+  return -1;
 }
 
 } // namespace
@@ -1019,8 +1056,8 @@ case MSP_BUILD_INFO:
 
     case MSP_SENSOR_CONFIG:
       r.writeU8(toAccHw(config.accel.dev)); // 3 acc mpu6050
-      r.writeU8(config.baro.dev);           // 2 baro bmp085
-      r.writeU8(config.mag.dev);            // 3 mag hmc5883l
+      r.writeU8(toBaroHw(config.baro.dev));
+      r.writeU8(toMagHw(config.mag.dev));
       // 1.46
       r.writeU8(0); // rangefinder 0=none
       r.writeU8(0); // opticalflow 0=none
@@ -1028,16 +1065,16 @@ case MSP_BUILD_INFO:
 
     case MSP_SET_SENSOR_CONFIG:
       config.accel.dev = fromAccHw(m.readU8()); // 3 acc mpu6050
-      config.baro.dev = m.readU8();             // 2 baro bmp085
-      config.mag.dev = m.readU8();              // 3 mag hmc5883l
+      config.baro.dev = fromBaroHw(m.readU8(), config.baro.dev);
+      config.mag.dev = fromMagHw(m.readU8(), config.mag.dev);
       // 1.46
       if (m.remain() >= 1)
       {
-        m.readU8(); // rangefinder skip
+        if (m.readU8() != 0) r.result = -1; // configure direct GPIO sonar through ESP-FC CLI/MSP
       }
       if (m.remain() >= 1)
       {
-        m.readU8(); // opticalflow skip
+        if (m.readU8() != 0) r.result = -1; // no optical-flow implementation
       }
       needsReload = true;
       needsReboot = true;
@@ -1045,12 +1082,12 @@ case MSP_BUILD_INFO:
 
     case MSP2_SENSOR_CONFIG_ACTIVE: {
       const auto& state = _model.state;
-      r.writeU8(_model.gyroActive() && state.gyro.dev ? toAccHw(state.gyro.dev->getType())
-                                                      : toAccHw(GYRO_NONE)); // gyro
+      r.writeU8(_model.gyroActive() && state.gyro.dev ? toGyroHw(state.gyro.dev->getType())
+                                                      : toGyroHw(GYRO_NONE)); // gyro
       r.writeU8(_model.accelActive() && state.gyro.dev ? toAccHw(state.gyro.dev->getType())
                                                        : toAccHw(GYRO_NONE));                   // acc
-      r.writeU8(_model.baroActive() && state.baro.dev ? state.baro.dev->getType() : BARO_NONE); // baro
-      r.writeU8(_model.magActive() && state.mag.dev ? state.mag.dev->getType() : MAG_NONE);     // mag
+      r.writeU8(_model.baroActive() && state.baro.dev ? toBaroHw(state.baro.dev->getType()) : BARO_NONE);
+      r.writeU8(_model.magActive() && state.mag.dev ? toMagHw(state.mag.dev->getType()) : MAG_NONE);
       r.writeU8(SENSOR_NOT_AVAILABLE);                                                          // rangefinder
       r.writeU8(SENSOR_NOT_AVAILABLE);                                                          // opticalflow
       break;
@@ -1058,7 +1095,8 @@ case MSP_BUILD_INFO:
 
     case MSP2_GYRO_SENSOR_ACTIVE:
       r.writeU8(1);                                                                  // gyro count, single gyro only
-      r.writeU8(_model.gyroActive() ? _model.state.gyro.dev->getType() : GYRO_NONE); // gyro 1
+      r.writeU8(_model.gyroActive() && _model.state.gyro.dev
+          ? toGyroHw(_model.state.gyro.dev->getType()) : toGyroHw(GYRO_NONE));
       break;
 
     case MSP_SENSOR_ALIGNMENT:

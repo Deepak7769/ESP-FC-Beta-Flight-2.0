@@ -11,8 +11,9 @@ import FC from '../src/js/fc';
 import Features from '../src/js/Features';
 import Beepers from '../src/js/Beepers';
 import '../src/js/injected_methods';
+import { sensorTypes } from '../src/js/sensor_types';
 
-it('decodes real firmware packets and serializes supported edits', () => {
+it('decodes real firmware packets and serializes supported edits', async () => {
     FC.resetState();
     const helper = new MspHelper();
     const packets = JSON.parse(readFileSync(process.env.ESPFC_MSP_FIXTURES, 'utf8'));
@@ -40,6 +41,10 @@ it('decodes real firmware packets and serializes supported edits', () => {
     expect(FC.RC.channels.slice(0,4)).toEqual([1000,1050,1100,1150]);
     expect(FC.MODE_RANGES_EXTRA.length).toBe(8);
     expect(FC.RC_TUNING.rates_type).toBe(3);
+    const types=await sensorTypes();
+    expect(types.acc.elements[FC.SENSOR_CONFIG.acc_hardware]).toBe('MPU6500');
+    expect(types.gyro.elements[FC.SENSOR_CONFIG_ACTIVE.gyro_hardware]).toBe('MPU6500');
+    expect(types.acc.elements[FC.SENSOR_CONFIG_ACTIVE.acc_hardware]).toBe('MPU6500');
 
     if (process.env.ESPFC_MSP_WRITES) {
         FC.RX_CONFIG.serialrx_provider=7;
