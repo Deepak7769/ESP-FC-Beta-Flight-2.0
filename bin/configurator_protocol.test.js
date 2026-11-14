@@ -36,6 +36,9 @@ it('decodes real firmware packets and serializes supported edits', async () => {
     expect(FC.FEATURE_CONFIG.features.isEnabled('RX_SERIAL')).toBe(true);
     expect(FC.RX_CONFIG.serialrx_provider).toBe(7); // Betaflight SERIALRX_IBUS
     expect(FC.CONFIG.buildOptions).toContain('USE_SERIALRX_IBUS');
+    // The Setup/Sensors 3D renderer selects quad_x.gltf from this mixer ID.
+    // A valid packet is necessary but not proof that the client's GLTF/WebGL loaded.
+    expect(FC.MIXER_CONFIG.mixer).toBe(3);
     expect(FC.MOTOR_CONFIG.motor_count).toBe(4);
     expect(FC.RC.active_channels).toBe(14);
     expect(FC.RC.channels.slice(0,4)).toEqual([1000,1050,1100,1150]);

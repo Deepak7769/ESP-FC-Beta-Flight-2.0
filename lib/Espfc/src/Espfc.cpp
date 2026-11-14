@@ -48,10 +48,10 @@ int Espfc::begin()
 
 int FAST_CODE_ATTR Espfc::update(bool externalTrigger)
 {
-  {
-    Utils::Stats::Measure lifecycleCpu(_model.state.stats, COUNTER_CPU_0);
-    _blackbox.serviceLifecycle(micros());
-  }
+  // One uninterrupted measurement of the entire flight-task invocation.
+  // Two separate scopes hid the true worst-case time and omitted work between them.
+  Utils::Stats::Measure measure(_model.state.stats, COUNTER_CPU_0);
+  _blackbox.serviceLifecycle(micros());
   // Independent of gyro/controller availability, revoke timed-out motor
   // tests and WRITE true disarmed outputs. A stale ESC command must not
   // survive merely because the gyro transaction or loop divider failed.
@@ -71,7 +71,6 @@ int FAST_CODE_ATTR Espfc::update(bool externalTrigger)
   {
     if (!_model.state.gyro.timer.check()) return 0;
   }
-  Utils::Stats::Measure measure(_model.state.stats, COUNTER_CPU_0);
 #if defined(ESPFC_MULTI_CORE)
 
   const int sensorFlags =

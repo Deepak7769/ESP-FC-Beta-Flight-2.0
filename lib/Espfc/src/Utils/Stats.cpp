@@ -27,7 +27,7 @@ void FAST_CODE_ATTR Stats::start(StatCounter c)
 void FAST_CODE_ATTR Stats::end(StatCounter c)
 {
   uint32_t diff = micros() - _start[c];
-  // End-to-end flight task time includes every service pass, not only PID time.
+  // The outermost Espfc::update() measurement spans all work in this invocation.
   if (c == COUNTER_CPU_0 && diff > _windowMaxFlightTaskUs)
     _windowMaxFlightTaskUs = diff;
   _sum[c] += diff;
