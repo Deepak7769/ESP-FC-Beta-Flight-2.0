@@ -55,6 +55,14 @@ jobs:
           ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-packets.json" ESPFC_MSP_WRITES="$RUNNER_TEMP/espfc-writes.txt" python bin/check_configurator.py "$client"
           ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-readback.json" ESPFC_MSP_WRITES="$RUNNER_TEMP/espfc-writes.txt" platformio test -e native -f test_closure
           ESPFC_MSP_FIXTURES="$RUNNER_TEMP/espfc-readback.json" ESPFC_VERIFY_READBACK=1 python bin/check_configurator.py "$client"
+      - name: Upload non-actuating SPI/I2C worker validation firmware
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp32_async_i2c_bench_${{ github.sha }}
+          path: |
+            .pio/build/esp32_async_i2c_bench/firmware.bin
+            .pio/build/esp32_async_i2c_bench/firmware_0x00.bin
+          if-no-files-found: error
 
   antigravity_validation_artifact:
     needs: test

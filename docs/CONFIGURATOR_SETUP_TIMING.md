@@ -45,6 +45,8 @@ Configurator itself owns its 3D renderer and the calibration instruction panels.
   the existing single-owner bus path. This is NOT yet enabled in production:
   it needs actual bus-fault, sensor freshness and hard-deadline tests on the
   three-device ESP32 hardware before enabling in a motor-driving firmware.
+  CI publishes a non-actuating ESP32 worker validation binary for bench tests
+  (with an optional merged 0x00 image), not for use in flight.
 
 ## Acceptance measurements (motor power disconnected)
 
